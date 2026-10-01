@@ -1,14 +1,81 @@
-// db.js: connects to PostgreSQL. The tables come from database.sql (run it once in Postgres).
-require('dotenv').config();
-const { Pool } = require('pg');
+require("dotenv").config();
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const query = (text, params) => pool.query(text, params).then(r => r.rows);
-const one = (text, params) => query(text, params).then(rows => rows[0]);
-const tx = async fn => { // run several queries as one all-or-nothing step
-  const c = await pool.connect();
-  try { await c.query('BEGIN'); const out = await fn((t, p) => c.query(t, p).then(r => r.rows)); await c.query('COMMIT'); return out; }
-  catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
+const { Pool, types } = require("pg");
+
+types.setTypeParser(1082, value => value);
+types.setTypeParser(20, value => parseInt(value, 10));
+types.setTypeParser(1700, value => parseFloat(value));
+
+const required = [
+  "DB_USER",
+  "DB_HOST",
+  "DB_NAME",
+  "DB_PASSWORD"
+];
+
+const missing = required.filter(key => !process.env[key]);
+
+if (missing.length > 0) {
+  console.warn(
+    "Missing in backend/.env: " + missing.join(", ")
+  );
+}
+
+const useSSL = process.env.DB_SSL === "true";
+
+const pool = new Pool({
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: Number(process.env.DB_PORT) || 5432,
+  ssl: useSSL
+    ? {
+        rejectUnauthorized: false
+      }
+    : false
+});
+
+pool.on("connect", () => {
+  console.log("PostgreSQL connected");
+});
+
+pool.on("error", error => {
+  console.error("PostgreSQL pool error:", error.message);
+});
+
+const query = (text, params) => {
+  return pool.query(text, params).then(result => result.rows);
 };
 
-module.exports = { pool, query, one, tx };
+const one = (text, params) => {
+  return query(text, params).then(rows => rows[0]);
+};
+
+const tx = async fn => {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const result = await fn((text, params) => {
+      return client.query(text, params).then(result => result.rows);
+    });
+
+    await client.query("COMMIT");
+
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+module.exports = {
+  pool,
+  query,
+  one,
+  tx
+};

@@ -1,6 +1,6 @@
 // server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js connects, database.sql creates the tables).
 require('dotenv').config();
-const express = require('express'), cors = require('cors'), http = require('http');
+const express = require('express'), cors = require('cors'), http = require('http'), crypto = require('crypto');
 const bcrypt = require('bcryptjs'), jwt = require('jsonwebtoken'), { Server } = require('socket.io');
 const { OAuth2Client } = require('google-auth-library');
 const { query, one, tx } = require('./db');
@@ -9,7 +9,20 @@ const SECRET = process.env.JWT_SECRET || 'change-me';
 const CLIENT = process.env.CLIENT_URL || 'http://localhost:5173';
 const ADMINS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families', 'reasons'];
+const ROLES = ['student', 'teacher', 'psychosocial'];
 const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Subject combinations by level. Senior 4 and 5 share one set, Senior 6 has its own.
+const COMBOS_S4_S5 = ['MSI', 'MSII', 'ART', 'HUMANITIES'];
+const COMBOS_S6 = ['MPC', 'PCB', 'HGL', 'MEG'];
+const DEFAULTS = { grades: ['S4', 'S5', 'S6'], classes: ['A', 'B', 'C'], combos: [...COMBOS_S4_S5, ...COMBOS_S6] };
+const levelOf = cls => (String(cls || '').match(/[456]/) || [])[0];           // "S4A" -> "4"
+const combosFor = cls => (levelOf(cls) === '6' ? COMBOS_S6 : levelOf(cls) ? COMBOS_S4_S5 : []);
+
+// Two names are the same person when they have the same words, in any order, ignoring case and spaces.
+// "Jean  Habimana" and "habimana jean" give the same key.
+const nameKey = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
+const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
 
 const app = express(), server = http.createServer(app);
 const io = new Server(server, { cors: { origin: CLIENT } });
@@ -27,11 +40,18 @@ const auth = (...roles) => (req, res, next) => {
 
 // ---------- Data helpers (the SQL views session_seats and application_details live in database.sql) ----------
 const listSessions = () => query('SELECT * FROM session_seats ORDER BY date, "from", lab');
-const listApps = (where = '', params = []) => query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY at, id', params);
+const listApps = (where = '', params = []) => query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params);
 const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_seats WHERE id = $1', [sid]))[0]?.left ?? 0;
 const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Application not found.');
 const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
+const saveOption = (q, k, list) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(list)]);
 const CLASS_SQL = "COALESCE(profile->>'grade', '') || COALESCE(profile->>'cls', '')";
+
+// Fills grades, classes and combinations the first time, without touching anything the admin already set.
+const seedOptions = async () => {
+  const cur = await getOptions();
+  for (const [k, v] of Object.entries(DEFAULTS)) if (!Array.isArray(cur[k]) || !cur[k].length) await saveOption(query, k, v);
+};
 
 // ---------- Socket.io ----------
 // Every logged-in browser gets live seat counts. Admins join the "admins" room, everyone else a private room.
@@ -50,29 +70,45 @@ const pushApps = (names = []) => {
   pushSeats();
 };
 
-// ---------- Accounts ----------
-app.post('/api/register', wrap(async (req, res) => {
-  const { username, email, password, role, ...profile } = req.body;
-  if (!username?.trim() || !email?.includes('@') || !password || password.length < 6 || !['student', 'teacher', 'psychosocial'].includes(role))
-    fail(400, 'Please fill in every field. Your password needs at least 6 characters.');
-  if (await one('SELECT 1 FROM users WHERE lower(username) = lower($1) OR email = $2', [username.trim(), email.trim().toLowerCase()]))
-    fail(409, 'An account with this name or email already exists.');
-  const u = await one('INSERT INTO users(username, email, hash, role, profile) VALUES($1,$2,$3,$4,$5) RETURNING id',
-    [username.trim(), email.trim().toLowerCase(), await bcrypt.hash(password, 10), role, profile]);
-  res.json({ token: sign({ id: u.id, role, name: username.trim() }) });
-}));
-app.post('/api/login', wrap(async (req, res) => {
-  const login = (req.body.login || '').trim().toLowerCase();
-  const u = await one('SELECT * FROM users WHERE lower(username) = $1 OR email = $1', [login]);
-  if (!u || !(await bcrypt.compare(req.body.password || '', u.hash))) fail(401, 'Wrong username, email or password.');
-  res.json({ token: sign({ id: u.id, role: u.role, name: u.username }) });
-}));
-app.post('/api/admin/google', wrap(async (req, res) => { // body: { credential } = Google ID token
+// ---------- Accounts: Google only ----------
+// Creating an account verifies the email with Google (name and email come from Google).
+// Next time the same Google account logs in directly.
+// body: { credential, role?, cls?, combo? }
+//  - email listed in ADMIN_EMAILS   -> logs in as admin
+//  - email already has an account   -> logs in
+//  - new email, role given          -> creates the account, then logs in
+//  - new email, no role yet         -> { needsProfile: true } so the app asks who the person is
+app.post('/api/google', wrap(async (req, res) => {
+  const { credential, role, cls, combo } = req.body;
   let p;
-  try { p = (await gClient.verifyIdToken({ idToken: req.body.credential, audience: process.env.GOOGLE_CLIENT_ID })).getPayload(); }
+  try { p = (await gClient.verifyIdToken({ idToken: credential, audience: process.env.GOOGLE_CLIENT_ID })).getPayload(); }
   catch { fail(401, 'Google sign-in failed. Please try again.'); }
-  if (!p.email_verified || !ADMINS.includes(p.email.toLowerCase())) fail(403, 'This Google account is not an admin.');
-  res.json({ token: sign({ id: 0, role: 'admin', name: p.name || p.email }) });
+  if (!p.email_verified) fail(403, 'Your Google email is not verified.');
+  const email = p.email.toLowerCase(), name = cleanName(p.name || email.split('@')[0]);
+
+  if (ADMINS.includes(email)) return res.json({ token: sign({ id: 0, role: 'admin', name }) });
+
+  let u = await one('SELECT id, username, role FROM users WHERE email = $1', [email]);
+  if (!u) {
+    if (!ROLES.includes(role)) return res.json({ needsProfile: true, name, email });
+    if (role === 'student') {
+      if (!cls || !levelOf(cls)) fail(400, 'Choose your grade and class.');
+      if (!combosFor(cls).includes(combo)) fail(400, `Choose a subject combination for your grade: ${combosFor(cls).join(', ')}.`);
+    }
+    // The name is the student's identity in bookings, so it must be unique (same words in any order count as the same name).
+    const taken = new Set((await query('SELECT username FROM users')).map(r => nameKey(r.username)));
+    let username = name, n = 1;
+    while (taken.has(nameKey(username))) username = `${name} ${++n}`;
+    const profile = role === 'student' ? { cls, combo } : {};
+    try {
+      u = await one('INSERT INTO users(username, email, hash, role, profile) VALUES($1,$2,$3,$4,$5) RETURNING id, username, role',
+        [username, email, await bcrypt.hash(crypto.randomUUID(), 10), role, profile]);
+    } catch (e) { // two clicks at once: the unique email makes the second one fail, so just log the existing account in
+      if (e.code !== '23505') throw e;
+      u = await one('SELECT id, username, role FROM users WHERE email = $1', [email]) || fail(409, 'An account with this name or email already exists.');
+    }
+  }
+  res.json({ token: sign({ id: u.id, role: u.role, name: u.username }) });
 }));
 app.get('/api/me', auth(), (req, res) => res.json(req.user));
 
@@ -82,7 +118,7 @@ app.put('/api/options', auth('admin'), wrap(async (req, res) => {
   await tx(async q => {
     for (const [k, v] of Object.entries(req.body))
       if (LISTS.includes(k) && Array.isArray(v))
-        await q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify([...new Set(v.map(x => String(x).trim()).filter(Boolean))])]);
+        await saveOption(q, k, [...new Set(v.map(x => String(x).trim()).filter(Boolean))]);
   });
   res.json(await getOptions());
 }));
@@ -92,7 +128,7 @@ app.get('/api/students', auth('teacher', 'psychosocial', 'admin'), wrap(async (r
   const cls = req.query.class || '';
   if (req.user.role === 'teacher' && !cls) fail(400, 'Choose a class first.');
   res.json(await query(`SELECT username AS name, ${CLASS_SQL} AS "className", profile->>'family' AS family, profile->>'combo' AS combo
-    FROM users WHERE role = 'student' AND ($1 = '' OR ${CLASS_SQL} = $1) ORDER BY username`, [cls]));
+    FROM users WHERE role = 'student' AND ($1::text = '' OR ${CLASS_SQL} = $1::text) ORDER BY username`, [cls]));
 }));
 
 // ---------- Labs and schedule ----------
@@ -128,21 +164,38 @@ app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
 app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM sessions WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
 // ---------- Applications ----------
+// A person can never hold two live bookings for the same lab time, or for two lab times that overlap on the same day.
 app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
-  const { sessionId, reason, students } = req.body;
-  if (!(await one('SELECT 1 FROM sessions WHERE id = $1', [sessionId]))) fail(404, 'That lab time no longer exists.');
-  const names = req.user.role === 'student' ? [req.user.name] : [...new Set(students || [])];
+  const { reason, students } = req.body, sessionId = +req.body.sessionId;
+  const asked = req.user.role === 'student' ? [req.user.name] : (Array.isArray(students) ? students : []);
+  const byKey = new Map(); // the same person picked twice (or written in a different order) counts once
+  asked.map(cleanName).filter(Boolean).forEach(n => byKey.has(nameKey(n)) || byKey.set(nameKey(n), n));
+  const names = [...byKey.values()];
   if (!names.length) fail(400, 'Choose at least one student.');
-  const banned = await query('SELECT name FROM blacklist WHERE name = ANY($1)', [names]);
-  if (banned.length) fail(403, `Blacklisted students cannot apply: ${banned.map(b => b.name).join(', ')}`);
-  const classes = Object.fromEntries((await query(`SELECT username, ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND username = ANY($1)`, [names])).map(r => [r.username, r.cls]));
-  let created = 0;
+
+  const banned = await query('SELECT name FROM blacklist');
+  const blocked = banned.filter(b => byKey.has(nameKey(b.name)));
+  if (blocked.length) fail(403, `Blacklisted students cannot apply: ${blocked.map(b => b.name).join(', ')}`);
+
+  const rows = await query(`SELECT username, ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND username = ANY($1)`, [names]);
+  const classes = Object.fromEntries(rows.map(r => [r.username, r.cls]));
+  const unknown = names.filter(n => !(n in classes));
+  if (unknown.length) fail(400, `No student account found for: ${unknown.join(', ')}`);
+
+  let created = 0; const skipped = [];
   await tx(async q => {
-    for (const n of names) // the unique index in database.sql skips students who already applied
+    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sessionId]); // one booking at a time per lab time
+    const s = (await q('SELECT date, "from", "to" FROM session_seats WHERE id = $1', [sessionId]))[0] || fail(404, 'That lab time no longer exists.');
+    const live = await q("SELECT name, sid, \"from\", \"to\" FROM application_details WHERE status <> 'rejected' AND date = $1", [s.date]);
+    for (const n of names) {
+      const k = nameKey(n);
+      const clash = live.some(b => nameKey(b.name) === k && (+b.sid === sessionId || (b.from < s.to && s.from < b.to)));
+      if (clash) { skipped.push(n); continue; }
       created += (await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT (session_id, student) WHERE status <> 'rejected' DO NOTHING RETURNING id",
         [sessionId, n, classes[n] || '', reason || 'Other', req.user.name])).length;
+    }
   });
-  pushApps([...names, req.user.name]); res.json({ created });
+  pushApps([...names, req.user.name]); res.json({ created, skipped });
 }));
 app.get('/api/apps', auth(), wrap(async (req, res) => res.json(req.user.role === 'admin' ? await listApps() : await listApps('name = $1 OR "bookedBy" = $1', [req.user.name]))));
 
@@ -173,6 +226,10 @@ app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => { // shi
   const a = await tx(async q => {
     const a = await getApp(q, req.params.id);
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [to]);
+    if (a.status !== 'rejected') { // never leave the same person twice in one lab time
+      const twice = await q("SELECT 1 FROM applications WHERE session_id = $1 AND lower(student) = lower($2) AND status <> 'rejected' AND id <> $3", [to, a.student, a.id]);
+      if (twice.length) fail(409, 'This student already has a booking in that lab time.');
+    }
     if (a.status === 'approved' && a.session_id !== to && await seatsLeft(q, to) < 1) fail(409, 'The other lab is full. Swap two students instead.');
     await q('UPDATE applications SET session_id = $1 WHERE id = $2', [to, a.id]);
     return a;
@@ -199,7 +256,7 @@ app.patch('/api/apps/:id/attendance', auth('admin'), wrap(async (req, res) => {
 // ---------- Blacklist, statistics, history ----------
 app.get('/api/blacklist', auth('admin'), wrap(async (_, res) => res.json((await query('SELECT name FROM blacklist ORDER BY name')).map(r => r.name))));
 app.post('/api/blacklist', auth('admin'), wrap(async (req, res) => {
-  const name = (req.body.name || '').trim(); if (!name) fail(400, 'Enter a student name.');
+  const name = cleanName(req.body.name); if (!name) fail(400, 'Enter a student name.');
   await tx(async q => {
     await q('INSERT INTO blacklist(name, reason) VALUES($1,$2) ON CONFLICT (name) DO UPDATE SET reason = EXCLUDED.reason', [name, req.body.reason || '']);
     await q("UPDATE applications SET status = 'rejected' WHERE student = $1 AND status = 'pending'", [name]);
@@ -236,5 +293,5 @@ app.get('/api/history', auth('admin'), wrap(async (req, res) => { // ?date=YYYY-
 
 app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.code >= 400 && err.code < 600 ? err.code : 500).json({ error: err.message || 'Something went wrong.' }));
 const port = process.env.PORT || 4000;
-query('SELECT 1').then(() => server.listen(port, () => console.log('LMS API and Socket.io running on port ' + port)))
-  .catch(e => { console.error('Cannot connect to PostgreSQL. Check DATABASE_URL in .env.\n', e.message); process.exit(1); });
+query('SELECT 1').then(seedOptions).then(() => server.listen(port, () => console.log('LMS API and Socket.io running on port ' + port)))
+  .catch(e => { console.error('Cannot start. Check the DB_* values in .env and that database.sql was run.\n', e.message); process.exit(1); });
