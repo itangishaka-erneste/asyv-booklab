@@ -1,4 +1,5 @@
 // server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js connects, database.sql creates the tables).
+// Accounts are created by the admin only. People log in with email + password (or Google, if their email was added by the admin).
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http'), crypto = require('crypto');
 const bcrypt = require('bcryptjs'), jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -8,21 +9,24 @@ const { query, one, tx } = require('./db');
 const SECRET = process.env.JWT_SECRET || 'change-me';
 const CLIENT = process.env.CLIENT_URL || 'http://localhost:5173';
 const ADMINS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ''; // lets the emails in ADMIN_EMAILS log in with a password
 const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families', 'reasons'];
 const ROLES = ['student', 'teacher', 'psychosocial'];
 const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Subject combinations by level. Senior 4 and 5 share one set, Senior 6 has its own.
+// A class is now just grade + combination (for example "S6 PCB"). There are no A / B / C sections.
 const COMBOS_S4_S5 = ['MSI', 'MSII', 'ART', 'HUMANITIES'];
 const COMBOS_S6 = ['MPC', 'PCB', 'HGL', 'MEG'];
-const DEFAULTS = { grades: ['S4', 'S5', 'S6'], classes: ['A', 'B', 'C'], combos: [...COMBOS_S4_S5, ...COMBOS_S6] };
-const levelOf = cls => (String(cls || '').match(/[456]/) || [])[0];           // "S4A" -> "4"
+const DEFAULTS = { grades: ['S4', 'S5', 'S6'], combos: [...COMBOS_S4_S5, ...COMBOS_S6] };
+const levelOf = cls => (String(cls || '').match(/[456]/) || [])[0];           // "S6 PCB" -> "6"
 const combosFor = cls => (levelOf(cls) === '6' ? COMBOS_S6 : levelOf(cls) ? COMBOS_S4_S5 : []);
 
 // Two names are the same person when they have the same words, in any order, ignoring case and spaces.
-// "Jean  Habimana" and "habimana jean" give the same key.
 const nameKey = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
 const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
+const validEmail = e => /^\S+@\S+\.\S+$/.test(e);
+const safeEqual = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 
 const app = express(), server = http.createServer(app);
 const io = new Server(server, { cors: { origin: CLIENT } });
@@ -47,10 +51,18 @@ const getOptions = async () => Object.fromEntries((await query('SELECT key, valu
 const saveOption = (q, k, list) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(list)]);
 const CLASS_SQL = "COALESCE(profile->>'grade', '') || COALESCE(profile->>'cls', '')";
 
-// Fills grades, classes and combinations the first time, without touching anything the admin already set.
+// Fills grades and combinations the first time, without touching anything the admin already set.
 const seedOptions = async () => {
   const cur = await getOptions();
   for (const [k, v] of Object.entries(DEFAULTS)) if (!Array.isArray(cur[k]) || !cur[k].length) await saveOption(query, k, v);
+};
+
+// Checks a student's grade + combination and returns the profile to store, e.g. { cls: 'S6 PCB', combo: 'PCB' }.
+const studentProfile = async (grade, combo) => {
+  const grades = (await getOptions()).grades || DEFAULTS.grades;
+  if (!grades.includes(grade) || !levelOf(grade)) fail(400, 'Choose a valid grade.');
+  if (!combosFor(grade).includes(combo)) fail(400, `Choose a combination for ${grade}: ${combosFor(grade).join(', ')}.`);
+  return { cls: `${grade} ${combo}`, combo };
 };
 
 // ---------- Socket.io ----------
@@ -70,49 +82,103 @@ const pushApps = (names = []) => {
   pushSeats();
 };
 
-// ---------- Accounts: Google only ----------
-// Creating an account verifies the email with Google (name and email come from Google).
-// Next time the same Google account logs in directly.
-// body: { credential, role?, cls?, combo? }
-//  - email listed in ADMIN_EMAILS   -> logs in as admin
-//  - email already has an account   -> logs in
-//  - new email, role given          -> creates the account, then logs in
-//  - new email, no role yet         -> { needsProfile: true } so the app asks who the person is
+// ---------- Login (accounts are created by the admin, nobody signs up alone) ----------
+app.post('/api/login', wrap(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase(), password = String(req.body.password || '');
+  if (!email || !password) fail(400, 'Enter your email and password.');
+  if (ADMINS.includes(email) && ADMIN_PASSWORD && safeEqual(password, ADMIN_PASSWORD))
+    return res.json({ token: sign({ id: 0, role: 'admin', name: cleanName(email.split('@')[0]), email }) });
+  const u = await one('SELECT id, username, role, hash FROM users WHERE email = $1', [email]);
+  if (!u || !(await bcrypt.compare(password, u.hash))) fail(401, 'Wrong email or password.');
+  res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email }) });
+}));
+
+// Google login only works for emails the admin already added. It never creates an account.
 app.post('/api/google', wrap(async (req, res) => {
-  const { credential, role, cls, combo } = req.body;
   let p;
-  try { p = (await gClient.verifyIdToken({ idToken: credential, audience: process.env.GOOGLE_CLIENT_ID })).getPayload(); }
+  try { p = (await gClient.verifyIdToken({ idToken: req.body.credential, audience: process.env.GOOGLE_CLIENT_ID })).getPayload(); }
   catch { fail(401, 'Google sign-in failed. Please try again.'); }
   if (!p.email_verified) fail(403, 'Your Google email is not verified.');
-  const email = p.email.toLowerCase(), name = cleanName(p.name || email.split('@')[0]);
-
-  if (ADMINS.includes(email)) return res.json({ token: sign({ id: 0, role: 'admin', name }) });
-
-  let u = await one('SELECT id, username, role FROM users WHERE email = $1', [email]);
-  if (!u) {
-    if (!ROLES.includes(role)) return res.json({ needsProfile: true, name, email });
-    if (role === 'student') {
-      if (!cls || !levelOf(cls)) fail(400, 'Choose your grade and class.');
-      if (!combosFor(cls).includes(combo)) fail(400, `Choose a subject combination for your grade: ${combosFor(cls).join(', ')}.`);
-    }
-    // The name is the student's identity in bookings, so it must be unique (same words in any order count as the same name).
-    const taken = new Set((await query('SELECT username FROM users')).map(r => nameKey(r.username)));
-    let username = name, n = 1;
-    while (taken.has(nameKey(username))) username = `${name} ${++n}`;
-    const profile = role === 'student' ? { cls, combo } : {};
-    try {
-      u = await one('INSERT INTO users(username, email, hash, role, profile) VALUES($1,$2,$3,$4,$5) RETURNING id, username, role',
-        [username, email, await bcrypt.hash(crypto.randomUUID(), 10), role, profile]);
-    } catch (e) { // two clicks at once: the unique email makes the second one fail, so just log the existing account in
-      if (e.code !== '23505') throw e;
-      u = await one('SELECT id, username, role FROM users WHERE email = $1', [email]) || fail(409, 'An account with this name or email already exists.');
-    }
-  }
-  res.json({ token: sign({ id: u.id, role: u.role, name: u.username }) });
+  const email = p.email.toLowerCase();
+  if (ADMINS.includes(email)) return res.json({ token: sign({ id: 0, role: 'admin', name: cleanName(p.name || email.split('@')[0]), email }) });
+  const u = await one('SELECT id, username, role FROM users WHERE email = $1', [email]);
+  if (!u) fail(403, 'There is no account for this email. Ask your admin to create one.');
+  res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email }) });
 }));
 app.get('/api/me', auth(), (req, res) => res.json(req.user));
 
-// ---------- Options set by the admin (grades, classes, combinations, clubs, staff roles...) ----------
+// ---------- Profile (any logged-in person) ----------
+app.get('/api/profile', auth(), wrap(async (req, res) => {
+  const me = req.user;
+  let info = { name: me.name, email: me.email || '', role: me.role, cls: '', combo: '' };
+  if (me.id) {
+    const u = await one(`SELECT username, email, role, ${CLASS_SQL} AS cls, profile->>'combo' AS combo FROM users WHERE id = $1`, [me.id]) || fail(404, 'Account not found.');
+    info = { name: u.username, email: u.email, role: u.role, cls: u.cls, combo: u.combo || '' };
+  }
+  let stats = null;
+  if (me.role !== 'admin') {
+    const rows = await listApps(me.role === 'student' ? 'name = $1' : '"bookedBy" = $1', [me.name]);
+    const n = k => rows.filter(a => a.status === k).length;
+    stats = { total: rows.length, approved: n('approved'), pending: n('pending'), rejected: n('rejected'),
+      present: rows.filter(a => a.att === 'present').length, absent: rows.filter(a => a.att === 'absent').length };
+  }
+  res.json({ ...info, canChangePassword: !!me.id, stats });
+}));
+app.put('/api/profile/password', auth(), wrap(async (req, res) => {
+  if (!req.user.id) fail(400, 'This admin password is set in the server .env file (ADMIN_PASSWORD).');
+  const { current, next } = req.body;
+  if (String(next || '').length < 6) fail(400, 'The new password needs at least 6 characters.');
+  const u = await one('SELECT hash FROM users WHERE id = $1', [req.user.id]) || fail(404, 'Account not found.');
+  if (!(await bcrypt.compare(String(current || ''), u.hash))) fail(400, 'Your current password is wrong.');
+  await query('UPDATE users SET hash = $1 WHERE id = $2', [await bcrypt.hash(next, 10), req.user.id]);
+  res.json({ ok: true });
+}));
+
+// ---------- User accounts (admin only) ----------
+app.get('/api/users', auth('admin'), wrap(async (_, res) =>
+  res.json(await query(`SELECT id, username AS name, email, role, ${CLASS_SQL} AS "className", profile->>'combo' AS combo FROM users ORDER BY role, username`))));
+
+app.post('/api/users', auth('admin'), wrap(async (req, res) => {
+  const { role, grade, combo, password } = req.body;
+  const name = cleanName(req.body.name), email = String(req.body.email || '').trim().toLowerCase();
+  if (!name) fail(400, 'Enter the full name.');
+  if (!validEmail(email)) fail(400, 'Enter a valid email address.');
+  if (!ROLES.includes(role)) fail(400, 'Choose a role.');
+  if (String(password || '').length < 6) fail(400, 'The password needs at least 6 characters.');
+  const profile = role === 'student' ? await studentProfile(grade, combo) : {};
+  // The name is the person's identity in bookings, so it must be unique.
+  if ((await query('SELECT username FROM users')).some(r => nameKey(r.username) === nameKey(name)))
+    fail(409, 'Someone with this name already has an account. Add a middle name or number to tell them apart.');
+  try {
+    res.json(await one('INSERT INTO users(username, email, hash, role, profile) VALUES($1,$2,$3,$4,$5) RETURNING id, username AS name, email, role',
+      [name, email, await bcrypt.hash(password, 10), role, profile]));
+  } catch (e) { fail(e.code === '23505' ? 409 : 500, e.code === '23505' ? 'This email or name already has an account.' : e.message); }
+}));
+
+app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => { // email, class (students) and password can change. The name stays, because bookings use it.
+  const u = await one('SELECT id, role FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
+  const { grade, combo, password } = req.body, sets = [], p = [];
+  const add = (col, val) => { p.push(val); sets.push(`${col} = $${p.length}`); };
+  if (req.body.email) {
+    const email = String(req.body.email).trim().toLowerCase();
+    if (!validEmail(email)) fail(400, 'Enter a valid email address.');
+    add('email', email);
+  }
+  if (password) {
+    if (String(password).length < 6) fail(400, 'The password needs at least 6 characters.');
+    add('hash', await bcrypt.hash(password, 10));
+  }
+  if (u.role === 'student' && grade) add('profile', await studentProfile(grade, combo));
+  if (!sets.length) return res.json({ ok: true });
+  p.push(u.id);
+  try { await query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${p.length}`, p); }
+  catch (e) { fail(e.code === '23505' ? 409 : 500, e.code === '23505' ? 'Another account already uses this email.' : e.message); }
+  res.json({ ok: true });
+}));
+
+app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM users WHERE id = $1', [req.params.id]); res.sendStatus(204); }));
+
+// ---------- Options set by the admin (grades, combinations, reasons...) ----------
 app.get('/api/options', wrap(async (_, res) => res.json(await getOptions())));
 app.put('/api/options', auth('admin'), wrap(async (req, res) => {
   await tx(async q => {
@@ -266,7 +332,7 @@ app.post('/api/blacklist', auth('admin'), wrap(async (req, res) => {
 app.delete('/api/blacklist/:name', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM blacklist WHERE name = $1', [req.params.name]); res.sendStatus(204); }));
 
 app.get('/api/stats/overview', auth('admin'), wrap(async (_, res) => {
-  const [apps, sessions, labRows] = await Promise.all([listApps(), listSessions(), query('SELECT id, name, pcs FROM labs ORDER BY name')]);
+  const [apps, sessions, labRows, people] = await Promise.all([listApps(), listSessions(), query('SELECT id, name, pcs FROM labs ORDER BY name'), query('SELECT role, COUNT(*)::int AS n FROM users GROUP BY role')]);
   const by = k => apps.filter(a => a.status === k).length;
   const labs = labRows.map(l => {
     const ids = sessions.filter(s => s.labId === l.id).map(s => s.id), as = apps.filter(a => ids.includes(a.sid));
@@ -276,7 +342,8 @@ app.get('/api/stats/overview', auth('admin'), wrap(async (_, res) => {
   const count = f => apps.reduce((m, a) => { const v = f(a); if (v) m[v] = (m[v] || 0) + 1; return m; }, {});
   const marked = apps.filter(a => a.att), present = marked.filter(a => a.att === 'present').length;
   res.json({ totals: { applications: apps.length, approved: by('approved'), pending: by('pending'), rejected: by('rejected') }, labs,
-    mostRequested: [...labs].sort((a, b) => b.applied - a.applied)[0]?.lab || null, byReason: count(a => a.reason), byDay: count(a => a.date),
+    people: Object.fromEntries(people.map(r => [r.role, r.n])),
+    mostRequested: [...labs].sort((a, b) => b.applied - a.applied)[0]?.lab || null, byReason: count(a => a.reason), byDay: count(a => a.date), byClass: count(a => a.cls),
     attendance: { present, absent: marked.length - present, rate: marked.length ? Math.round(present / marked.length * 100) : null } });
 }));
 app.get('/api/stats/absenteeism', auth('admin'), wrap(async (_, res) => {

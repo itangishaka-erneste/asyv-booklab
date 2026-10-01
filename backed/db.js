@@ -6,19 +6,11 @@ types.setTypeParser(1082, value => value);
 types.setTypeParser(20, value => parseInt(value, 10));
 types.setTypeParser(1700, value => parseFloat(value));
 
-const required = [
-  "DB_USER",
-  "DB_HOST",
-  "DB_NAME",
-  "DB_PASSWORD"
-];
-
+const required = ["DB_USER", "DB_HOST", "DB_NAME", "DB_PASSWORD"];
 const missing = required.filter(key => !process.env[key]);
 
 if (missing.length > 0) {
-  console.warn(
-    "Missing in backend/.env: " + missing.join(", ")
-  );
+  console.warn("Missing in backend/.env: " + missing.join(", "));
 }
 
 const useSSL = process.env.DB_SSL === "true";
@@ -29,11 +21,7 @@ const pool = new Pool({
   database: process.env.DB_NAME,
   password: process.env.DB_PASSWORD,
   port: Number(process.env.DB_PORT) || 5432,
-  ssl: useSSL
-    ? {
-        rejectUnauthorized: false
-      }
-    : false
+  ssl: useSSL ? { rejectUnauthorized: false } : false
 });
 
 pool.on("connect", () => {
@@ -44,26 +32,16 @@ pool.on("error", error => {
   console.error("PostgreSQL pool error:", error.message);
 });
 
-const query = (text, params) => {
-  return pool.query(text, params).then(result => result.rows);
-};
+const query = (text, params) => pool.query(text, params).then(result => result.rows);
 
-const one = (text, params) => {
-  return query(text, params).then(rows => rows[0]);
-};
+const one = (text, params) => query(text, params).then(rows => rows[0]);
 
 const tx = async fn => {
   const client = await pool.connect();
-
   try {
     await client.query("BEGIN");
-
-    const result = await fn((text, params) => {
-      return client.query(text, params).then(result => result.rows);
-    });
-
+    const result = await fn((text, params) => client.query(text, params).then(result => result.rows));
     await client.query("COMMIT");
-
     return result;
   } catch (error) {
     await client.query("ROLLBACK");
@@ -73,9 +51,4 @@ const tx = async fn => {
   }
 };
 
-module.exports = {
-  pool,
-  query,
-  one,
-  tx
-};
+module.exports = { pool, query, one, tx };
