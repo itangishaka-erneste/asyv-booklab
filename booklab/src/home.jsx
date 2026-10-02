@@ -62,24 +62,28 @@ const Photo = ({ src, alt, className = '' }) => {
 };
 
 /* ================================================================== */
-/* 2. SCHOOL RULES: a class is a grade + a combination ("S6 PCB")      */
+/* 2. SCHOOL RULES                                                     */
+/* A class is a grade + a combination + an optional section letter.    */
+/* Examples: "S6 PCB" (single stream) or "S6 PCB A" (stream A).        */
+/* The admin edits grades and the combinations of each grade in        */
+/* Settings. The lists below are only the starting values.             */
 /* ================================================================== */
 
 const COMBOS_S4_S5 = ['MSI', 'MSII', 'ART', 'HUMANITIES'];
 const COMBOS_S6 = ['MPC', 'PCB', 'HGL', 'MEG'];
 const ALL_COMBOS = [...COMBOS_S4_S5, ...COMBOS_S6];
 const DEFAULT_GRADES = ['S4', 'S5', 'S6'];
+const DEFAULT_GRADE_COMBOS = { S4: COMBOS_S4_S5, S5: COMBOS_S4_S5, S6: COMBOS_S6 };
+const SECTIONS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
-const levelOf = (grade) => (String(grade || '').match(/[456]/) || [])[0]; // "S4" -> "4"
-const combosFor = (grade) => (levelOf(grade) === '6' ? COMBOS_S6 : levelOf(grade) ? COMBOS_S4_S5 : []);
-const studentGrades = (opts) => {
-  const g = opts.grades.filter(levelOf);
-  return g.length ? g : DEFAULT_GRADES;
+const gradesOf = (opts) => (opts.grades?.length ? opts.grades : DEFAULT_GRADES);
+const combosFor = (opts, grade) => opts.gradeCombos?.[grade] ?? DEFAULT_GRADE_COMBOS[grade] ?? [];
+const classLabel = ({ grade, combo, section }) => [grade, combo, section].filter(Boolean).join(' ');
+// A picker value for a new student: first grade, first combination, no section.
+const firstClass = (opts) => {
+  const grade = gradesOf(opts)[0] || '';
+  return { grade, combo: combosFor(opts, grade)[0] || '', section: '' };
 };
-// Every real class: S4 MSI, S4 MSII ... S6 MEG. No A / B / C sections.
-const classesFor = (opts) =>
-  studentGrades(opts).flatMap((g) => combosFor(g).map((c) => ({ v: `${g}|${c}`, t: `${g} ${c}`, grade: g, combo: c })));
-const parseClass = (v) => { const [grade, combo] = String(v || '').split('|'); return { grade, combo }; };
 
 /* ================================================================== */
 /* 3. SMALL UI KIT                                                     */
@@ -124,13 +128,13 @@ const Btn = ({ c = 'ink', className = '', ...p }) => {
 
 const Inp = ({ className = '', ...p }) => (
   <input
-    className={`w-full px-3 py-2 text-xs rounded-[6px] border border-black/25 bg-white focus:outline-none focus:border-[#0b0f1a] focus:ring-2 focus:ring-[#0b0f1a]/10 ${className}`}
+    className={`w-full px-3 py-2 text-xs rounded-[6px] border border-black/25 bg-white focus:outline-none focus:border-[#0b0f1a] focus:ring-2 focus:ring-[#0b0f1a]/10 disabled:bg-black/5 ${className}`}
     {...p}
   />
 );
 
 const Sel = ({ o = [], className = '', ...p }) => (
-  <select className={`w-full px-2.5 py-2 text-xs rounded-[6px] border border-black/25 bg-white focus:outline-none focus:border-[#0b0f1a] ${className}`} {...p}>
+  <select className={`w-full px-2.5 py-2 text-xs rounded-[6px] border border-black/25 bg-white focus:outline-none focus:border-[#0b0f1a] disabled:bg-black/5 disabled:text-black/40 ${className}`} {...p}>
     {o.map((x) => {
       const v = x.v ?? x;
       const t = x.t ?? x;
@@ -466,7 +470,7 @@ function Landing({ onLogin }) {
 /* 5. LOGIN (no sign up: the admin creates every account)              */
 /* ================================================================== */
 
-const EMPTY_OPTS = { grades: [], classes: [], combos: [], clubs: [], staffRoles: [], families: [], reasons: [] };
+const EMPTY_OPTS = { grades: [], gradeCombos: {}, classes: [], combos: [], clubs: [], staffRoles: [], families: [], reasons: [] };
 
 // Google's own button. It only logs in people the admin has already added.
 function GoogleBtn({ onResult, onError }) {
@@ -676,10 +680,9 @@ function Student({ opts }) {
 
 function Teacher({ user, opts }) {
   const psy = user.role === 'psychosocial';
-  const classes = classesFor(opts).map((c) => c.t); // "S4 MSI", "S6 PCB" ...
-  const classOpts = psy ? [{ v: '', t: 'All students' }, ...classes.map((c) => ({ v: c, t: c }))] : classes;
 
-  const [cls, setCls] = useState(psy ? '' : classes[0] || '');
+  const [classes, setClasses] = useState([]); // real classes that have students, e.g. "S6 PCB", "S6 PCB A"
+  const [cls, setCls] = useState('');
   const [students, setStudents] = useState([]);
   const [picked, setPicked] = useState([]);
   const [sessions, setSessions] = useState([]);
@@ -689,9 +692,13 @@ function Teacher({ user, opts }) {
   const [ok, setOk] = useState(false);
   const [apps, setApps] = useState([]);
 
+  const classOpts = psy ? [{ v: '', t: 'All students' }, ...classes.map((c) => ({ v: c, t: c }))] : classes;
   const loadApps = () => api('/api/apps').then(setApps).catch((e) => { setOk(false); setMsg(e.message); });
 
   useEffect(() => {
+    api('/api/classes')
+      .then((list) => { setClasses(list); if (!psy) setCls((c) => c || list[0] || ''); })
+      .catch((e) => { setOk(false); setMsg(e.message); });
     api('/api/sessions').then((s) => { setSessions(s); setSid((id) => id || s[0]?.id || ''); }).catch((e) => { setOk(false); setMsg(e.message); });
     loadApps();
   }, []);
@@ -761,7 +768,7 @@ function Teacher({ user, opts }) {
               <input type="checkbox" checked={picked.includes(s.name)} onChange={() => toggle(s.name)} />
               <Avatar name={s.name} className="h-7 w-7 text-[10px]" />
               <span className="font-medium">{s.name}</span>
-              {psy && <span className="text-black/60">{s.className} · {s.combo}</span>}
+              {psy && <span className="text-black/60">{s.className}</span>}
             </label>
           ))}
         </div>
@@ -789,8 +796,9 @@ function Teacher({ user, opts }) {
 /* ================================================================== */
 
 const ADMIN_TABS = ['Overview', 'Users', 'Labs', 'Schedule', 'Applications', 'Attendance', 'History', 'Settings'];
+// Grades and combinations have their own editor (ClassSetup). These are the simple lists.
 const LISTS = {
-  grades: 'Grades', combos: 'Subject combinations', clubs: 'Clubs and activities',
+  clubs: 'Clubs and activities',
   staffRoles: 'Staff roles', families: 'Families', reasons: 'Booking reasons',
 };
 const ROLE_LABEL = { admin: 'Admin', teacher: 'Teacher', psychosocial: 'Psychosocial worker', student: 'Student' };
@@ -914,7 +922,7 @@ function Overview({ stats, opts }) {
           <BarChart data={classData} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
             <CartesianGrid stroke={C.grid} horizontal={false} />
             <XAxis type="number" tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
-            <YAxis type="category" dataKey="name" width={80} tick={TICK} axisLine={false} tickLine={false} />
+            <YAxis type="category" dataKey="name" width={90} tick={TICK} axisLine={false} tickLine={false} />
             <Tooltip {...TIP} />
             <Bar dataKey="Applications" fill={C.ink} radius={[0, 4, 4, 0]} />
           </BarChart>
@@ -948,6 +956,45 @@ function Overview({ stats, opts }) {
   );
 }
 
+/* ---------- class picker: grade + combination + optional section ---------- */
+
+function ClassPicker({ value, opts, onChange }) {
+  const grades = gradesOf(opts);
+  const combos = combosFor(opts, value.grade);
+  const setGrade = (grade) => onChange({ grade, combo: combosFor(opts, grade)[0] || '', section: value.section });
+  const label = classLabel(value);
+
+  return (
+    <div className="md:col-span-2">
+      <div className="grid sm:grid-cols-3 gap-5">
+        <Field l="Grade" hint="Add more grades in Settings.">
+          <Sel o={grades} value={value.grade} onChange={(e) => setGrade(e.target.value)} />
+        </Field>
+        <Field l="Combination" hint={combos.length ? undefined : 'This grade has no combinations.'}>
+          <Sel
+            o={combos.length ? combos : [{ v: '', t: 'None' }]}
+            value={value.combo}
+            disabled={!combos.length}
+            onChange={(e) => onChange({ ...value, combo: e.target.value })}
+          />
+        </Field>
+        <Field l="Section (optional)" hint="Letter A to Z. Leave empty if the class is a single stream.">
+          <Sel
+            o={[{ v: '', t: 'No section' }, ...SECTIONS]}
+            value={value.section}
+            onChange={(e) => onChange({ ...value, section: e.target.value })}
+          />
+        </Field>
+      </div>
+      {label && (
+        <p className="mt-3 text-xs text-black/60">
+          This student will be in <span className="rounded-full bg-[#16a34a]/10 px-2.5 py-0.5 font-semibold text-[#15803d]">{label}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* ---------- accounts: the admin creates every user ---------- */
 
 const genPassword = () => {
@@ -958,8 +1005,7 @@ const genPassword = () => {
 };
 
 function UsersTab({ users, opts, act }) {
-  const classes = classesFor(opts);
-  const blank = { name: '', email: '', role: 'student', klass: classes[0]?.v || '', password: genPassword() };
+  const blank = { name: '', email: '', role: 'student', ...firstClass(opts), password: genPassword() };
   const [f, setF] = useState(blank);
   const [created, setCreated] = useState(null);
   const [q, setQ] = useState('');
@@ -970,20 +1016,31 @@ function UsersTab({ users, opts, act }) {
   const create = () => act(async () => {
     await api('/api/users', 'POST', {
       name: f.name, email: f.email, role: f.role, password: f.password,
-      ...(f.role === 'student' && parseClass(f.klass)),
+      ...(f.role === 'student' && { grade: f.grade, combo: f.combo, section: f.section }),
     });
     setCreated({ name: f.name, email: f.email, password: f.password });
-    setF({ ...blank, role: f.role, klass: f.klass, password: genPassword() });
+    setF({ ...blank, role: f.role, grade: f.grade, combo: f.combo, section: f.section, password: genPassword() });
   });
 
   const save = () => act(async () => {
     await api(`/api/users/${edit.id}`, 'PUT', {
       email: edit.email,
       password: edit.password || undefined,
-      ...(edit.role === 'student' && parseClass(edit.klass)),
+      ...(edit.role === 'student' && { grade: edit.grade, combo: edit.combo, section: edit.section }),
     });
     setEdit(null);
   });
+
+  // Opens the edit window with the student's current grade, combination and section.
+  const openEdit = (u) => {
+    const grades = gradesOf(opts);
+    const grade = grades.includes(u.grade) ? u.grade : grades.find((g) => (u.className || '').startsWith(g)) || grades[0] || '';
+    const combos = combosFor(opts, grade);
+    setEdit({
+      id: u.id, name: u.name, role: u.role, email: u.email, password: '',
+      grade, combo: combos.includes(u.combo) ? u.combo : combos[0] || '', section: u.section || '',
+    });
+  };
 
   const shown = users.filter((u) => (rf === 'all' || u.role === rf) && `${u.name} ${u.email}`.toLowerCase().includes(q.toLowerCase()));
   const count = (r) => users.filter((u) => u.role === r).length;
@@ -1004,9 +1061,7 @@ function UsersTab({ users, opts, act }) {
           <Field l="Full name" hint="Used on bookings, so it must be unique."><Inp value={f.name} onChange={up('name')} placeholder="Aline Mukamana" /></Field>
           <Field l="Email"><Inp type="email" value={f.email} onChange={up('email')} placeholder="aline@school.rw" /></Field>
           {f.role === 'student' && (
-            <Field l="Class" hint="Grade and combination, for example S6 PCB.">
-              <Sel o={classes} value={f.klass} onChange={up('klass')} />
-            </Field>
+            <ClassPicker value={{ grade: f.grade, combo: f.combo, section: f.section }} opts={opts} onChange={(c) => setF((p) => ({ ...p, ...c }))} />
           )}
           <Field l="Password" hint="At least 6 characters.">
             <div className="flex gap-2">
@@ -1015,7 +1070,13 @@ function UsersTab({ users, opts, act }) {
             </div>
           </Field>
         </div>
-        <Btn className="mt-6" disabled={!f.name.trim() || !f.email.trim() || f.password.length < 6} onClick={create}>Create account</Btn>
+        <Btn
+          className="mt-6"
+          disabled={!f.name.trim() || !f.email.trim() || f.password.length < 6 || (f.role === 'student' && !f.grade)}
+          onClick={create}
+        >
+          Create account
+        </Btn>
 
         {created && (
           <div className="mt-6 rounded-lg border border-[#16a34a]/40 bg-[#16a34a]/5 p-4 text-xs">
@@ -1047,10 +1108,7 @@ function UsersTab({ users, opts, act }) {
               <span className="rounded-full bg-black/5 px-2.5 py-0.5 text-[11px] font-semibold">
                 {u.role === 'student' ? (u.className || 'No class') : ROLE_LABEL[u.role]}
               </span>
-              <Btn c="w" onClick={() => setEdit({
-                id: u.id, name: u.name, role: u.role, email: u.email, password: '',
-                klass: classes.find((c) => c.t === u.className)?.v || classes[0]?.v || '',
-              })}>Edit</Btn>
+              <Btn c="w" onClick={() => openEdit(u)}>Edit</Btn>
               <Btn c="or" onClick={() => window.confirm(`Delete the account of ${u.name}?`) && act(() => api(`/api/users/${u.id}`, 'DELETE'))}>Delete</Btn>
             </span>
           </Row>
@@ -1062,7 +1120,7 @@ function UsersTab({ users, opts, act }) {
           <div className="space-y-4">
             <Field l="Email"><Inp type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></Field>
             {edit.role === 'student' && (
-              <Field l="Class"><Sel o={classes} value={edit.klass} onChange={(e) => setEdit({ ...edit, klass: e.target.value })} /></Field>
+              <ClassPicker value={{ grade: edit.grade, combo: edit.combo, section: edit.section }} opts={opts} onChange={(c) => setEdit({ ...edit, ...c })} />
             )}
             <Field l="New password" hint="Leave empty to keep the current password.">
               <div className="flex gap-2">
@@ -1078,6 +1136,106 @@ function UsersTab({ users, opts, act }) {
         </Modal>
       )}
     </div>
+  );
+}
+
+/* ---------- settings: grades and the combinations of each grade ---------- */
+
+const Chip = ({ children, onRemove, label }) => (
+  <span className="inline-flex items-center gap-2 rounded-full border border-black/15 bg-white py-1.5 pl-3 pr-2 text-xs font-medium">
+    {children}
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onRemove}
+      className="grid h-4 w-4 place-items-center rounded-full text-[#f97316] hover:bg-[#f97316]/10"
+    >
+      ×
+    </button>
+  </span>
+);
+
+function ClassSetup({ opts, save }) {
+  const grades = gradesOf(opts);
+  const [newGrade, setNewGrade] = useState('');
+  const [newCombo, setNewCombo] = useState({});
+
+  // Always send every grade with its combinations, so the defaults are saved the first time you edit.
+  const full = Object.fromEntries(grades.map((g) => [g, combosFor(opts, g)]));
+  const clean = (s) => s.trim().toUpperCase().replace(/\s+/g, ' ');
+
+  const addGrade = () => {
+    const g = clean(newGrade);
+    if (g && !grades.includes(g)) save([...grades, g], { ...full, [g]: [] });
+    setNewGrade('');
+  };
+  const removeGrade = (g) => {
+    if (!window.confirm(`Remove ${g}? Students already in ${g} keep their class.`)) return;
+    const { [g]: _gone, ...rest } = full;
+    save(grades.filter((x) => x !== g), rest);
+  };
+  const addCombo = (g) => {
+    const c = clean(newCombo[g] || '');
+    if (c && !full[g].includes(c)) save(grades, { ...full, [g]: [...full[g], c] });
+    setNewCombo({ ...newCombo, [g]: '' });
+  };
+  const removeCombo = (g, c) => save(grades, { ...full, [g]: full[g].filter((x) => x !== c) });
+
+  return (
+    <Card
+      t="Grades and combinations"
+      sub="A class is a grade plus a combination, for example S6 PCB. When you create a student you can also add a section letter (A to Z) if the class has several streams."
+    >
+      <div className="mb-6 flex gap-3 max-w-md">
+        <Inp
+          placeholder="New grade, for example S3"
+          value={newGrade}
+          onChange={(e) => setNewGrade(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && addGrade()}
+        />
+        <Btn className="shrink-0" onClick={addGrade}>Add grade</Btn>
+      </div>
+
+      {grades.length === 0 && <Empty>No grades yet. Add your first grade above.</Empty>}
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {grades.map((g) => (
+          <div key={g} className="rounded-xl border border-black/10 bg-[#f6f7f9] p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#0b0f1a] text-xs font-bold text-white">{g}</span>
+                <div>
+                  <div className="text-xs font-semibold">Grade {g}</div>
+                  <div className="text-[11px] text-black/50">
+                    {full[g].length ? `${full[g].length} combination${full[g].length === 1 ? '' : 's'}` : 'No combinations'}
+                  </div>
+                </div>
+              </div>
+              <button type="button" onClick={() => removeGrade(g)} className="text-[11px] font-semibold text-[#c2410c] hover:underline">
+                Remove grade
+              </button>
+            </div>
+
+            <div className="mb-3 flex min-h-[32px] flex-wrap gap-2">
+              {full[g].length === 0 && <span className="py-1.5 text-xs text-black/50">Students in this grade are only given a grade and an optional section.</span>}
+              {full[g].map((c) => (
+                <Chip key={c} label={`Remove ${c} from ${g}`} onRemove={() => removeCombo(g, c)}>{c}</Chip>
+              ))}
+            </div>
+
+            <div className="flex gap-2">
+              <Inp
+                placeholder={`Add a combination to ${g}`}
+                value={newCombo[g] || ''}
+                onChange={(e) => setNewCombo({ ...newCombo, [g]: e.target.value })}
+                onKeyDown={(e) => e.key === 'Enter' && addCombo(g)}
+              />
+              <Btn c="w" className="shrink-0" onClick={() => addCombo(g)}>Add</Btn>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -1115,6 +1273,8 @@ function Admin({ opts: initial, tab }) {
   };
   const saveList = (k, list) =>
     act(async () => setOpts({ ...EMPTY_OPTS, ...(await api('/api/options', 'PUT', { [k]: list })) }));
+  const saveSetup = (grades, gradeCombos) =>
+    act(async () => setOpts({ ...EMPTY_OPTS, ...(await api('/api/options', 'PUT', { grades, gradeCombos })) }));
   const runHistory = () =>
     act(async () => setHist(await api(`/api/history?date=${hf.date}&labId=${hf.labId}`)));
   const setStatus = (a, status) => act(() => api(`/api/apps/${a.id}/status`, 'PATCH', { status }));
@@ -1154,15 +1314,13 @@ function Admin({ opts: initial, tab }) {
 
       {tab === 'Settings' && (
         <div>
-          <p className="mb-6 text-black/70">Students and staff choose from these lists when they book a lab. A class is always a grade plus a combination, such as S6 PCB.</p>
+          <p className="mb-6 text-black/70">Students and staff choose from these lists. A class is a grade plus a combination, such as S6 PCB, with an optional section letter.</p>
+          <ClassSetup opts={opts} save={saveSetup} />
           {Object.entries(LISTS).map(([k, title]) => (
             <Card key={k} t={title}>
               <div className="flex flex-wrap gap-2 mb-5">
                 {(opts[k] || []).map((x) => (
-                  <span key={x} className="border border-black/20 rounded-full px-3 py-1.5 font-medium">
-                    {x}{' '}
-                    <button type="button" aria-label={'Remove ' + x} className="text-[#f97316]" onClick={() => saveList(k, opts[k].filter((y) => y !== x))}>×</button>
-                  </span>
+                  <Chip key={x} label={'Remove ' + x} onRemove={() => saveList(k, opts[k].filter((y) => y !== x))}>{x}</Chip>
                 ))}
               </div>
               <div className="flex gap-3">
@@ -1333,7 +1491,9 @@ function Profile() {
   const details = [
     ['Email', p.email || 'Not set'],
     ['Role', ROLE_LABEL[p.role] || p.role],
-    ...(p.role === 'student' ? [['Class', p.cls || 'Not set'], ['Combination', p.combo || 'Not set']] : []),
+    ...(p.role === 'student'
+      ? [['Class', p.cls || 'Not set'], ['Combination', p.combo || 'None'], ...(p.section ? [['Section', p.section]] : [])]
+      : []),
   ];
   const s = p.stats;
 
@@ -1479,7 +1639,7 @@ export default function Home() {
   const handleAuth = async (t) => {
     setToken(t);
     await loadOpts();
-    setUser(await api('/api/me')); // { id, role, name, email }
+    setUser(); // { id, role, name, email }
     setView('app');
   };
   const logout = () => { setToken(''); setUser(null); setView('home'); };

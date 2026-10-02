@@ -14,17 +14,20 @@ const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families',
 const ROLES = ['student', 'teacher', 'psychosocial'];
 const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// Subject combinations by level. Senior 4 and 5 share one set, Senior 6 has its own.
-// A class is now just grade + combination (for example "S6 PCB"). There are no A / B / C sections.
+// A class is a grade + a combination + an optional section letter, for example "S6 PCB" or "S6 PCB A".
+// The admin chooses the grades and the combinations of each grade in Settings (option keys "grades" and "gradeCombos").
+// The defaults below are only used the first time, and for grades the admin has not configured yet.
 const COMBOS_S4_S5 = ['MSI', 'MSII', 'ART', 'HUMANITIES'];
 const COMBOS_S6 = ['MPC', 'PCB', 'HGL', 'MEG'];
-const DEFAULTS = { grades: ['S4', 'S5', 'S6'], combos: [...COMBOS_S4_S5, ...COMBOS_S6] };
-const levelOf = cls => (String(cls || '').match(/[456]/) || [])[0];           // "S6 PCB" -> "6"
-const combosFor = cls => (levelOf(cls) === '6' ? COMBOS_S6 : levelOf(cls) ? COMBOS_S4_S5 : []);
+const DEFAULT_GRADE_COMBOS = { S4: COMBOS_S4_S5, S5: COMBOS_S4_S5, S6: COMBOS_S6 };
+const DEFAULTS = { grades: ['S4', 'S5', 'S6'], gradeCombos: DEFAULT_GRADE_COMBOS };
+const SECTION_RE = /^[A-Z]$/;
+const combosFor = (opts, grade) => opts.gradeCombos?.[grade] ?? DEFAULT_GRADE_COMBOS[grade] ?? [];
 
 // Two names are the same person when they have the same words, in any order, ignoring case and spaces.
 const nameKey = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
 const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
+const cleanList = list => [...new Set(list.map(x => String(x).trim()).filter(Boolean))];
 const validEmail = e => /^\S+@\S+\.\S+$/.test(e);
 const safeEqual = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 
@@ -48,21 +51,36 @@ const listApps = (where = '', params = []) => query('SELECT * FROM application_d
 const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_seats WHERE id = $1', [sid]))[0]?.left ?? 0;
 const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Application not found.');
 const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
-const saveOption = (q, k, list) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(list)]);
-const CLASS_SQL = "COALESCE(profile->>'grade', '') || COALESCE(profile->>'cls', '')";
+const saveOption = (q, k, value) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(value)]);
+// The full class name is stored in profile.cls ("S6 PCB A"). Older accounts that only have a grade fall back to it.
+const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
 
 // Fills grades and combinations the first time, without touching anything the admin already set.
 const seedOptions = async () => {
   const cur = await getOptions();
-  for (const [k, v] of Object.entries(DEFAULTS)) if (!Array.isArray(cur[k]) || !cur[k].length) await saveOption(query, k, v);
+  for (const [k, v] of Object.entries(DEFAULTS)) {
+    const missing = k === 'gradeCombos' ? !cur[k] || Array.isArray(cur[k]) : !Array.isArray(cur[k]) || !cur[k].length;
+    if (missing) await saveOption(query, k, v);
+  }
 };
 
-// Checks a student's grade + combination and returns the profile to store, e.g. { cls: 'S6 PCB', combo: 'PCB' }.
-const studentProfile = async (grade, combo) => {
-  const grades = (await getOptions()).grades || DEFAULTS.grades;
-  if (!grades.includes(grade) || !levelOf(grade)) fail(400, 'Choose a valid grade.');
-  if (!combosFor(grade).includes(combo)) fail(400, `Choose a combination for ${grade}: ${combosFor(grade).join(', ')}.`);
-  return { cls: `${grade} ${combo}`, combo };
+// Checks a student's grade, combination and optional section. Returns the profile to store,
+// e.g. { grade: 'S6', combo: 'PCB', section: 'A', cls: 'S6 PCB A' }.
+const studentProfile = async (grade, combo, section) => {
+  const opts = await getOptions();
+  const grades = opts.grades?.length ? opts.grades : DEFAULTS.grades;
+  grade = String(grade || '').trim();
+  if (!grades.includes(grade)) fail(400, 'Choose a valid grade.');
+
+  const combos = combosFor(opts, grade);
+  combo = String(combo || '').trim();
+  if (combos.length && !combos.includes(combo)) fail(400, `Choose a combination for ${grade}: ${combos.join(', ')}.`);
+  if (!combos.length) combo = ''; // this grade has no combinations
+
+  section = String(section || '').trim().toUpperCase(); // optional: only for grades with several streams
+  if (section && !SECTION_RE.test(section)) fail(400, 'The section must be one letter from A to Z, or empty.');
+
+  return { grade, combo, section, cls: [grade, combo, section].filter(Boolean).join(' ') };
 };
 
 // ---------- Socket.io ----------
@@ -110,10 +128,10 @@ app.get('/api/me', auth(), (req, res) => res.json(req.user));
 // ---------- Profile (any logged-in person) ----------
 app.get('/api/profile', auth(), wrap(async (req, res) => {
   const me = req.user;
-  let info = { name: me.name, email: me.email || '', role: me.role, cls: '', combo: '' };
+  let info = { name: me.name, email: me.email || '', role: me.role, cls: '', combo: '', section: '' };
   if (me.id) {
-    const u = await one(`SELECT username, email, role, ${CLASS_SQL} AS cls, profile->>'combo' AS combo FROM users WHERE id = $1`, [me.id]) || fail(404, 'Account not found.');
-    info = { name: u.username, email: u.email, role: u.role, cls: u.cls, combo: u.combo || '' };
+    const u = await one(`SELECT username, email, role, ${CLASS_SQL} AS cls, profile->>'combo' AS combo, profile->>'section' AS section FROM users WHERE id = $1`, [me.id]) || fail(404, 'Account not found.');
+    info = { name: u.username, email: u.email, role: u.role, cls: u.cls, combo: u.combo || '', section: u.section || '' };
   }
   let stats = null;
   if (me.role !== 'admin') {
@@ -136,16 +154,16 @@ app.put('/api/profile/password', auth(), wrap(async (req, res) => {
 
 // ---------- User accounts (admin only) ----------
 app.get('/api/users', auth('admin'), wrap(async (_, res) =>
-  res.json(await query(`SELECT id, username AS name, email, role, ${CLASS_SQL} AS "className", profile->>'combo' AS combo FROM users ORDER BY role, username`))));
+  res.json(await query(`SELECT id, username AS name, email, role, ${CLASS_SQL} AS "className", profile->>'grade' AS grade, profile->>'combo' AS combo, profile->>'section' AS section FROM users ORDER BY role, username`))));
 
 app.post('/api/users', auth('admin'), wrap(async (req, res) => {
-  const { role, grade, combo, password } = req.body;
+  const { role, grade, combo, section, password } = req.body;
   const name = cleanName(req.body.name), email = String(req.body.email || '').trim().toLowerCase();
   if (!name) fail(400, 'Enter the full name.');
   if (!validEmail(email)) fail(400, 'Enter a valid email address.');
   if (!ROLES.includes(role)) fail(400, 'Choose a role.');
   if (String(password || '').length < 6) fail(400, 'The password needs at least 6 characters.');
-  const profile = role === 'student' ? await studentProfile(grade, combo) : {};
+  const profile = role === 'student' ? await studentProfile(grade, combo, section) : {};
   // The name is the person's identity in bookings, so it must be unique.
   if ((await query('SELECT username FROM users')).some(r => nameKey(r.username) === nameKey(name)))
     fail(409, 'Someone with this name already has an account. Add a middle name or number to tell them apart.');
@@ -157,7 +175,7 @@ app.post('/api/users', auth('admin'), wrap(async (req, res) => {
 
 app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => { // email, class (students) and password can change. The name stays, because bookings use it.
   const u = await one('SELECT id, role FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
-  const { grade, combo, password } = req.body, sets = [], p = [];
+  const { grade, combo, section, password } = req.body, sets = [], p = [];
   const add = (col, val) => { p.push(val); sets.push(`${col} = $${p.length}`); };
   if (req.body.email) {
     const email = String(req.body.email).trim().toLowerCase();
@@ -168,7 +186,10 @@ app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => { // email, cl
     if (String(password).length < 6) fail(400, 'The password needs at least 6 characters.');
     add('hash', await bcrypt.hash(password, 10));
   }
-  if (u.role === 'student' && grade) add('profile', await studentProfile(grade, combo));
+  if (u.role === 'student' && grade) { // merge, so other profile details (family, club...) are kept
+    p.push(JSON.stringify(await studentProfile(grade, combo, section)));
+    sets.push(`profile = profile || $${p.length}::jsonb`);
+  }
   if (!sets.length) return res.json({ ok: true });
   p.push(u.id);
   try { await query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${p.length}`, p); }
@@ -178,16 +199,23 @@ app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => { // email, cl
 
 app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM users WHERE id = $1', [req.params.id]); res.sendStatus(204); }));
 
-// ---------- Options set by the admin (grades, combinations, reasons...) ----------
+// ---------- Options set by the admin (grades, combinations of each grade, reasons...) ----------
 app.get('/api/options', wrap(async (_, res) => res.json(await getOptions())));
 app.put('/api/options', auth('admin'), wrap(async (req, res) => {
   await tx(async q => {
-    for (const [k, v] of Object.entries(req.body))
-      if (LISTS.includes(k) && Array.isArray(v))
-        await saveOption(q, k, [...new Set(v.map(x => String(x).trim()).filter(Boolean))]);
+    for (const [k, v] of Object.entries(req.body)) {
+      if (LISTS.includes(k) && Array.isArray(v)) await saveOption(q, k, cleanList(v));
+      // gradeCombos looks like { "S4": ["MSI", "ART"], "S6": ["PCB"] }
+      else if (k === 'gradeCombos' && v && typeof v === 'object' && !Array.isArray(v))
+        await saveOption(q, k, Object.fromEntries(Object.entries(v).map(([g, list]) => [String(g).trim(), Array.isArray(list) ? cleanList(list) : []])));
+    }
   });
   res.json(await getOptions());
 }));
+
+// The classes that really have students, for example ["S4 MSI", "S6 PCB", "S6 PCB A"]. Used by the booking page.
+app.get('/api/classes', auth('teacher', 'psychosocial', 'admin'), wrap(async (_, res) =>
+  res.json((await query(`SELECT DISTINCT ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND ${CLASS_SQL} <> '' ORDER BY cls`)).map(r => r.cls))));
 
 // Class lists for booking. Teachers must pick a class; psychosocial workers and admins can list everyone.
 app.get('/api/students', auth('teacher', 'psychosocial', 'admin'), wrap(async (req, res) => {
