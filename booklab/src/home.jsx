@@ -249,8 +249,8 @@ const TEAM = [
   ['Eric Niyonzima', 'Psychosocial Worker', 'Supports students and books lab time for them.'],
 ];
 const FAQ = [
-  ['How do I get an account?', 'You do not sign up yourself. The school admin creates your account and gives you your email and password.'],
-  ['How do I log in?', 'Use the email and password the admin gave you. If the admin used your Google email, you can also continue with Google. You can change your password from your profile.'],
+  ['How do I get an account?', 'You do not sign up yourself. The school adds every student and teacher using their school email.'],
+  ['How do I log in?', 'Type your email and press Log in. No password is needed. You can also continue with Google.'],
   ['Who can book a lab?', 'Students apply for themselves. Teachers and psychosocial workers can book for a class or chosen students.'],
   ['What if a lab is full?', 'Apply is disabled when no seats remain, and admins can move students between labs.'],
   ['Can I book the same lab twice?', 'No. Each student can hold only one booking per lab time, and bookings that overlap are blocked.'],
@@ -516,6 +516,7 @@ function GoogleBtn({ onResult, onError }) {
 function Auth({ onDone, onBack }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [needPw, setNeedPw] = useState(false); // only admins are asked for a password
   const [show, setShow] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -526,8 +527,9 @@ function Auth({ onDone, onBack }) {
     setErr('');
     setBusy(true);
     try {
-      const { token: t } = await api('/api/login', 'POST', { email, password });
-      await onDone(t);
+      const r = await api('/api/login', 'POST', { email, password: needPw ? password : undefined });
+      if (r.needPassword) { setNeedPw(true); setBusy(false); return; }
+      await onDone(r.token);
     } catch (e2) { setErr(e2.message); setBusy(false); }
   };
 
@@ -552,24 +554,27 @@ function Auth({ onDone, onBack }) {
             <span className="lg:hidden"><Logo /></span>
           </div>
           <h1 className="text-xl font-bold tracking-tight">Welcome back</h1>
-          <p className="mt-1.5 mb-6 text-black/60 leading-relaxed">Log in with the email and password your school admin gave you.</p>
+          <p className="mt-1.5 mb-6 text-black/60 leading-relaxed">Enter the email your school has on record for you.</p>
           {err && <Alert>{err}</Alert>}
 
           <form onSubmit={submit} className="space-y-4">
             <Field l="Email">
-              <Inp type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@school.rw" />
+              <Inp type="email" autoComplete="username" required value={email}
+                onChange={(e) => { setEmail(e.target.value); setNeedPw(false); }} placeholder="you@gmail.com" />
             </Field>
-            <Field l="Password">
-              <div className="relative">
-                <Inp type={show ? 'text' : 'password'} autoComplete="current-password" required value={password}
-                  onChange={(e) => setPassword(e.target.value)} className="!pr-14" />
-                <button type="button" onClick={() => setShow((s) => !s)}
-                  className="absolute inset-y-0 right-3 text-[11px] font-semibold text-black/50 hover:text-black">
-                  {show ? 'Hide' : 'Show'}
-                </button>
-              </div>
-            </Field>
-            <Btn type="submit" className="w-full !py-3" disabled={busy}>{busy ? 'Logging in…' : 'Log in'}</Btn>
+            {needPw && (
+              <Field l="Admin password" hint="Admin accounts need a password.">
+                <div className="relative">
+                  <Inp type={show ? 'text' : 'password'} autoComplete="current-password" required autoFocus value={password}
+                    onChange={(e) => setPassword(e.target.value)} className="!pr-14" />
+                  <button type="button" onClick={() => setShow((s) => !s)}
+                    className="absolute inset-y-0 right-3 text-[11px] font-semibold text-black/50 hover:text-black">
+                    {show ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </Field>
+            )}
+            <Btn type="submit" className="w-full !py-3" disabled={busy}>{busy ? 'Logging in…' : needPw ? 'Log in as admin' : 'Log in'}</Btn>
           </form>
 
           {hasGoogle && (
@@ -582,7 +587,7 @@ function Auth({ onDone, onBack }) {
           )}
 
           <p className="mt-8 text-xs text-center text-black/50">
-            No account yet? Ask your school admin to create one for you.
+            Email not recognised? Ask your school admin to add it.
           </p>
         </div>
       </main>
@@ -796,11 +801,6 @@ function Teacher({ user, opts }) {
 /* ================================================================== */
 
 const ADMIN_TABS = ['Overview', 'Users', 'Labs', 'Schedule', 'Applications', 'Attendance', 'History', 'Settings'];
-// Grades and combinations have their own editor (ClassSetup). These are the simple lists.
-const LISTS = {
-  clubs: 'Clubs and activities',
-  staffRoles: 'Staff roles', families: 'Families', reasons: 'Booking reasons',
-};
 const ROLE_LABEL = { admin: 'Admin', teacher: 'Teacher', psychosocial: 'Psychosocial worker', student: 'Student' };
 const ROLE_CHOICES = ['student', 'teacher', 'psychosocial'];
 
@@ -997,58 +997,50 @@ function ClassPicker({ value, opts, onChange }) {
 
 /* ---------- accounts: the admin creates every user ---------- */
 
-const genPassword = () => {
-  const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const a = new Uint32Array(10);
-  crypto.getRandomValues(a);
-  return Array.from(a, (n) => chars[n % chars.length]).join('');
-};
-
 function UsersTab({ users, opts, act }) {
-  const blank = { name: '', email: '', role: 'student', ...firstClass(opts), password: genPassword() };
+  const blank = { name: '', email: '', role: 'student', ...firstClass(opts) };
   const [f, setF] = useState(blank);
   const [created, setCreated] = useState(null);
   const [q, setQ] = useState('');
   const [rf, setRf] = useState('all');
+  const [cf, setCf] = useState('all');
   const [edit, setEdit] = useState(null);
   const up = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
 
   const create = () => act(async () => {
     await api('/api/users', 'POST', {
-      name: f.name, email: f.email, role: f.role, password: f.password,
+      name: f.name, email: f.email, role: f.role,
       ...(f.role === 'student' && { grade: f.grade, combo: f.combo, section: f.section }),
     });
-    setCreated({ name: f.name, email: f.email, password: f.password });
-    setF({ ...blank, role: f.role, grade: f.grade, combo: f.combo, section: f.section, password: genPassword() });
+    setCreated({ name: f.name, email: f.email });
+    setF({ ...blank, role: f.role, grade: f.grade, combo: f.combo, section: f.section });
   });
 
   const save = () => act(async () => {
     await api(`/api/users/${edit.id}`, 'PUT', {
-      email: edit.email,
-      password: edit.password || undefined,
+      name: edit.name, email: edit.email,
       ...(edit.role === 'student' && { grade: edit.grade, combo: edit.combo, section: edit.section }),
     });
     setEdit(null);
   });
 
-  // Opens the edit window with the student's current grade, combination and section.
   const openEdit = (u) => {
     const grades = gradesOf(opts);
     const grade = grades.includes(u.grade) ? u.grade : grades.find((g) => (u.className || '').startsWith(g)) || grades[0] || '';
     const combos = combosFor(opts, grade);
-    setEdit({
-      id: u.id, name: u.name, role: u.role, email: u.email, password: '',
-      grade, combo: combos.includes(u.combo) ? u.combo : combos[0] || '', section: u.section || '',
-    });
+    setEdit({ id: u.id, name: u.name, role: u.role, email: u.email, grade, combo: combos.includes(u.combo) ? u.combo : combos[0] || '', section: u.section || '' });
   };
 
-  const shown = users.filter((u) => (rf === 'all' || u.role === rf) && `${u.name} ${u.email}`.toLowerCase().includes(q.toLowerCase()));
+  const classNames = [...new Set(users.filter((u) => u.role === 'student' && u.className).map((u) => u.className))].sort();
+  const shown = users.filter((u) =>
+    (rf === 'all' || u.role === rf) &&
+    (cf === 'all' || u.className === cf) &&
+    `${u.name} ${u.email}`.toLowerCase().includes(q.toLowerCase()));
   const count = (r) => users.filter((u) => u.role === r).length;
-  const copy = () => navigator.clipboard?.writeText(`Email: ${created.email}\nPassword: ${created.password}`);
 
   return (
     <div>
-      <Card t="Create an account" sub="People cannot sign up themselves. Give them the email and password you set here.">
+      <Card t="Add an account" sub="Students, teachers and psychosocial workers log in with their email only. No password is needed.">
         <div className="mb-5">
           <span className="block mb-1.5 text-xs font-medium">Role</span>
           <div className="grid grid-cols-3 gap-2 max-w-md">
@@ -1059,41 +1051,28 @@ function UsersTab({ users, opts, act }) {
         </div>
         <div className="grid md:grid-cols-2 gap-5">
           <Field l="Full name" hint="Used on bookings, so it must be unique."><Inp value={f.name} onChange={up('name')} placeholder="Aline Mukamana" /></Field>
-          <Field l="Email"><Inp type="email" value={f.email} onChange={up('email')} placeholder="aline@school.rw" /></Field>
+          <Field l="Email"><Inp type="email" value={f.email} onChange={up('email')} placeholder="aline@gmail.com" /></Field>
           {f.role === 'student' && (
             <ClassPicker value={{ grade: f.grade, combo: f.combo, section: f.section }} opts={opts} onChange={(c) => setF((p) => ({ ...p, ...c }))} />
           )}
-          <Field l="Password" hint="At least 6 characters.">
-            <div className="flex gap-2">
-              <Inp value={f.password} onChange={up('password')} />
-              <Btn c="w" className="shrink-0" onClick={() => setF((p) => ({ ...p, password: genPassword() }))}>Generate</Btn>
-            </div>
-          </Field>
         </div>
-        <Btn
-          className="mt-6"
-          disabled={!f.name.trim() || !f.email.trim() || f.password.length < 6 || (f.role === 'student' && !f.grade)}
-          onClick={create}
-        >
-          Create account
+        <Btn className="mt-6" disabled={!f.name.trim() || !f.email.trim() || (f.role === 'student' && !f.grade)} onClick={create}>
+          Add account
         </Btn>
-
         {created && (
-          <div className="mt-6 rounded-lg border border-[#16a34a]/40 bg-[#16a34a]/5 p-4 text-xs">
-            <p className="font-semibold text-[#15803d]">Account created for {created.name}.</p>
-            <p className="mt-2">Email: <b>{created.email}</b></p>
-            <p>Password: <b>{created.password}</b></p>
-            <p className="mt-2 text-black/60">Save this now. The password is not shown again.</p>
-            <Btn c="w" className="mt-3" onClick={copy}>Copy login details</Btn>
-          </div>
+          <p className="mt-5 rounded-lg border border-[#16a34a]/40 bg-[#16a34a]/5 p-4 text-xs text-[#15803d]">
+            <b>{created.name}</b> can now log in with <b>{created.email}</b>.
+          </p>
         )}
       </Card>
 
       <Card t="All accounts" sub={`${count('student')} students · ${count('teacher')} teachers · ${count('psychosocial')} psychosocial workers`}>
-        <div className="grid md:grid-cols-[1fr_200px] gap-3 mb-4">
+        <div className="grid md:grid-cols-[1fr_180px_180px] gap-3 mb-4">
           <Inp placeholder="Search by name or email" value={q} onChange={(e) => setQ(e.target.value)} />
           <Sel o={[{ v: 'all', t: 'All roles' }, ...ROLE_CHOICES.map((r) => ({ v: r, t: ROLE_LABEL[r] }))]} value={rf} onChange={(e) => setRf(e.target.value)} />
+          <Sel o={[{ v: 'all', t: 'All classes' }, ...classNames]} value={cf} onChange={(e) => setCf(e.target.value)} />
         </div>
+        <p className="mb-2 text-xs text-black/50">{shown.length} shown</p>
         {shown.length === 0 && <Empty>No accounts match.</Empty>}
         {shown.map((u) => (
           <Row key={u.id}>
@@ -1118,16 +1097,11 @@ function UsersTab({ users, opts, act }) {
       {edit && (
         <Modal title={`Edit ${edit.name}`} onClose={() => setEdit(null)}>
           <div className="space-y-4">
+            <Field l="Full name" hint="Past bookings are updated to the new name."><Inp value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
             <Field l="Email"><Inp type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></Field>
             {edit.role === 'student' && (
               <ClassPicker value={{ grade: edit.grade, combo: edit.combo, section: edit.section }} opts={opts} onChange={(c) => setEdit({ ...edit, ...c })} />
             )}
-            <Field l="New password" hint="Leave empty to keep the current password.">
-              <div className="flex gap-2">
-                <Inp value={edit.password} onChange={(e) => setEdit({ ...edit, password: e.target.value })} />
-                <Btn c="w" className="shrink-0" onClick={() => setEdit({ ...edit, password: genPassword() })}>Generate</Btn>
-              </div>
-            </Field>
             <div className="flex gap-3 pt-2">
               <Btn onClick={save}>Save changes</Btn>
               <Btn c="w" onClick={() => setEdit(null)}>Cancel</Btn>
@@ -1141,26 +1115,21 @@ function UsersTab({ users, opts, act }) {
 
 /* ---------- settings: grades and the combinations of each grade ---------- */
 
-const Chip = ({ children, onRemove, label }) => (
+const Chip = ({ children, onRemove, onEdit, label }) => (
   <span className="inline-flex items-center gap-2 rounded-full border border-black/15 bg-white py-1.5 pl-3 pr-2 text-xs font-medium">
     {children}
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onRemove}
-      className="grid h-4 w-4 place-items-center rounded-full text-[#f97316] hover:bg-[#f97316]/10"
-    >
-      ×
-    </button>
+    {onEdit && (
+      <button type="button" aria-label={`Rename ${label}`} onClick={onEdit} className="text-black/40 hover:text-black">✎</button>
+    )}
+    <button type="button" aria-label={`Remove ${label}`} onClick={onRemove}
+      className="grid h-4 w-4 place-items-center rounded-full text-[#f97316] hover:bg-[#f97316]/10">×</button>
   </span>
 );
 
-function ClassSetup({ opts, save }) {
+function ClassSetup({ opts, save, rename }) {
   const grades = gradesOf(opts);
   const [newGrade, setNewGrade] = useState('');
   const [newCombo, setNewCombo] = useState({});
-
-  // Always send every grade with its combinations, so the defaults are saved the first time you edit.
   const full = Object.fromEntries(grades.map((g) => [g, combosFor(opts, g)]));
   const clean = (s) => s.trim().toUpperCase().replace(/\s+/g, ' ');
 
@@ -1174,30 +1143,29 @@ function ClassSetup({ opts, save }) {
     const { [g]: _gone, ...rest } = full;
     save(grades.filter((x) => x !== g), rest);
   };
+  const renameGrade = (g) => {
+    const to = window.prompt(`New name for grade ${g}`, g);
+    if (to && clean(to) !== g) rename(null, g, to);
+  };
   const addCombo = (g) => {
     const c = clean(newCombo[g] || '');
     if (c && !full[g].includes(c)) save(grades, { ...full, [g]: [...full[g], c] });
     setNewCombo({ ...newCombo, [g]: '' });
   };
+  const renameCombo = (g, c) => {
+    const to = window.prompt(`New name for ${c} in ${g}`, c);
+    if (to && clean(to) !== c) rename(g, c, to);
+  };
   const removeCombo = (g, c) => save(grades, { ...full, [g]: full[g].filter((x) => x !== c) });
 
   return (
-    <Card
-      t="Grades and combinations"
-      sub="A class is a grade plus a combination, for example S6 PCB. When you create a student you can also add a section letter (A to Z) if the class has several streams."
-    >
+    <Card t="Grades and combinations" sub="A class is a grade plus a combination, for example S6 IJABO. Renaming updates every student already in it.">
       <div className="mb-6 flex gap-3 max-w-md">
-        <Inp
-          placeholder="New grade, for example S3"
-          value={newGrade}
-          onChange={(e) => setNewGrade(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && addGrade()}
-        />
+        <Inp placeholder="New grade, for example S3" value={newGrade}
+          onChange={(e) => setNewGrade(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addGrade()} />
         <Btn className="shrink-0" onClick={addGrade}>Add grade</Btn>
       </div>
-
       {grades.length === 0 && <Empty>No grades yet. Add your first grade above.</Empty>}
-
       <div className="grid gap-4 md:grid-cols-2">
         {grades.map((g) => (
           <div key={g} className="rounded-xl border border-black/10 bg-[#f6f7f9] p-4">
@@ -1211,31 +1179,74 @@ function ClassSetup({ opts, save }) {
                   </div>
                 </div>
               </div>
-              <button type="button" onClick={() => removeGrade(g)} className="text-[11px] font-semibold text-[#c2410c] hover:underline">
-                Remove grade
-              </button>
+              <span className="flex gap-3 text-[11px] font-semibold">
+                <button type="button" onClick={() => renameGrade(g)} className="hover:underline">Rename</button>
+                <button type="button" onClick={() => removeGrade(g)} className="text-[#c2410c] hover:underline">Remove</button>
+              </span>
             </div>
-
             <div className="mb-3 flex min-h-[32px] flex-wrap gap-2">
-              {full[g].length === 0 && <span className="py-1.5 text-xs text-black/50">Students in this grade are only given a grade and an optional section.</span>}
+              {full[g].length === 0 && <span className="py-1.5 text-xs text-black/50">No combinations. Students get a grade and an optional section.</span>}
               {full[g].map((c) => (
-                <Chip key={c} label={`Remove ${c} from ${g}`} onRemove={() => removeCombo(g, c)}>{c}</Chip>
+                <Chip key={c} label={`${c} from ${g}`} onEdit={() => renameCombo(g, c)} onRemove={() => removeCombo(g, c)}>{c}</Chip>
               ))}
             </div>
-
             <div className="flex gap-2">
-              <Inp
-                placeholder={`Add a combination to ${g}`}
-                value={newCombo[g] || ''}
-                onChange={(e) => setNewCombo({ ...newCombo, [g]: e.target.value })}
-                onKeyDown={(e) => e.key === 'Enter' && addCombo(g)}
-              />
+              <Inp placeholder={`Add a combination to ${g}`} value={newCombo[g] || ''}
+                onChange={(e) => setNewCombo({ ...newCombo, [g]: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && addCombo(g)} />
               <Btn c="w" className="shrink-0" onClick={() => addCombo(g)}>Add</Btn>
             </div>
           </div>
         ))}
       </div>
     </Card>
+  );
+}
+
+function ListEditor({ title, sub, items, onSave }) {
+  const [v, setV] = useState('');
+  const add = () => {
+    const x = v.trim();
+    if (x && !items.includes(x)) onSave([...items, x]);
+    setV('');
+  };
+  const rename = (x) => {
+    const to = window.prompt(`Rename "${x}"`, x);
+    if (to && to.trim() && to.trim() !== x) onSave(items.map((y) => (y === x ? to.trim() : y)));
+  };
+  return (
+    <Card t={title} sub={sub}>
+      <div className="flex flex-wrap gap-2 mb-5 min-h-[32px]">
+        {items.length === 0 && <span className="py-1.5 text-xs text-black/50">Nothing here yet.</span>}
+        {items.map((x) => (
+          <Chip key={x} label={x} onEdit={() => rename(x)} onRemove={() => onSave(items.filter((y) => y !== x))}>{x}</Chip>
+        ))}
+      </div>
+      <div className="flex gap-3 max-w-md">
+        <Inp placeholder={`Add to ${title.toLowerCase()}`} value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
+        <Btn className="shrink-0" onClick={add}>Add</Btn>
+      </div>
+    </Card>
+  );
+}
+
+const SETTINGS_TABS = ['Classes', 'Booking reasons', 'Clubs and staff'];
+const OTHER_LISTS = { clubs: ['Clubs and activities', 'Shown on student profiles.'], staffRoles: ['Staff roles', 'Job titles for staff.'], families: ['Families', 'Groups students belong to.'] };
+
+function SettingsTab({ opts, saveList, saveSetup, rename }) {
+  const [t, setT] = useState(SETTINGS_TABS[0]);
+  return (
+    <div>
+      <div className="mb-6 flex flex-wrap gap-2">
+        {SETTINGS_TABS.map((x) => <Btn key={x} c={t === x ? 'ink' : 'w'} onClick={() => setT(x)}>{x}</Btn>)}
+      </div>
+      {t === 'Classes' && <ClassSetup opts={opts} save={saveSetup} rename={rename} />}
+      {t === 'Booking reasons' && (
+        <ListEditor title="Booking reasons" sub="Students and staff pick one of these when they book." items={opts.reasons || []} onSave={(l) => saveList('reasons', l)} />
+      )}
+      {t === 'Clubs and staff' && Object.entries(OTHER_LISTS).map(([k, [title, sub]]) => (
+        <ListEditor key={k} title={title} sub={sub} items={opts[k] || []} onSave={(l) => saveList(k, l)} />
+      ))}
+    </div>
   );
 }
 
@@ -1253,7 +1264,6 @@ function Admin({ opts: initial, tab }) {
   const [lab, setLab] = useState({ name: '', pcs: 10 });
   const [sch, setSch] = useState({ date: today(), from: '14:00', to: '16:00', labId: 'all' });
   const [hf, setHf] = useState({ date: '', labId: '' });
-  const [add, setAdd] = useState({});
 
   const load = () =>
     Promise.all([
@@ -1275,6 +1285,8 @@ function Admin({ opts: initial, tab }) {
     act(async () => setOpts({ ...EMPTY_OPTS, ...(await api('/api/options', 'PUT', { [k]: list })) }));
   const saveSetup = (grades, gradeCombos) =>
     act(async () => setOpts({ ...EMPTY_OPTS, ...(await api('/api/options', 'PUT', { grades, gradeCombos })) }));
+  const rename = (grade, from, to) =>
+    act(async () => setOpts({ ...EMPTY_OPTS, ...(await api('/api/options/rename', 'POST', { grade, from, to })) }));
   const runHistory = () =>
     act(async () => setHist(await api(`/api/history?date=${hf.date}&labId=${hf.labId}`)));
   const setStatus = (a, status) => act(() => api(`/api/apps/${a.id}/status`, 'PATCH', { status }));
@@ -1312,29 +1324,7 @@ function Admin({ opts: initial, tab }) {
         </Card>
       )}
 
-      {tab === 'Settings' && (
-        <div>
-          <p className="mb-6 text-black/70">Students and staff choose from these lists. A class is a grade plus a combination, such as S6 PCB, with an optional section letter.</p>
-          <ClassSetup opts={opts} save={saveSetup} />
-          {Object.entries(LISTS).map(([k, title]) => (
-            <Card key={k} t={title}>
-              <div className="flex flex-wrap gap-2 mb-5">
-                {(opts[k] || []).map((x) => (
-                  <Chip key={x} label={'Remove ' + x} onRemove={() => saveList(k, opts[k].filter((y) => y !== x))}>{x}</Chip>
-                ))}
-              </div>
-              <div className="flex gap-3">
-                <Inp placeholder={'Add to ' + title.toLowerCase()} value={add[k] || ''} onChange={(e) => setAdd({ ...add, [k]: e.target.value })} />
-                <Btn onClick={() => {
-                  const v = (add[k] || '').trim();
-                  if (v) saveList(k, [...(opts[k] || []), v]);
-                  setAdd({ ...add, [k]: '' });
-                }}>Add</Btn>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
+      {tab === 'Settings' && <SettingsTab opts={opts} saveList={saveList} saveSetup={saveSetup} rename={rename} />}
 
       {tab === 'Schedule' && (
         <Card t="Prepare a schedule">
@@ -1470,20 +1460,8 @@ function Admin({ opts: initial, tab }) {
 function Profile() {
   const [p, setP] = useState(null);
   const [err, setErr] = useState('');
-  const [pw, setPw] = useState({ current: '', next: '', again: '' });
-  const [msg, setMsg] = useState(null);
 
   useEffect(() => { api('/api/profile').then(setP).catch((e) => setErr(e.message)); }, []);
-
-  const change = async () => {
-    if (pw.next !== pw.again) return setMsg({ ok: false, t: 'The new passwords do not match.' });
-    try {
-      await api('/api/profile/password', 'PUT', { current: pw.current, next: pw.next });
-      setMsg({ ok: true, t: 'Your password has been changed.' });
-      setPw({ current: '', next: '', again: '' });
-    } catch (e) { setMsg({ ok: false, t: e.message }); }
-  };
-  const set = (k) => (e) => setPw((x) => ({ ...x, [k]: e.target.value }));
 
   if (err) return <Alert>{err}</Alert>;
   if (!p) return <Empty>Loading your profile…</Empty>;
@@ -1527,17 +1505,7 @@ function Profile() {
           </div>
         )}
 
-        <Card t="Change password" sub={p.canChangePassword ? 'Use at least 6 characters.' : 'This admin password is set in the server .env file (ADMIN_PASSWORD).'}>
-          {p.canChangePassword && (
-            <div className="max-w-sm space-y-4">
-              {msg && <Alert ok={msg.ok}>{msg.t}</Alert>}
-              <Field l="Current password"><Inp type="password" autoComplete="current-password" value={pw.current} onChange={set('current')} /></Field>
-              <Field l="New password"><Inp type="password" autoComplete="new-password" value={pw.next} onChange={set('next')} /></Field>
-              <Field l="Repeat new password"><Inp type="password" autoComplete="new-password" value={pw.again} onChange={set('again')} /></Field>
-              <Btn disabled={!pw.current || pw.next.length < 6} onClick={change}>Save new password</Btn>
-            </div>
-          )}
-        </Card>
+
       </div>
     </div>
   );
@@ -1639,7 +1607,7 @@ export default function Home() {
   const handleAuth = async (t) => {
     setToken(t);
     await loadOpts();
-    setUser(); // { id, role, name, email }
+    setUser(await api('/api/me'));
     setView('app');
   };
   const logout = () => { setToken(''); setUser(null); setView('home'); };

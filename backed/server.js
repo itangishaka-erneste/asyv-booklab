@@ -1,33 +1,31 @@
-// server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js connects, database.sql creates the tables).
-// Accounts are created by the admin only. People log in with email + password (or Google, if their email was added by the admin).
+// server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js connects, Neon hosts it).
+// Accounts are created by seed.sql or by the admin. People log in with their email only (or Google).
+// Admin emails (ADMIN_EMAILS) also need ADMIN_PASSWORD, because an admin account must not be open to anyone who knows the email.
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http'), crypto = require('crypto');
-const bcrypt = require('bcryptjs'), jwt = require('jsonwebtoken'), { Server } = require('socket.io');
+const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
 const { OAuth2Client } = require('google-auth-library');
 const { query, one, tx } = require('./db');
 
 const SECRET = process.env.JWT_SECRET || 'change-me';
 const CLIENT = process.env.CLIENT_URL || 'http://localhost:5173';
 const ADMINS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ''; // lets the emails in ADMIN_EMAILS log in with a password
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families', 'reasons'];
 const ROLES = ['student', 'teacher', 'psychosocial'];
 const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// A class is a grade + a combination + an optional section letter, for example "S6 PCB" or "S6 PCB A".
-// The admin chooses the grades and the combinations of each grade in Settings (option keys "grades" and "gradeCombos").
-// The defaults below are only used the first time, and for grades the admin has not configured yet.
-const COMBOS_S4_S5 = ['MSI', 'MSII', 'ART', 'HUMANITIES'];
-const COMBOS_S6 = ['MPC', 'PCB', 'HGL', 'MEG'];
-const DEFAULT_GRADE_COMBOS = { S4: COMBOS_S4_S5, S5: COMBOS_S4_S5, S6: COMBOS_S6 };
+// A class is a grade + a combination + an optional section letter, for example "S6 IJABO" or "S6 IJABO A".
+const DEFAULT_GRADE_COMBOS = { S4: ['INGABE'], S5: ['INGABO'], S6: ['IJABO'] };
 const DEFAULTS = { grades: ['S4', 'S5', 'S6'], gradeCombos: DEFAULT_GRADE_COMBOS };
 const SECTION_RE = /^[A-Z]$/;
 const combosFor = (opts, grade) => opts.gradeCombos?.[grade] ?? DEFAULT_GRADE_COMBOS[grade] ?? [];
 
-// Two names are the same person when they have the same words, in any order, ignoring case and spaces.
+// Two names are the same person when they have the same words, in any order, ignoring case and accents.
 const nameKey = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
 const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
 const cleanList = list => [...new Set(list.map(x => String(x).trim()).filter(Boolean))];
+const cleanCode = s => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
 const validEmail = e => /^\S+@\S+\.\S+$/.test(e);
 const safeEqual = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 
@@ -45,14 +43,13 @@ const auth = (...roles) => (req, res, next) => {
   next();
 };
 
-// ---------- Data helpers (the SQL views session_seats and application_details live in database.sql) ----------
+// ---------- Data helpers (views session_seats and application_details are defined in the database) ----------
 const listSessions = () => query('SELECT * FROM session_seats ORDER BY date, "from", lab');
 const listApps = (where = '', params = []) => query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params);
 const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_seats WHERE id = $1', [sid]))[0]?.left ?? 0;
 const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Application not found.');
 const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
 const saveOption = (q, k, value) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(value)]);
-// The full class name is stored in profile.cls ("S6 PCB A"). Older accounts that only have a grade fall back to it.
 const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
 
 // Fills grades and combinations the first time, without touching anything the admin already set.
@@ -64,27 +61,22 @@ const seedOptions = async () => {
   }
 };
 
-// Checks a student's grade, combination and optional section. Returns the profile to store,
-// e.g. { grade: 'S6', combo: 'PCB', section: 'A', cls: 'S6 PCB A' }.
+// Checks a student's grade, combination and optional section. Returns the profile to store.
 const studentProfile = async (grade, combo, section) => {
   const opts = await getOptions();
   const grades = opts.grades?.length ? opts.grades : DEFAULTS.grades;
   grade = String(grade || '').trim();
   if (!grades.includes(grade)) fail(400, 'Choose a valid grade.');
-
   const combos = combosFor(opts, grade);
   combo = String(combo || '').trim();
   if (combos.length && !combos.includes(combo)) fail(400, `Choose a combination for ${grade}: ${combos.join(', ')}.`);
-  if (!combos.length) combo = ''; // this grade has no combinations
-
-  section = String(section || '').trim().toUpperCase(); // optional: only for grades with several streams
+  if (!combos.length) combo = '';
+  section = String(section || '').trim().toUpperCase();
   if (section && !SECTION_RE.test(section)) fail(400, 'The section must be one letter from A to Z, or empty.');
-
   return { grade, combo, section, cls: [grade, combo, section].filter(Boolean).join(' ') };
 };
 
 // ---------- Socket.io ----------
-// Every logged-in browser gets live seat counts. Admins join the "admins" room, everyone else a private room.
 io.use((socket, next) => {
   try { socket.user = jwt.verify(socket.handshake.auth.token, SECRET); next(); }
   catch { next(new Error('unauthorized')); }
@@ -100,18 +92,23 @@ const pushApps = (names = []) => {
   pushSeats();
 };
 
-// ---------- Login (accounts are created by the admin, nobody signs up alone) ----------
+// ---------- Login ----------
+// Students, teachers and psychosocial workers: email only, and the email must already exist in the database.
+// Admins: email + ADMIN_PASSWORD. Without a password the API answers { needPassword: true }.
 app.post('/api/login', wrap(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase(), password = String(req.body.password || '');
-  if (!email || !password) fail(400, 'Enter your email and password.');
-  if (ADMINS.includes(email) && ADMIN_PASSWORD && safeEqual(password, ADMIN_PASSWORD))
+  if (!validEmail(email)) fail(400, 'Enter a valid email address.');
+  if (ADMINS.includes(email)) {
+    if (!password) return res.json({ needPassword: true });
+    if (!ADMIN_PASSWORD || !safeEqual(password, ADMIN_PASSWORD)) fail(401, 'Wrong admin password.');
     return res.json({ token: sign({ id: 0, role: 'admin', name: cleanName(email.split('@')[0]), email }) });
-  const u = await one('SELECT id, username, role, hash FROM users WHERE email = $1', [email]);
-  if (!u || !(await bcrypt.compare(password, u.hash))) fail(401, 'Wrong email or password.');
+  }
+  const u = await one('SELECT id, username, role FROM users WHERE email = $1', [email]);
+  if (!u) fail(403, 'There is no account for this email. Ask your admin to add it.');
   res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email }) });
 }));
 
-// Google login only works for emails the admin already added. It never creates an account.
+// Google login proves the person owns the email. It never creates an account.
 app.post('/api/google', wrap(async (req, res) => {
   let p;
   try { p = (await gClient.verifyIdToken({ idToken: req.body.credential, audience: process.env.GOOGLE_CLIENT_ID })).getPayload(); }
@@ -120,7 +117,7 @@ app.post('/api/google', wrap(async (req, res) => {
   const email = p.email.toLowerCase();
   if (ADMINS.includes(email)) return res.json({ token: sign({ id: 0, role: 'admin', name: cleanName(p.name || email.split('@')[0]), email }) });
   const u = await one('SELECT id, username, role FROM users WHERE email = $1', [email]);
-  if (!u) fail(403, 'There is no account for this email. Ask your admin to create one.');
+  if (!u) fail(403, 'There is no account for this email. Ask your admin to add it.');
   res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email }) });
 }));
 app.get('/api/me', auth(), (req, res) => res.json(req.user));
@@ -140,60 +137,64 @@ app.get('/api/profile', auth(), wrap(async (req, res) => {
     stats = { total: rows.length, approved: n('approved'), pending: n('pending'), rejected: n('rejected'),
       present: rows.filter(a => a.att === 'present').length, absent: rows.filter(a => a.att === 'absent').length };
   }
-  res.json({ ...info, canChangePassword: !!me.id, stats });
-}));
-app.put('/api/profile/password', auth(), wrap(async (req, res) => {
-  if (!req.user.id) fail(400, 'This admin password is set in the server .env file (ADMIN_PASSWORD).');
-  const { current, next } = req.body;
-  if (String(next || '').length < 6) fail(400, 'The new password needs at least 6 characters.');
-  const u = await one('SELECT hash FROM users WHERE id = $1', [req.user.id]) || fail(404, 'Account not found.');
-  if (!(await bcrypt.compare(String(current || ''), u.hash))) fail(400, 'Your current password is wrong.');
-  await query('UPDATE users SET hash = $1 WHERE id = $2', [await bcrypt.hash(next, 10), req.user.id]);
-  res.json({ ok: true });
+  res.json({ ...info, stats });
 }));
 
 // ---------- User accounts (admin only) ----------
 app.get('/api/users', auth('admin'), wrap(async (_, res) =>
   res.json(await query(`SELECT id, username AS name, email, role, ${CLASS_SQL} AS "className", profile->>'grade' AS grade, profile->>'combo' AS combo, profile->>'section' AS section FROM users ORDER BY role, username`))));
 
+const nameTaken = async (name, exceptId = 0) =>
+  (await query('SELECT id, username FROM users')).some(r => r.id !== exceptId && nameKey(r.username) === nameKey(name));
+const uniqueFail = e => { if (e.code === '23505') fail(409, 'This email or name already has an account.'); throw e; };
+
 app.post('/api/users', auth('admin'), wrap(async (req, res) => {
-  const { role, grade, combo, section, password } = req.body;
+  const { role, grade, combo, section } = req.body;
   const name = cleanName(req.body.name), email = String(req.body.email || '').trim().toLowerCase();
   if (!name) fail(400, 'Enter the full name.');
   if (!validEmail(email)) fail(400, 'Enter a valid email address.');
   if (!ROLES.includes(role)) fail(400, 'Choose a role.');
-  if (String(password || '').length < 6) fail(400, 'The password needs at least 6 characters.');
   const profile = role === 'student' ? await studentProfile(grade, combo, section) : {};
-  // The name is the person's identity in bookings, so it must be unique.
-  if ((await query('SELECT username FROM users')).some(r => nameKey(r.username) === nameKey(name)))
-    fail(409, 'Someone with this name already has an account. Add a middle name or number to tell them apart.');
+  if (await nameTaken(name)) fail(409, 'Someone with this name already has an account. Add a middle name or number to tell them apart.');
   try {
-    res.json(await one('INSERT INTO users(username, email, hash, role, profile) VALUES($1,$2,$3,$4,$5) RETURNING id, username AS name, email, role',
-      [name, email, await bcrypt.hash(password, 10), role, profile]));
-  } catch (e) { fail(e.code === '23505' ? 409 : 500, e.code === '23505' ? 'This email or name already has an account.' : e.message); }
+    res.json(await one('INSERT INTO users(username, email, role, profile) VALUES($1,$2,$3,$4) RETURNING id, username AS name, email, role', [name, email, role, profile]));
+  } catch (e) { uniqueFail(e); }
 }));
 
-app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => { // email, class (students) and password can change. The name stays, because bookings use it.
-  const u = await one('SELECT id, role FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
-  const { grade, combo, section, password } = req.body, sets = [], p = [];
+// Name, email and class (students) can change. A new name is copied to bookings and the blacklist.
+app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
+  const u = await one('SELECT id, username, role FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
+  const { grade, combo, section } = req.body, sets = [], p = [];
   const add = (col, val) => { p.push(val); sets.push(`${col} = $${p.length}`); };
+  let newName = null;
+  if (req.body.name != null && cleanName(req.body.name) !== u.username) {
+    newName = cleanName(req.body.name);
+    if (!newName) fail(400, 'The name cannot be empty.');
+    if (await nameTaken(newName, u.id)) fail(409, 'Someone with this name already has an account.');
+    add('username', newName);
+  }
   if (req.body.email) {
     const email = String(req.body.email).trim().toLowerCase();
     if (!validEmail(email)) fail(400, 'Enter a valid email address.');
     add('email', email);
   }
-  if (password) {
-    if (String(password).length < 6) fail(400, 'The password needs at least 6 characters.');
-    add('hash', await bcrypt.hash(password, 10));
-  }
-  if (u.role === 'student' && grade) { // merge, so other profile details (family, club...) are kept
+  if (u.role === 'student' && grade) {
     p.push(JSON.stringify(await studentProfile(grade, combo, section)));
     sets.push(`profile = profile || $${p.length}::jsonb`);
   }
   if (!sets.length) return res.json({ ok: true });
   p.push(u.id);
-  try { await query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${p.length}`, p); }
-  catch (e) { fail(e.code === '23505' ? 409 : 500, e.code === '23505' ? 'Another account already uses this email.' : e.message); }
+  try {
+    await tx(async q => {
+      await q(`UPDATE users SET ${sets.join(', ')} WHERE id = $${p.length}`, p);
+      if (newName) {
+        await q('UPDATE applications SET student = $1 WHERE student = $2', [newName, u.username]);
+        await q('UPDATE applications SET booked_by = $1 WHERE booked_by = $2', [newName, u.username]);
+        await q('UPDATE blacklist SET name = $1 WHERE name = $2', [newName, u.username]);
+      }
+    });
+  } catch (e) { uniqueFail(e); }
+  pushApps(newName ? [u.username, newName] : [u.username]);
   res.json({ ok: true });
 }));
 
@@ -205,7 +206,6 @@ app.put('/api/options', auth('admin'), wrap(async (req, res) => {
   await tx(async q => {
     for (const [k, v] of Object.entries(req.body)) {
       if (LISTS.includes(k) && Array.isArray(v)) await saveOption(q, k, cleanList(v));
-      // gradeCombos looks like { "S4": ["MSI", "ART"], "S6": ["PCB"] }
       else if (k === 'gradeCombos' && v && typeof v === 'object' && !Array.isArray(v))
         await saveOption(q, k, Object.fromEntries(Object.entries(v).map(([g, list]) => [String(g).trim(), Array.isArray(list) ? cleanList(list) : []])));
     }
@@ -213,11 +213,37 @@ app.put('/api/options', auth('admin'), wrap(async (req, res) => {
   res.json(await getOptions());
 }));
 
-// The classes that really have students, for example ["S4 MSI", "S6 PCB", "S6 PCB A"]. Used by the booking page.
+// Rename a grade ({ from, to }) or a combination of a grade ({ grade, from, to }).
+// Students who already belong to it are updated too, so nobody loses their class.
+app.post('/api/options/rename', auth('admin'), wrap(async (req, res) => {
+  const f = cleanCode(req.body.from), t = cleanCode(req.body.to), g = cleanCode(req.body.grade);
+  if (!f || !t) fail(400, 'Enter the new name.');
+  await tx(async q => {
+    const o = Object.fromEntries((await q('SELECT key, value FROM options')).map(r => [r.key, r.value]));
+    const grades = [...(o.grades?.length ? o.grades : DEFAULTS.grades)];
+    const gc = Object.fromEntries(grades.map(x => [x, [...(o.gradeCombos?.[x] ?? DEFAULT_GRADE_COMBOS[x] ?? [])]]));
+    if (g) {
+      if (!gc[g]?.includes(f)) fail(404, 'That combination does not exist.');
+      if (gc[g].includes(t)) fail(409, `${g} already has a combination called ${t}.`);
+      gc[g] = gc[g].map(c => (c === f ? t : c));
+      await q(`UPDATE users SET profile = profile || jsonb_build_object('combo', $3::text, 'cls', concat_ws(' ', NULLIF(profile->>'grade',''), $3::text, NULLIF(profile->>'section','')))
+               WHERE role = 'student' AND profile->>'grade' = $1 AND profile->>'combo' = $2`, [g, f, t]);
+    } else {
+      if (!grades.includes(f)) fail(404, 'That grade does not exist.');
+      if (grades.includes(t)) fail(409, `The grade ${t} already exists.`);
+      grades[grades.indexOf(f)] = t; gc[t] = gc[f]; delete gc[f];
+      await q(`UPDATE users SET profile = profile || jsonb_build_object('grade', $2::text, 'cls', concat_ws(' ', $2::text, NULLIF(profile->>'combo',''), NULLIF(profile->>'section','')))
+               WHERE role = 'student' AND profile->>'grade' = $1`, [f, t]);
+    }
+    await saveOption(q, 'grades', grades);
+    await saveOption(q, 'gradeCombos', gc);
+  });
+  res.json(await getOptions());
+}));
+
 app.get('/api/classes', auth('teacher', 'psychosocial', 'admin'), wrap(async (_, res) =>
   res.json((await query(`SELECT DISTINCT ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND ${CLASS_SQL} <> '' ORDER BY cls`)).map(r => r.cls))));
 
-// Class lists for booking. Teachers must pick a class; psychosocial workers and admins can list everyone.
 app.get('/api/students', auth('teacher', 'psychosocial', 'admin'), wrap(async (req, res) => {
   const cls = req.query.class || '';
   if (req.user.role === 'teacher' && !cls) fail(400, 'Choose a class first.');
@@ -242,7 +268,7 @@ app.put('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
 app.delete('/api/labs/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM labs WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
 app.get('/api/sessions', auth(), wrap(async (_, res) => res.json(await listSessions())));
-app.post('/api/sessions', auth('admin'), wrap(async (req, res) => { // labIds omitted = every lab. Date defaults to today.
+app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
   const { date = new Date().toISOString().slice(0, 10), from, to, labIds } = req.body;
   if (!from || !to || from >= to) fail(400, 'Choose a start time that is before the end time.');
   const labs = (await query('SELECT id FROM labs')).filter(l => !labIds?.length || labIds.includes(l.id));
@@ -262,7 +288,7 @@ app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => { await 
 app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
   const { reason, students } = req.body, sessionId = +req.body.sessionId;
   const asked = req.user.role === 'student' ? [req.user.name] : (Array.isArray(students) ? students : []);
-  const byKey = new Map(); // the same person picked twice (or written in a different order) counts once
+  const byKey = new Map();
   asked.map(cleanName).filter(Boolean).forEach(n => byKey.has(nameKey(n)) || byKey.set(nameKey(n), n));
   const names = [...byKey.values()];
   if (!names.length) fail(400, 'Choose at least one student.');
@@ -278,7 +304,7 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
 
   let created = 0; const skipped = [];
   await tx(async q => {
-    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sessionId]); // one booking at a time per lab time
+    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sessionId]);
     const s = (await q('SELECT date, "from", "to" FROM session_seats WHERE id = $1', [sessionId]))[0] || fail(404, 'That lab time no longer exists.');
     const live = await q("SELECT name, sid, \"from\", \"to\" FROM application_details WHERE status <> 'rejected' AND date = $1", [s.date]);
     for (const n of names) {
@@ -298,14 +324,14 @@ app.patch('/api/apps/:id/status', auth('admin'), wrap(async (req, res) => {
   if (!['approved', 'rejected', 'pending'].includes(status)) fail(400, 'Unknown status.');
   const a = await tx(async q => {
     const a = await getApp(q, req.params.id);
-    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [a.session_id]); // stops two admins taking the last seat at once
+    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [a.session_id]);
     if (status === 'approved' && a.status !== 'approved' && await seatsLeft(q, a.session_id) < 1) fail(409, 'This lab is full. Move or swap a student first.');
     await q('UPDATE applications SET status = $1 WHERE id = $2', [status, a.id]);
     return a;
   });
   pushApps([a.student, a.booked_by]); res.json({ ok: true });
 }));
-app.post('/api/apps/approve-all', auth('admin'), wrap(async (_, res) => { // oldest first, stops when a lab is full
+app.post('/api/apps/approve-all', auth('admin'), wrap(async (_, res) => {
   const approved = await tx(async q => {
     await q('SELECT id FROM sessions FOR UPDATE');
     let n = 0;
@@ -315,12 +341,12 @@ app.post('/api/apps/approve-all', auth('admin'), wrap(async (_, res) => { // old
   });
   const all = await listApps(); pushApps(all.flatMap(a => [a.name, a.bookedBy])); res.json({ approved });
 }));
-app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => { // shift a student to another lab session
+app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => {
   const to = +req.body.sessionId;
   const a = await tx(async q => {
     const a = await getApp(q, req.params.id);
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [to]);
-    if (a.status !== 'rejected') { // never leave the same person twice in one lab time
+    if (a.status !== 'rejected') {
       const twice = await q("SELECT 1 FROM applications WHERE session_id = $1 AND lower(student) = lower($2) AND status <> 'rejected' AND id <> $3", [to, a.student, a.id]);
       if (twice.length) fail(409, 'This student already has a booking in that lab time.');
     }
@@ -330,7 +356,7 @@ app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => { // shi
   });
   pushApps([a.student, a.booked_by]); res.json({ ok: true });
 }));
-app.post('/api/apps/swap', auth('admin'), wrap(async (req, res) => { // swap two students between two labs when both are full
+app.post('/api/apps/swap', auth('admin'), wrap(async (req, res) => {
   const [a, b] = await tx(async q => {
     const a = await getApp(q, req.body.a), b = await getApp(q, req.body.b);
     await q('UPDATE applications SET session_id = $1 WHERE id = $2', [b.session_id, a.id]);
@@ -379,7 +405,7 @@ app.get('/api/stats/absenteeism', auth('admin'), wrap(async (_, res) => {
   (await listApps('att IS NOT NULL')).forEach(a => { const r = out[a.name] ||= { applied: 0, attended: 0, absent: 0 }; r.applied++; a.att === 'present' ? r.attended++ : r.absent++; });
   res.json(out);
 }));
-app.get('/api/history', auth('admin'), wrap(async (req, res) => { // ?date=YYYY-MM-DD&labId=1
+app.get('/api/history', auth('admin'), wrap(async (req, res) => {
   const w = [], p = [];
   if (req.query.date) { p.push(req.query.date); w.push(`date = $${p.length}`); }
   if (req.query.labId) { p.push(+req.query.labId); w.push(`"labId" = $${p.length}`); }
@@ -389,4 +415,4 @@ app.get('/api/history', auth('admin'), wrap(async (req, res) => { // ?date=YYYY-
 app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.code >= 400 && err.code < 600 ? err.code : 500).json({ error: err.message || 'Something went wrong.' }));
 const port = process.env.PORT || 4000;
 query('SELECT 1').then(seedOptions).then(() => server.listen(port, () => console.log('LMS API and Socket.io running on port ' + port)))
-  .catch(e => { console.error('Cannot start. Check the DB_* values in .env and that database.sql was run.\n', e.message); process.exit(1); });
+  .catch(e => { console.error('Cannot start. Check the DB_* values in .env and that the database is set up.\n', e.message); process.exit(1); });
