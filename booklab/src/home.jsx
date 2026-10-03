@@ -1770,6 +1770,20 @@ const MAX_ATTACH = 6;
 
 // Uploaded files live on the API (/api/...), links keep their own address.
 const mediaSrc = (m) => (m.src?.startsWith('/') ? BASE + m.src : m.src);
+// Share links (Google Drive, Dropbox, Imgur page) become the direct picture, so the object shows as a real image.
+const directImg = (u) => {
+  const s = String(u || '');
+  let m = s.match(/drive\.google\.com\/file\/d\/([\w-]+)/) || s.match(/drive\.google\.com\/(?:open|uc)\?(?:[^#]*&)?id=([\w-]+)/);
+  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1600`;
+  if (/^https?:\/\/(www\.)?dropbox\.com\//i.test(s)) {
+    try { const x = new URL(s); x.searchParams.delete('dl'); x.searchParams.set('raw', '1'); return x.toString(); } catch { return s; }
+  }
+  m = s.match(/^https?:\/\/(?:www\.)?imgur\.com\/([A-Za-z0-9]{5,8})\/?$/);
+  return m ? `https://i.imgur.com/${m[1]}.jpg` : s;
+};
+const photoOf = (m) => (m.kind === 'image' ? directImg(mediaSrc(m)) : m.kind === 'link' && directImg(m.src) !== m.src ? directImg(m.src) : '');
+const IMG_LINK = /\.(png|jpe?g|gif|webp|avif)(\?|#|$)/i;
+const photosOf = (item) => item.media.map(photoOf).filter(Boolean);
 const ago = (iso) => {
   const d = Math.floor((Date.now() - new Date(iso).getTime()) / 864e5);
   return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`;
@@ -1807,15 +1821,19 @@ async function prepFile(file) {
   return { name: file.name, mime: file.type || 'application/octet-stream', data: await readFile(file), size: file.size };
 }
 
-// First photo of a post, or a coloured tile when there is no photo.
+// The real photo of the object (uploaded, or from a pasted link). Video-only posts show the video thumbnail.
 const Cover = ({ item, className = '' }) => {
-  const img = item.media.find((m) => m.kind === 'image');
-  if (img) return <Photo src={mediaSrc(img)} alt={item.title} className={className} />;
-  return (
-    <div role="img" aria-label={item.title} className={`grid place-items-center bg-gradient-to-br from-[#0b0f1a] to-[#16a34a] text-white/80 ${className}`}>
-      <Icon n="Tag" className="h-8 w-8" />
-    </div>
-  );
+  const yt = item.media.map((m) => (m.kind === 'video' ? ytId(m.src) : '')).find(Boolean);
+  const src = photosOf(item)[0] || (yt ? `https://img.youtube.com/vi/${yt}/hqdefault.jpg` : '');
+  const [bad, setBad] = useState(false);
+  if (!src || bad) {
+    return (
+      <div role="img" aria-label={item.title} className={`grid place-items-center bg-black/[0.06] text-black/30 ${className}`}>
+        <Icon n="Tag" className="h-8 w-8" />
+      </div>
+    );
+  }
+  return <img src={src} alt={item.title} loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} className={`object-cover ${className}`} />;
 };
 
 const LinkBtn = ({ c = 'w', className = '', ...p }) => {
@@ -1826,9 +1844,9 @@ const LinkBtn = ({ c = 'w', className = '', ...p }) => {
 // Everything about one post: photos, videos, files, and how to contact the poster.
 function TrendDetail({ item, onClose }) {
   const [k, setK] = useState(0);
-  const images = item.media.filter((m) => m.kind === 'image');
+  const images = photosOf(item);
   const videos = item.media.filter((m) => m.kind === 'video');
-  const others = item.media.filter((m) => m.kind === 'file' || m.kind === 'link');
+  const others = item.media.filter((m) => (m.kind === 'file' || m.kind === 'link') && !photoOf(m));
   const digits = (item.phone || '').replace(/[^\d]/g, '');
   const subject = encodeURIComponent(`Lost item: ${item.title}`);
 
@@ -1843,14 +1861,14 @@ function TrendDetail({ item, onClose }) {
       {images.length > 0 && (
         <div className="mt-4">
           <div className="overflow-hidden rounded-[6px] bg-black/5">
-            <Photo src={mediaSrc(images[k] || images[0])} alt={item.title} className="max-h-[420px] w-full !object-contain" />
+            <img src={images[k] || images[0]} alt={item.title} referrerPolicy="no-referrer" className="max-h-[420px] w-full object-contain" />
           </div>
           {images.length > 1 && (
             <div className="mt-2 flex gap-2 overflow-x-auto">
               {images.map((im, i) => (
-                <button key={im.id} type="button" aria-label={`Photo ${i + 1}`} onClick={() => setK(i)}
+                <button key={im + i} type="button" aria-label={`Photo ${i + 1}`} onClick={() => setK(i)}
                   className={`h-14 w-16 shrink-0 overflow-hidden rounded-[6px] border-2 ${i === k ? 'border-[#f97316]' : 'border-transparent'}`}>
-                  <Photo src={mediaSrc(im)} alt="" className="h-full w-full" />
+                  <img src={im} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover" />
                 </button>
               ))}
             </div>
@@ -2045,13 +2063,14 @@ function TrendForm({ initial, cats, user, onSubmit, onCancel }) {
           )}
 
           <div className="mt-4 flex gap-2">
-            <Inp value={li} onChange={(e) => setLi(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addLink()} placeholder="Paste a link to a photo or video (YouTube, Drive, ...)" />
+            <Inp value={li} onChange={(e) => setLi(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addLink()} placeholder="Paste a photo link (it shows as the real picture) or a video link" />
             <Btn c="w" className="shrink-0" onClick={addLink}>Add link</Btn>
           </div>
           {links.length > 0 && (
             <ul className="mt-3 space-y-2">
               {links.map((l) => (
                 <li key={l} className="flex items-center gap-3 rounded-[6px] border border-black/10 bg-white px-3 py-2 text-xs">
+                  {(IMG_LINK.test(directImg(l)) || directImg(l) !== l) && <img src={directImg(l)} alt="" referrerPolicy="no-referrer" onError={(e) => { e.currentTarget.style.display = 'none'; }} className="h-10 w-10 shrink-0 rounded-[4px] object-cover" />}
                   <span className="min-w-0 flex-1 truncate">{l}</span>
                   <button type="button" aria-label="Remove link" onClick={() => setLinks((p) => p.filter((x) => x !== l))} className="text-lg leading-none text-[#f97316]">×</button>
                 </li>

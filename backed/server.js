@@ -449,8 +449,34 @@ const DAY = 864e5, HOLD_DAYS = 7, MAX_FILES = 6, MAX_FILE = 12 * 1024 * 1024, MA
 // Only safe file types are accepted, because the files are served back to visitors.
 const FILE_OK = /^(image\/(png|jpe?g|gif|webp|avif)|video\/(mp4|webm|ogg|quicktime)|text\/plain|application\/(pdf|msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)))$/i;
 const fileKind = mime => (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : 'file');
-const linkKind = u => (/\.(png|jpe?g|gif|webp|avif)(\?|#|$)/i.test(u) ? 'image'
-  : /\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(u) || /(youtu\.be|youtube\.com|vimeo\.com)/i.test(u) ? 'video' : 'link');
+const IMG_EXT = /\.(png|jpe?g|gif|webp|avif)(\?|#|$)/i;
+const VID_EXT = /\.(mp4|webm|ogg|mov)(\?|#|$)/i;
+// Turns share links (Google Drive, Dropbox, Imgur page) into a direct picture address.
+const directUrl = u => {
+  let m = u.match(/drive\.google\.com\/file\/d\/([\w-]+)/) || u.match(/drive\.google\.com\/(?:open|uc)\?(?:[^#]*&)?id=([\w-]+)/);
+  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1600`;
+  if (/^https?:\/\/(www\.)?dropbox\.com\//i.test(u)) { try { const x = new URL(u); x.searchParams.delete('dl'); x.searchParams.set('raw', '1'); return x.toString(); } catch { return u; } }
+  m = u.match(/^https?:\/\/(?:www\.)?imgur\.com\/([A-Za-z0-9]{5,8})\/?$/);
+  return m ? `https://i.imgur.com/${m[1]}.jpg` : u;
+};
+const PRIVATE_HOST = /^(localhost|127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1)/i;
+// Decides whether a pasted link is a picture, a video or just a page. When the address does not
+// say so, the server asks the website what the link really is.
+const resolveLink = async raw => {
+  const url = directUrl(raw);
+  if (IMG_EXT.test(url) || /drive\.google\.com\/thumbnail|i\.imgur\.com/.test(url)) return { kind: 'image', url };
+  if (VID_EXT.test(url) || /(youtu\.be|youtube\.com|vimeo\.com)/i.test(url)) return { kind: 'video', url };
+  try {
+    if (PRIVATE_HOST.test(new URL(url).hostname)) return { kind: 'link', url };
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 4000);
+    const r = await fetch(url, { headers: { Range: 'bytes=0-0' }, signal: ctl.signal, redirect: 'follow' });
+    clearTimeout(timer); r.body?.cancel?.();
+    const type = r.headers.get('content-type') || '';
+    if (/^image\//i.test(type)) return { kind: 'image', url };
+    if (/^video\//i.test(type)) return { kind: 'video', url };
+  } catch { /* not reachable: keep it as a plain link */ }
+  return { kind: 'link', url };
+};
 
 // Posts with their attachments. Uploaded files are served from /api/trends/files/:id, links keep their own address.
 const trendRows = async (where = '', params = []) => {
@@ -515,11 +541,12 @@ app.post('/api/trends', comm, wrap(async (req, res) => {
     if (f.buf.length > MAX_FILE) fail(413, `${f.name} is too big (12 MB maximum). For long videos, paste a link instead.`);
   });
   if (files.reduce((s, f) => s + f.buf.length, 0) > MAX_TOTAL) fail(413, 'The files together are too big (24 MB maximum). Use links for videos.');
+  const resolved = await Promise.all(links.map(resolveLink));
   const id = await tx(async q => {
     const row = (await q('INSERT INTO trends(title, description, category, found_at, contact_phone, contact_email, posted_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
       [t.title, t.description, t.category, t.foundAt, t.phone, t.email, req.user.name]))[0];
     for (const f of files) await q('INSERT INTO trend_media(trend_id, kind, name, mime, data) VALUES($1,$2,$3,$4,$5)', [row.id, fileKind(f.mime), f.name, f.mime, f.buf]);
-    for (const l of links) await q('INSERT INTO trend_media(trend_id, kind, url, name) VALUES($1,$2,$3,$4)', [row.id, linkKind(l), l, l.slice(0, 120)]);
+    for (const l of resolved) await q('INSERT INTO trend_media(trend_id, kind, url, name) VALUES($1,$2,$3,$4)', [row.id, l.kind, l.url, l.url.slice(0, 120)]);
     return row.id;
   });
   io.emit('trends:update'); res.json({ id });
