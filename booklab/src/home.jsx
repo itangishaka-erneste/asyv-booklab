@@ -5,7 +5,7 @@ import {
   AreaChart, Area, PieChart, Pie, Cell,
 } from 'recharts';
 import logo from './assets/as.png';
-import front from './assets/front.jpg';
+import front from './assets/book.JPG';
 import milker from './assets/milker.jpg';
 import minister from './assets/minister.jpg';
 
@@ -419,9 +419,12 @@ const STEPS = [
   ['Apply and attend', 'Choose a reason, get approved and show up. Attendance is recorded.'],
 ];
 const TEAM = [
-  ['Jean Habimana', 'Head of ICT', 'Sets lab schedules and approves requests.'],
-  ['Alice Uwase', 'Computer Science Teacher', 'Books classes and guides practical sessions.'],
-  ['Eric Niyonzima', 'Psychosocial Worker', 'Supports students and books lab time for them.'],
+  ['JUSTIN MUTANGANA', 'Head of ICT', 'Sets lab schedules and approves requests.'],
+  ['All Teachers', 'All teachers allowed', 'Books classes for any student'],
+  ['Pacific Siboman', 'Minister of ICT', 'Supports students and teachers, and manages the system.'],
+  ['Students', 'All students allowed', 'Applies for themselves and attends labs.'],
+  ['Mwamikazi Deborah', 'Minister of ICT', 'Supports students and teachers, and manages the system.'],
+  ['psychosocial workers', 'All psychosocial workers allowed', 'Books classes for any student'],
 ];
 const FAQ = [
   ['How do I get an account?', 'You do not sign up yourself. The school adds every student and teacher using their Google email.'],
