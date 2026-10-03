@@ -143,9 +143,12 @@ const ALL_COMBOS = [...COMBOS_S4_S5, ...COMBOS_S6];
 const DEFAULT_GRADES = ['S4', 'S5', 'S6'];
 const DEFAULT_GRADE_COMBOS = { S4: COMBOS_S4_S5, S5: COMBOS_S4_S5, S6: COMBOS_S6 };
 const SECTIONS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+// Categories for the Lost & Found board (the admin can change them in Settings).
+const DEFAULT_CATS = ['Clothes', 'Shoes', 'Keys', 'Bags', 'Phones and electronics', 'Books and stationery', 'Documents and IDs', 'Water bottles and lunch boxes', 'Jewelry and watches', 'Other'];
 
 const gradesOf = (opts) => (opts.grades?.length ? opts.grades : DEFAULT_GRADES);
 const combosFor = (opts, grade) => opts.gradeCombos?.[grade] ?? DEFAULT_GRADE_COMBOS[grade] ?? [];
+const catsOf = (opts) => (opts?.trendCategories?.length ? opts.trendCategories : DEFAULT_CATS);
 const classLabel = ({ grade, combo, section }) => [grade, combo, section].filter(Boolean).join(' ');
 const firstClass = (opts) => {
   const grade = gradesOf(opts)[0] || '';
@@ -177,9 +180,11 @@ const ICONS = {
   Profile: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
   Logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></>,
   Search: <><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></>,
+  Tag: <><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" /><path d="M7 7h.01" /></>,
 };
 ICONS['My labs'] = ICONS.Labs;
 ICONS.Bookings = ICONS.Labs;
+ICONS['Lost & Found'] = ICONS.Tag;
 
 const Icon = ({ n, className = 'h-4 w-4' }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
@@ -206,6 +211,14 @@ const Btn = ({ c = 'ink', className = '', ...p }) => {
 const Inp = ({ className = '', ...p }) => (
   <input
     className={`w-full px-3 py-2 text-xs rounded-[6px] border border-black/25 bg-white focus:outline-none focus:border-[#0b0f1a] focus:ring-2 focus:ring-[#0b0f1a]/10 disabled:bg-black/5 ${className}`}
+    {...p}
+  />
+);
+
+const Txt = ({ className = '', ...p }) => (
+  <textarea
+    rows={4}
+    className={`w-full px-3 py-2 text-xs rounded-[6px] border border-black/25 bg-white focus:outline-none focus:border-[#0b0f1a] focus:ring-2 focus:ring-[#0b0f1a]/10 ${className}`}
     {...p}
   />
 );
@@ -252,6 +265,9 @@ const BADGE = {
   rejected: 'bg-red-50 text-red-600',
   present: 'bg-[#16a34a]/10 text-[#15803d]',
   absent: 'bg-red-50 text-red-600',
+  active: 'bg-[#16a34a]/10 text-[#15803d]',
+  returned: 'bg-sky-50 text-sky-700',
+  removed: 'bg-red-50 text-red-600',
 };
 const Badge = ({ s, children }) => (
   <span className={`inline-block rounded-[4px] px-2 py-0.5 text-[11px] font-semibold capitalize ${BADGE[s] || 'bg-black/5 text-black/60'}`}>{children || s}</span>
@@ -302,9 +318,9 @@ const Person = ({ p, sub, className = 'h-9 w-9 text-xs' }) => (
   </span>
 );
 
-const Modal = ({ title, onClose, children }) => (
-  <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
-    <div role="dialog" aria-modal="true" aria-label={title} className="w-full max-w-md rounded-[6px] bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+const Modal = ({ title, onClose, wide, children }) => (
+  <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/40 p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label={title} className={`my-auto max-h-[92vh] w-full overflow-y-auto rounded-[6px] bg-white p-6 shadow-xl ${wide ? 'max-w-2xl' : 'max-w-md'}`} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center justify-between mb-5">
         <h3 className="text-sm font-semibold">{title}</h3>
         <button type="button" aria-label="Close" onClick={onClose} className="text-xl leading-none text-black/50 hover:text-black">×</button>
@@ -396,7 +412,7 @@ const attCounts = (rows) => {
 /* 4. LANDING PAGE                                                     */
 /* ================================================================== */
 
-const NAV = [['services', 'Services'], ['lab', 'The lab'], ['how', 'How it works'], ['team', 'Team'], ['faq', 'FAQ']];
+const NAV = [['services', 'Services'], ['lab', 'The lab'], ['how', 'How it works'], ['team', 'Team'], ['faq', 'FAQ'], ['trends', 'Trends']];
 const HERO_POINTS = ['Live seat counts', 'Fair approvals', 'Attendance reports'];
 const STATS = [['Live', 'seat counts'], ['3 roles', 'students, staff, admins'], ['Google', 'secure sign in'], ['Full', 'attendance history']];
 
@@ -433,6 +449,7 @@ const FAQ = [
   ['What if a lab is full?', 'Apply is disabled when no seats remain, and admins can move students between labs.'],
   ['Can I book the same lab twice?', 'No. Each student can hold only one booking per lab time, and bookings that overlap are blocked.'],
   ['Can booking access be removed?', 'Yes. Admins can blacklist a student who misuses lab time.'],
+  ['I lost something. What do I do?', 'Open Trends in the menu. The Minister of Communication posts every item that is found, with photos. Tap your item and contact the minister to claim it.'],
 ];
 
 const WRAP = 'max-w-6xl mx-auto px-6';
@@ -638,7 +655,7 @@ function CallToAction({ onLogin }) {
   );
 }
 
-function Landing({ onLogin }) {
+function Landing({ onLogin, categories }) {
   return (
     <div className="bg-white text-[#0b0f1a] antialiased text-sm">
       <AnimStyles />
@@ -650,6 +667,7 @@ function Landing({ onLogin }) {
       <HowItWorks />
       <Team />
       <Faq />
+      <TrendsSection categories={categories} />
       <CallToAction onLogin={onLogin} />
       <footer className={`${WRAP} py-10 flex flex-wrap justify-between items-center gap-4 text-xs text-black/50 border-t border-black/10`}>
         <Logo />
@@ -663,7 +681,7 @@ function Landing({ onLogin }) {
 /* 5. LOGIN: Google only (the admin creates every account)             */
 /* ================================================================== */
 
-const EMPTY_OPTS = { grades: [], gradeCombos: {}, classes: [], combos: [], clubs: [], staffRoles: [], families: [], reasons: [] };
+const EMPTY_OPTS = { grades: [], gradeCombos: {}, classes: [], combos: [], clubs: [], staffRoles: [], families: [], reasons: [], trendCategories: [] };
 
 // Google's own button. It only logs in people the admin has already added.
 function GoogleBtn({ onResult, onError }) {
@@ -706,14 +724,16 @@ function GoogleBtn({ onResult, onError }) {
   return <div ref={ref} className="flex justify-center min-h-[44px]" />;
 }
 
+// The login screen is locked to the window (fixed, no page scroll). Only the form column scrolls,
+// and only when the form really does not fit (for example a very short phone in landscape).
 function Auth({ onDone, onBack }) {
   const [err, setErr] = useState('');
   const hasGoogle = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-[2fr_3fr] bg-white text-[13px] text-[#0b0f1a]">
+    <div className="fixed inset-0 grid overflow-hidden bg-white text-[13px] text-[#0b0f1a] lg:grid-cols-[2fr_3fr]">
       <AnimStyles />
-      <aside className="relative hidden lg:block lg:sticky lg:top-0 lg:h-screen">
+      <aside className="relative hidden h-full overflow-hidden lg:block">
         <Slideshow interval={5000} className="absolute inset-0 h-full w-full" />
         <div className="absolute inset-0 bg-gradient-to-t from-[#0b0f1a] via-[#0b0f1a]/50 to-[#0b0f1a]/10" />
         <div className="relative h-full flex flex-col justify-between p-10 text-white">
@@ -725,8 +745,8 @@ function Auth({ onDone, onBack }) {
         </div>
       </aside>
 
-      <main className="flex flex-col justify-center">
-        <div className="w-full max-w-md mx-auto px-6 py-8">
+      <main className="flex h-full min-h-0 flex-col overflow-y-auto overscroll-contain">
+        <div className="mx-auto my-auto w-full max-w-md px-6 py-8">
           <div className="flex items-center justify-between mb-8">
             <button type="button" onClick={onBack} className="text-xs font-medium text-black/60 hover:text-black">← Back to home</button>
             <span className="lg:hidden"><Logo /></span>
@@ -966,7 +986,7 @@ function Teacher({ user, opts }) {
 /* 8. ADMIN DASHBOARD                                                  */
 /* ================================================================== */
 
-const ADMIN_TABS = ['Overview', 'Users', 'Labs', 'Schedule', 'Applications', 'Attendance', 'History', 'Settings'];
+const ADMIN_TABS = ['Overview', 'Users', 'Labs', 'Schedule', 'Applications', 'Attendance', 'History', 'Lost & Found', 'Settings'];
 const ROLE_LABEL = { admin: 'Admin', teacher: 'Teacher', psychosocial: 'Psychosocial worker', student: 'Student' };
 const ROLE_CHOICES = ['student', 'teacher', 'psychosocial'];
 
@@ -1180,9 +1200,12 @@ function UsersTab({ users, opts, act }) {
     setEdit({ id: u.id, name: u.name, role: u.role, email: u.email, grade, combo: combos.includes(u.combo) ? u.combo : combos[0] || '', section: u.section || '' });
   };
 
+  const setMinister = (u, on) => act(() => api(`/api/users/${u.id}/communication`, 'PATCH', { on }));
+
   const classNames = [...new Set(users.filter((u) => u.role === 'student' && u.className).map((u) => u.className))].sort();
   const shown = users.filter((u) => (rf === 'all' || u.role === rf) && (cf === 'all' || u.className === cf) && match(q, u.name, u.email, u.className));
   const count = (r) => users.filter((u) => u.role === r).length;
+  const ministers = users.filter((u) => u.comm);
 
   return (
     <div>
@@ -1212,6 +1235,17 @@ function UsersTab({ users, opts, act }) {
         )}
       </Card>
 
+      <Card t="Minister of Communication" sub="Pick the person below with Make minister. They keep their normal role and can still book labs, and they also get a Lost & Found page where they post found items for everyone to see on the home page.">
+        {ministers.length === 0
+          ? <p className="text-xs text-black/60">Nobody is Minister of Communication yet. Find the account in the list below and press Make minister.</p>
+          : ministers.map((u) => (
+            <Row key={u.id}>
+              <Person p={u} className="h-10 w-10 text-xs" />
+              <Btn c="w" onClick={() => window.confirm(`Remove ${u.name} as Minister of Communication?`) && setMinister(u, false)}>Remove minister</Btn>
+            </Row>
+          ))}
+      </Card>
+
       <Card t="All accounts" sub={`${count('student')} students · ${count('teacher')} teachers · ${count('psychosocial')} psychosocial workers`}>
         <div className="grid md:grid-cols-[1fr_180px_180px] gap-3 mb-4">
           <SearchBox value={q} onChange={setQ} />
@@ -1227,6 +1261,8 @@ function UsersTab({ users, opts, act }) {
               <span className="rounded-[4px] bg-black/5 px-2 py-0.5 text-[11px] font-semibold">
                 {u.role === 'student' ? (u.className || 'No class') : ROLE_LABEL[u.role]}
               </span>
+              {u.comm && <span className="rounded-[4px] bg-[#f97316]/10 px-2 py-0.5 text-[11px] font-semibold text-[#c2410c]">Minister of Communication</span>}
+              {!u.comm && <Btn c="w" onClick={() => window.confirm(`Make ${u.name} the Minister of Communication?`) && setMinister(u, true)}>Make minister</Btn>}
               <Btn c="w" onClick={() => openEdit(u)}>Edit</Btn>
               <Btn c="or" onClick={() => window.confirm(`Delete the account of ${u.name}?`) && act(() => api(`/api/users/${u.id}`, 'DELETE'))}>Delete</Btn>
             </span>
@@ -1645,7 +1681,7 @@ function ListEditor({ title, sub, items, onSave }) {
   );
 }
 
-const SETTINGS_TABS = ['Classes', 'Booking reasons', 'Clubs and staff'];
+const SETTINGS_TABS = ['Classes', 'Booking reasons', 'Lost & Found', 'Clubs and staff'];
 const OTHER_LISTS = { clubs: ['Clubs and activities', 'Shown on student profiles.'], staffRoles: ['Staff roles', 'Job titles for staff.'], families: ['Families', 'Groups students belong to.'] };
 
 function SettingsTab({ opts, saveList, saveSetup, rename }) {
@@ -1656,6 +1692,9 @@ function SettingsTab({ opts, saveList, saveSetup, rename }) {
       {t === 'Classes' && <ClassSetup opts={opts} save={saveSetup} rename={rename} />}
       {t === 'Booking reasons' && (
         <ListEditor title="Booking reasons" sub="Students and staff pick one of these when they book." items={opts.reasons || []} onSave={(l) => saveList('reasons', l)} />
+      )}
+      {t === 'Lost & Found' && (
+        <ListEditor title="Lost-item categories" sub="The Minister of Communication picks one of these for every post, and visitors filter by them." items={catsOf(opts)} onSave={(l) => saveList('trendCategories', l)} />
       )}
       {t === 'Clubs and staff' && Object.entries(OTHER_LISTS).map(([k, [title, sub]]) => (
         <ListEditor key={k} title={title} sub={sub} items={opts[k] || []} onSave={(l) => saveList(k, l)} />
@@ -1724,7 +1763,428 @@ function Admin({ opts: initial, tab }) {
 }
 
 /* ================================================================== */
-/* 9. PROFILE (every role)                                             */
+/* 9. LOST & FOUND ("TRENDS")                                          */
+/* Public board on the home page + the posting page of the Minister    */
+/* of Communication (and admins).                                      */
+/* ================================================================== */
+
+const MAX_UPLOAD = 12 * 1024 * 1024; // the server refuses bigger files, so we check here first
+const MAX_ATTACH = 6;
+
+// Uploaded files live on the API (/api/...), links keep their own address.
+const mediaSrc = (m) => (m.src?.startsWith('/') ? BASE + m.src : m.src);
+const ago = (iso) => {
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 864e5);
+  return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`;
+};
+const niceSize = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const ytId = (u) => (String(u).match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/) || [])[1] || '';
+const isVideoFile = (u) => /\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(u) || String(u).includes('/api/trends/files/');
+
+const readFile = (file) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(String(r.result).split(',')[1]);
+  r.onerror = () => rej(new Error(`Could not read ${file.name}.`));
+  r.readAsDataURL(file);
+});
+
+// Big photos are shrunk in the browser (max 1600 px) so the upload stays fast.
+async function prepFile(file) {
+  if (/^image\/(jpeg|png|webp)$/.test(file.type) && file.size > 600 * 1024) {
+    try {
+      const bmp = await createImageBitmap(file);
+      const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(bmp.width * k);
+      cv.height = Math.round(bmp.height * k);
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+      const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.85));
+      if (blob && blob.size < file.size) {
+        return { name: file.name.replace(/\.\w+$/, '') + '.jpg', mime: 'image/jpeg', data: await readFile(blob), size: blob.size };
+      }
+    } catch { /* use the original file */ }
+  }
+  return { name: file.name, mime: file.type || 'application/octet-stream', data: await readFile(file), size: file.size };
+}
+
+// First photo of a post, or a coloured tile when there is no photo.
+const Cover = ({ item, className = '' }) => {
+  const img = item.media.find((m) => m.kind === 'image');
+  if (img) return <Photo src={mediaSrc(img)} alt={item.title} className={className} />;
+  return (
+    <div role="img" aria-label={item.title} className={`grid place-items-center bg-gradient-to-br from-[#0b0f1a] to-[#16a34a] text-white/80 ${className}`}>
+      <Icon n="Tag" className="h-8 w-8" />
+    </div>
+  );
+};
+
+const LinkBtn = ({ c = 'w', className = '', ...p }) => {
+  const look = { ink: 'bg-[#0b0f1a] text-white', gr: 'bg-[#16a34a] text-white', or: 'bg-[#f97316] text-white', w: 'bg-white text-[#0b0f1a] border border-black/20' }[c];
+  return <a target="_blank" rel="noreferrer" className={`inline-block px-4 py-2 text-xs font-semibold rounded-[6px] hover:opacity-90 ${look} ${className}`} {...p} />;
+};
+
+// Everything about one post: photos, videos, files, and how to contact the poster.
+function TrendDetail({ item, onClose }) {
+  const [k, setK] = useState(0);
+  const images = item.media.filter((m) => m.kind === 'image');
+  const videos = item.media.filter((m) => m.kind === 'video');
+  const others = item.media.filter((m) => m.kind === 'file' || m.kind === 'link');
+  const digits = (item.phone || '').replace(/[^\d]/g, '');
+  const subject = encodeURIComponent(`Lost item: ${item.title}`);
+
+  return (
+    <Modal title={item.title} onClose={onClose} wide>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-[4px] bg-[#0b0f1a] px-2 py-1 font-semibold text-white">{item.category}</span>
+        <span className="text-black/55">Posted {ago(item.postedAt)}</span>
+        {item.foundAt && <span className="text-black/55">· Found at {item.foundAt}</span>}
+      </div>
+
+      {images.length > 0 && (
+        <div className="mt-4">
+          <div className="overflow-hidden rounded-[6px] bg-black/5">
+            <Photo src={mediaSrc(images[k] || images[0])} alt={item.title} className="max-h-[420px] w-full !object-contain" />
+          </div>
+          {images.length > 1 && (
+            <div className="mt-2 flex gap-2 overflow-x-auto">
+              {images.map((im, i) => (
+                <button key={im.id} type="button" aria-label={`Photo ${i + 1}`} onClick={() => setK(i)}
+                  className={`h-14 w-16 shrink-0 overflow-hidden rounded-[6px] border-2 ${i === k ? 'border-[#f97316]' : 'border-transparent'}`}>
+                  <Photo src={mediaSrc(im)} alt="" className="h-full w-full" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {item.description && <p className="mt-4 whitespace-pre-line text-xs leading-relaxed text-black/70">{item.description}</p>}
+
+      {videos.map((v) => {
+        const id = ytId(v.src);
+        if (id) return <iframe key={v.id} title={v.name || 'Video'} className="mt-4 aspect-video w-full rounded-[6px]" src={`https://www.youtube-nocookie.com/embed/${id}`} allowFullScreen />;
+        if (isVideoFile(v.src)) return <video key={v.id} controls preload="metadata" className="mt-4 max-h-[420px] w-full rounded-[6px] bg-black" src={mediaSrc(v)} />;
+        return <div key={v.id} className="mt-4"><LinkBtn href={v.src}>▶ Watch video</LinkBtn></div>;
+      })}
+
+      {others.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {others.map((o) => <LinkBtn key={o.id} href={mediaSrc(o)}>{o.kind === 'file' ? '📎' : '🔗'} {o.name || 'Open'}</LinkBtn>)}
+        </div>
+      )}
+
+      <div className="mt-6 rounded-[6px] border border-[#16a34a]/40 bg-[#16a34a]/5 p-4">
+        <h4 className="text-xs font-bold text-[#15803d]">Is this yours?</h4>
+        <p className="mt-1 text-xs leading-relaxed text-black/65">
+          Contact the Minister of Communication, describe the item (something only the owner would know) and come to collect it.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {item.phone && <LinkBtn c="gr" href={`tel:${item.phone}`}>Call {item.phone}</LinkBtn>}
+          {digits && <LinkBtn c="ink" href={`https://wa.me/${digits}?text=${subject}`}>WhatsApp</LinkBtn>}
+          {item.email && <LinkBtn c="or" href={`mailto:${item.email}?subject=${subject}`}>Email</LinkBtn>}
+          {!item.phone && !item.email && <span className="text-xs text-black/60">Ask {item.postedBy || 'the Minister of Communication'} at school.</span>}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// The public board on the home page.
+function TrendsSection({ categories }) {
+  const [items, setItems] = useState(null);
+  const [q, setQ] = useState('');
+  const [cat, setCat] = useState('all');
+  const [more, setMore] = useState(false);
+  const [open, setOpen] = useState(null);
+
+  useEffect(() => { api('/api/trends').then(setItems).catch(() => setItems([])); }, []);
+
+  const list = items || [];
+  const names = [...new Set([...(categories?.length ? categories : DEFAULT_CATS), ...list.map((t) => t.category)])].filter((c) => list.some((t) => t.category === c));
+  const shown = list.filter((t) => (cat === 'all' || t.category === cat) && match(q, t.title, t.category, t.description, t.foundAt));
+  const visible = more ? shown : shown.slice(0, 9);
+
+  return (
+    <section id="trends" className="scroll-mt-16 bg-black/[0.03]">
+      <div className={`${WRAP} py-24`}>
+        <Reveal>
+          <span className="inline-flex items-center gap-2 rounded-[6px] border border-black/10 bg-white px-3 py-1.5 text-xs font-medium">
+            <span className="h-1.5 w-1.5 rounded-[2px] bg-[#f97316]" />Lost and found
+          </span>
+          <Heading title="Lost something? Look here first." className="mt-4 max-w-xl" />
+          <p className="mt-3 max-w-xl text-xs leading-relaxed text-black/60">
+            Everything found at school is posted here by the Minister of Communication. Tap your item and contact the minister to get it back.
+          </p>
+        </Reveal>
+
+        {list.length > 0 && (
+          <div className="mt-8 grid gap-4 md:grid-cols-[1fr_320px] md:items-center">
+            <Pills value={cat} onChange={setCat} items={[['all', 'All', list.length], ...names.map((c) => [c, c, list.filter((t) => t.category === c).length])]} />
+            <SearchBox value={q} onChange={setQ} placeholder="Search keys, bag, jacket..." />
+          </div>
+        )}
+
+        <div className="mt-8">
+          {items === null && <Empty>Loading the board…</Empty>}
+          {items !== null && list.length === 0 && (
+            <div className="rounded-[6px] border border-dashed border-black/20 bg-white px-6 py-14 text-center">
+              <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-[6px] bg-[#0b0f1a] text-white"><Icon n="Tag" /></div>
+              <p className="text-sm font-semibold">Nothing is waiting for an owner right now.</p>
+              <p className="mt-1 text-xs text-black/55">New finds will appear here as soon as the minister posts them.</p>
+            </div>
+          )}
+          {list.length > 0 && shown.length === 0 && <Empty>No item matches your search.</Empty>}
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {visible.map((t) => (
+              <button key={t.id} type="button" onClick={() => setOpen(t)}
+                className="group flex h-full flex-col overflow-hidden rounded-[6px] border border-black/10 bg-white text-left transition-shadow hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#f97316]">
+                <div className="relative aspect-[4/3] overflow-hidden bg-black/5">
+                  <Cover item={t} className="h-full w-full transition-transform duration-500 group-hover:scale-105" />
+                  <span className="absolute left-3 top-3 rounded-[4px] bg-[#0b0f1a]/85 px-2 py-1 text-[11px] font-semibold text-white">{t.category}</span>
+                  {t.media.length > 1 && <span className="absolute right-3 top-3 rounded-[4px] bg-white/90 px-2 py-1 text-[11px] font-semibold">{t.media.length} items</span>}
+                </div>
+                <div className="flex flex-1 flex-col p-4">
+                  <h3 className="text-sm font-semibold">{t.title}</h3>
+                  {t.description && <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-black/60">{t.description}</p>}
+                  <div className="mt-auto flex items-center justify-between pt-4 text-[11px] text-black/50">
+                    <span>{t.foundAt ? `Found at ${t.foundAt}` : `Posted ${ago(t.postedAt)}`}</span>
+                    <span className="font-semibold text-[#c2410c]">View and contact →</span>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+          {shown.length > 9 && !more && <div className="mt-8 text-center"><Btn c="w" onClick={() => setMore(true)}>Show all {shown.length} items</Btn></div>}
+        </div>
+      </div>
+      {open && <TrendDetail item={open} onClose={() => setOpen(null)} />}
+    </section>
+  );
+}
+
+// The post form: used to create a post (with attachments) and to correct the text of an existing one.
+function TrendForm({ initial, cats, user, onSubmit, onCancel }) {
+  const editing = !!initial;
+  const [f, setF] = useState({
+    title: initial?.title || '', category: initial?.category || cats[0] || 'Other', foundAt: initial?.foundAt || '',
+    description: initial?.description || '', phone: initial?.phone || '', email: initial ? initial.email : user.email || '',
+  });
+  const [files, setFiles] = useState([]);
+  const [links, setLinks] = useState([]);
+  const [li, setLi] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const up = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const catOpts = [...new Set([...cats, f.category])];
+
+  const pick = async (e) => {
+    const list = [...e.target.files];
+    e.target.value = '';
+    if (!list.length) return;
+    if (files.length + list.length > MAX_ATTACH) { setErr(`You can add up to ${MAX_ATTACH} files.`); return; }
+    setErr(''); setBusy(true);
+    try {
+      for (const file of list) {
+        if (file.size > MAX_UPLOAD) throw new Error(`${file.name} is bigger than 12 MB. For long videos, paste a link instead.`);
+        const prepared = await prepFile(file);
+        setFiles((p) => (p.length >= MAX_ATTACH ? p : [...p, prepared]));
+      }
+    } catch (x) { setErr(x.message); }
+    setBusy(false);
+  };
+  const addLink = () => {
+    const v = li.trim();
+    if (!v) return;
+    if (!/^https?:\/\/\S+$/i.test(v)) { setErr('A link must start with http:// or https://'); return; }
+    setErr(''); setLinks((p) => (p.includes(v) ? p : [...p, v])); setLi('');
+  };
+  const submit = async () => {
+    setErr(''); setBusy(true);
+    try {
+      await onSubmit({ ...f, files: files.map(({ name, mime, data }) => ({ name, mime, data })), links: li.trim() ? [...links, li.trim()] : links });
+    } catch (x) { setErr(x.message); setBusy(false); }
+  };
+
+  return (
+    <div>
+      {err && <Alert>{err}</Alert>}
+      <div className="grid gap-5 md:grid-cols-2">
+        <Field l="What was found?" hint="Short and clear, for example Blue school sweater."><Inp value={f.title} onChange={up('title')} maxLength={140} placeholder="Black jacket with a red zip" /></Field>
+        <Field l="Category"><Sel o={catOpts} value={f.category} onChange={up('category')} /></Field>
+        <Field l="Where was it found?" hint="Optional."><Inp value={f.foundAt} onChange={up('foundAt')} placeholder="Near Lab 1, dining hall..." /></Field>
+        <Field l="Phone or WhatsApp" hint="Optional. Owners can call or message this number."><Inp value={f.phone} onChange={up('phone')} placeholder="+250 7xx xxx xxx" /></Field>
+        <Field l="Contact email" hint="Optional."><Inp type="email" value={f.email} onChange={up('email')} placeholder="you@gmail.com" /></Field>
+        <div className="md:col-span-2">
+          <Field l="Details" hint="Colour, brand, size, marks. Do not give away everything, so the real owner can prove it is theirs.">
+            <Txt value={f.description} onChange={up('description')} maxLength={4000} />
+          </Field>
+        </div>
+      </div>
+
+      {!editing && (
+        <div className="mt-6 rounded-[6px] border border-black/10 bg-[#f6f7f9] p-4">
+          <h4 className="text-xs font-bold">Photos, videos and files</h4>
+          <p className="mt-1 text-xs text-black/55">Up to {MAX_ATTACH} files of 12 MB (photos, short videos, PDF, Word). For long videos paste a link below.</p>
+          <label className="mt-3 inline-block cursor-pointer rounded-[6px] border border-black/20 bg-white px-4 py-2 text-xs font-semibold hover:bg-black/5">
+            Choose files
+            <input type="file" multiple className="sr-only" onChange={pick} disabled={busy}
+              accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" />
+          </label>
+          {files.length > 0 && (
+            <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+              {files.map((x, i) => (
+                <li key={x.name + i} className="flex items-center gap-3 rounded-[6px] border border-black/10 bg-white p-2 text-xs">
+                  {x.mime.startsWith('image/')
+                    ? <img src={`data:${x.mime};base64,${x.data}`} alt="" className="h-10 w-10 shrink-0 rounded-[4px] object-cover" />
+                    : <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[4px] bg-black/5 text-[10px] font-bold uppercase">{x.mime.startsWith('video/') ? 'Video' : 'File'}</span>}
+                  <span className="min-w-0 flex-1"><b className="block truncate">{x.name}</b><span className="text-black/50">{niceSize(x.size)}</span></span>
+                  <button type="button" aria-label={`Remove ${x.name}`} onClick={() => setFiles((p) => p.filter((_, j) => j !== i))} className="px-1 text-lg leading-none text-[#f97316]">×</button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="mt-4 flex gap-2">
+            <Inp value={li} onChange={(e) => setLi(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addLink()} placeholder="Paste a link to a photo or video (YouTube, Drive, ...)" />
+            <Btn c="w" className="shrink-0" onClick={addLink}>Add link</Btn>
+          </div>
+          {links.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {links.map((l) => (
+                <li key={l} className="flex items-center gap-3 rounded-[6px] border border-black/10 bg-white px-3 py-2 text-xs">
+                  <span className="min-w-0 flex-1 truncate">{l}</span>
+                  <button type="button" aria-label="Remove link" onClick={() => setLinks((p) => p.filter((x) => x !== l))} className="text-lg leading-none text-[#f97316]">×</button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="mt-6 flex flex-wrap gap-3">
+        <Btn disabled={busy || !f.title.trim()} onClick={submit}>{busy ? 'Please wait…' : editing ? 'Save changes' : 'Post to Trends'}</Btn>
+        <Btn c="w" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </div>
+  );
+}
+
+// The Minister of Communication's page (admins see it too).
+function TrendsManager({ user, opts }) {
+  const cats = catsOf(opts);
+  const isAdmin = user.role === 'admin';
+  const [items, setItems] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [ok, setOk] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [edit, setEdit] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [view, setView] = useState('active');
+  const [cf, setCf] = useState('');
+  const [q, setQ] = useState('');
+
+  const load = () => api('/api/trends/manage').then(setItems).catch((e) => { setOk(false); setMsg(e.message); });
+  useEffect(() => { load(); }, []);
+  useLive({ 'trends:update': load });
+
+  const act = async (fn, done = '') => {
+    try { await fn(); setOk(true); setMsg(done); } catch (e) { setOk(false); setMsg(e.message); }
+    await load();
+  };
+  const create = async (body) => {
+    await api('/api/trends', 'POST', body);
+    setFormOpen(false); setOk(true); setMsg('Posted. Everyone can now see it on the home page under Trends.'); load();
+  };
+  const update = async (body) => {
+    await api(`/api/trends/${edit.id}`, 'PUT', body);
+    setEdit(null); setOk(true); setMsg('Changes saved.'); load();
+  };
+
+  const list = items || [];
+  const n = (s) => list.filter((t) => t.status === s).length;
+  const shown = list.filter((t) => (view === 'all' || t.status === view) && (!cf || t.category === cf) && match(q, t.title, t.category, t.description, t.foundAt));
+  const usedCats = [...new Set(list.map((t) => t.category))].sort();
+
+  return (
+    <div>
+      {msg && <Alert ok={ok}>{msg}</Alert>}
+
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+        <Tile v={n('active')} t="On the board" tone="gr" />
+        <Tile v={list.filter((t) => t.status === 'active' && t.daysLeft === 0).length} t="Ready to remove" tone="or" />
+        <Tile v={n('returned')} t="Returned to owners" />
+        <Tile v={n('removed')} t="Removed" />
+      </div>
+
+      <Card t="Post a found item" sub={`Everyone sees active posts on the home page. A post can be removed ${isAdmin ? '(any time for admins)' : '7 days after it was posted'}, and reposted later to put it back on top.`}
+        action={!formOpen && <Btn c="or" onClick={() => setFormOpen(true)}>+ New post</Btn>}>
+        {formOpen
+          ? <TrendForm cats={cats} user={user} onSubmit={create} onCancel={() => setFormOpen(false)} />
+          : <p className="text-xs text-black/55">Add a photo, a short video, a file or a link, choose a category and give a way to contact you.</p>}
+      </Card>
+
+      <Card t="All posts" action={<Pills value={view} onChange={setView} items={[['active', 'On the board', n('active')], ['returned', 'Returned', n('returned')], ['removed', 'Removed', n('removed')], ['all', 'All', list.length]]} />}>
+        <div className="mb-3 grid gap-3 md:grid-cols-[1fr_220px]">
+          <SearchBox value={q} onChange={setQ} placeholder="Search by title, category or place" />
+          <Sel o={[{ v: '', t: 'All categories' }, ...usedCats]} value={cf} onChange={(e) => setCf(e.target.value)} />
+        </div>
+        {items === null && <Empty>Loading…</Empty>}
+        {items !== null && shown.length === 0 && <Empty>{list.length ? 'No post matches.' : 'You have not posted anything yet. Press New post.'}</Empty>}
+        {shown.map((t) => (
+          <div key={t.id} className="flex flex-wrap items-center gap-4 border-t border-black/10 py-4">
+            <button type="button" aria-label={`Open ${t.title}`} onClick={() => setDetail(t)} className="h-16 w-20 shrink-0 overflow-hidden rounded-[6px] bg-black/5">
+              <Cover item={t} className="h-full w-full" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <b className="truncate">{t.title}</b>
+                <Badge s={t.status} />
+                <span className="rounded-[4px] bg-black/5 px-2 py-0.5 text-[11px] font-semibold">{t.category}</span>
+              </div>
+              <p className="mt-1 text-xs text-black/55">
+                Posted {ago(t.postedAt)}{t.reposts ? ` · reposted ${t.reposts} time${t.reposts === 1 ? '' : 's'}` : ''} · {t.media.length} attachment{t.media.length === 1 ? '' : 's'}
+              </p>
+              {t.status === 'active' && (
+                <p className={`mt-1 text-xs font-medium ${t.daysLeft ? 'text-[#c2410c]' : 'text-[#15803d]'}`}>
+                  {t.daysLeft ? `Can be removed in ${t.daysLeft} day${t.daysLeft === 1 ? '' : 's'}` : 'Ready to remove or repost'}
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Btn c="w" onClick={() => setDetail(t)}>View</Btn>
+              <Btn c="w" onClick={() => setEdit(t)}>Edit</Btn>
+              {t.status === 'active' ? (
+                <>
+                  <Btn c="gr" onClick={() => window.confirm('Mark this item as returned to its owner?') && act(() => api(`/api/trends/${t.id}/returned`, 'PATCH'), 'Marked as returned.')}>Returned</Btn>
+                  <Btn c="or" disabled={!isAdmin && t.daysLeft > 0} title={!isAdmin && t.daysLeft > 0 ? `Available in ${t.daysLeft} day(s)` : ''}
+                    onClick={() => window.confirm('Take this post off the board?') && act(() => api(`/api/trends/${t.id}/remove`, 'PATCH'), 'Removed from the board. You can repost it any time.')}>Remove</Btn>
+                </>
+              ) : (
+                <>
+                  <Btn onClick={() => act(() => api(`/api/trends/${t.id}/repost`, 'PATCH'), 'Reposted. It is back on the home page.')}>Repost</Btn>
+                  <Btn c="or" onClick={() => window.confirm('Delete this post and its files for good?') && act(() => api(`/api/trends/${t.id}`, 'DELETE'), 'Deleted.')}>Delete</Btn>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </Card>
+
+      {detail && <TrendDetail item={detail} onClose={() => setDetail(null)} />}
+      {edit && (
+        <Modal title="Edit post" onClose={() => setEdit(null)} wide>
+          <TrendForm initial={edit} cats={cats} user={user} onSubmit={update} onCancel={() => setEdit(null)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* 10. PROFILE (every role)                                            */
 /* ================================================================== */
 
 function Profile() {
@@ -1739,6 +2199,7 @@ function Profile() {
   const details = [
     ['Email', p.email || 'Not set'],
     ['Role', ROLE_LABEL[p.role] || p.role],
+    ...(p.comm && p.role !== 'admin' ? [['Extra role', 'Minister of Communication']] : []),
     ...(p.role === 'student'
       ? [['Class', p.cls || 'Not set'], ['Combination', p.combo || 'None'], ...(p.section ? [['Section', p.section]] : [])]
       : []),
@@ -1778,7 +2239,7 @@ function Profile() {
 }
 
 /* ================================================================== */
-/* 10. DASHBOARD SHELL: sidebar + page                                 */
+/* 11. DASHBOARD SHELL: sidebar + page                                 */
 /* ================================================================== */
 
 function NavItem({ name, active, onClick, dark }) {
@@ -1793,12 +2254,16 @@ function NavItem({ name, active, onClick, dark }) {
   );
 }
 
-function Dashboard({ user, opts, onLogout }) {
+function Dashboard({ user, opts, onLogout, onRefreshMe }) {
+  // Admins get every tab (including Lost & Found). Anyone the admin named Minister of Communication
+  // keeps their normal page (booking labs) and gets a Lost & Found page on top of it.
   const items = user.role === 'admin'
     ? [...ADMIN_TABS, 'Profile']
-    : [user.role === 'student' ? 'My labs' : 'Bookings', 'Profile'];
-  const [page, setPage] = useState(items[0]);
+    : [user.role === 'student' ? 'My labs' : 'Bookings', ...(user.comm ? ['Lost & Found'] : []), 'Profile'];
+  const [picked, setPage] = useState(items[0]);
+  const page = items.includes(picked) ? picked : items[0];
   const Main = user.role === 'admin' ? Admin : user.role === 'student' ? Student : Teacher;
+  useLive({ 'me:update': onRefreshMe });
 
   return (
     <div className="min-h-screen bg-[#f6f7f9] text-[#0b0f1a] text-[13px] lg:flex">
@@ -1812,7 +2277,7 @@ function Dashboard({ user, opts, onLogout }) {
             <Avatar name={user.name} picture={user.picture} className="h-9 w-9 text-xs" />
             <div className="min-w-0">
               <div className="truncate text-xs font-semibold text-white">{user.name}</div>
-              <div className="text-[11px] text-white/50">{ROLE_LABEL[user.role] || user.role}</div>
+              <div className="text-[11px] text-white/50">{user.comm && user.role !== 'admin' ? 'Minister of Communication' : ROLE_LABEL[user.role] || user.role}</div>
             </div>
           </div>
           <button type="button" onClick={onLogout}
@@ -1843,7 +2308,9 @@ function Dashboard({ user, opts, onLogout }) {
               <p className="mt-0.5 text-xs text-black/50">Signed in as {user.name}{user.email ? ` · ${user.email}` : ''}</p>
             </div>
           </div>
-          {page === 'Profile' ? <Profile /> : <Main user={user} opts={opts} tab={page} />}
+          {page === 'Profile' ? <Profile />
+            : page === 'Lost & Found' ? <TrendsManager user={user} opts={opts} />
+            : <Main user={user} opts={opts} tab={page} />}
         </main>
       </div>
     </div>
@@ -1851,7 +2318,7 @@ function Dashboard({ user, opts, onLogout }) {
 }
 
 /* ================================================================== */
-/* 11. ROOT: landing -> Google login -> dashboard                      */
+/* 12. ROOT: landing -> Google login -> dashboard                      */
 /* ================================================================== */
 
 export default function Home() {
@@ -1862,6 +2329,8 @@ export default function Home() {
 
   const loadOpts = () =>
     api('/api/options').then((o) => setOpts({ ...EMPTY_OPTS, ...o })).catch(() => {});
+  // Re-reads who I am, so a newly named Minister of Communication sees the Lost & Found page without logging in again.
+  const refreshMe = () => api('/api/me').then(setUser).catch(() => {});
 
   useEffect(() => {
     loadOpts();
@@ -1882,7 +2351,7 @@ export default function Home() {
   const logout = () => { setToken(''); setUser(null); setView('home'); };
 
   if (booting) return null;
-  if (view === 'app' && user) return <Dashboard user={user} opts={opts} onLogout={logout} />;
+  if (view === 'app' && user) return <Dashboard user={user} opts={opts} onLogout={logout} onRefreshMe={refreshMe} />;
   if (view === 'login') return <Auth onDone={handleAuth} onBack={() => setView('home')} />;
-  return <Landing onLogin={() => setView('login')} />;
+  return <Landing onLogin={() => setView('login')} categories={catsOf(opts)} />;
 }
