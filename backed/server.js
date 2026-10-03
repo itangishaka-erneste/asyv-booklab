@@ -1,8 +1,8 @@
 // server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js connects, Neon hosts it).
-// Accounts are created by seed.sql or by the admin. EVERYONE logs in with Google only, so nobody can
-// type someone else's email and pretend to be them. Admin emails (ADMIN_EMAILS) are admins after Google login.
+// Accounts are created by seed.sql or by the admin. People log in with their email only (or Google).
+// Admin emails (ADMIN_EMAILS) also need ADMIN_PASSWORD, because an admin account must not be open to anyone who knows the email.
 require('dotenv').config();
-const express = require('express'), cors = require('cors'), http = require('http');
+const express = require('express'), cors = require('cors'), http = require('http'), crypto = require('crypto');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
 const { OAuth2Client } = require('google-auth-library');
 const { query, one, tx } = require('./db');
@@ -10,9 +10,9 @@ const { query, one, tx } = require('./db');
 const SECRET = process.env.JWT_SECRET || 'change-me';
 const CLIENT = process.env.CLIENT_URL || 'http://localhost:5173';
 const ADMINS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families', 'reasons'];
 const ROLES = ['student', 'teacher', 'psychosocial'];
-const STATUSES = ['approved', 'rejected', 'pending'];
 const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // A class is a grade + a combination + an optional section letter, for example "S6 IJABO" or "S6 IJABO A".
@@ -27,6 +27,7 @@ const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
 const cleanList = list => [...new Set(list.map(x => String(x).trim()).filter(Boolean))];
 const cleanCode = s => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
 const validEmail = e => /^\S+@\S+\.\S+$/.test(e);
+const safeEqual = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 
 const app = express(), server = http.createServer(app);
 const io = new Server(server, { cors: { origin: CLIENT } });
@@ -43,21 +44,13 @@ const auth = (...roles) => (req, res, next) => {
 };
 
 // ---------- Data helpers (views session_seats and application_details are defined in the database) ----------
-// Every application row also carries the student's email, Google picture and a Gravatar id (md5 of the email),
-// so the screens can search by email and show a photo without changing the database views.
-const withPeople = async rows => {
-  const m = new Map((await query('SELECT username, email, picture, md5(lower(email)) AS gid FROM users')).map(r => [r.username, r]));
-  return rows.map(a => { const p = m.get(a.name); return { ...a, email: p?.email || '', picture: p?.picture || '', gid: p?.gid || '' }; });
-};
 const listSessions = () => query('SELECT * FROM session_seats ORDER BY date, "from", lab');
-const listApps = async (where = '', params = []) =>
-  withPeople(await query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params));
+const listApps = (where = '', params = []) => query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params);
 const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_seats WHERE id = $1', [sid]))[0]?.left ?? 0;
 const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Application not found.');
 const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
 const saveOption = (q, k, value) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(value)]);
 const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
-const idList = v => [...new Set((Array.isArray(v) ? v : []).map(Number).filter(Number.isInteger))];
 
 // Fills grades and combinations the first time, without touching anything the admin already set.
 const seedOptions = async () => {
@@ -95,35 +88,47 @@ io.on('connection', socket => {
 const pushSeats = () => listSessions().then(s => io.emit('seats', s)).catch(() => {});
 const pushApps = (names = []) => {
   io.to('admins').emit('applications:update');
-  [...new Set(names.filter(Boolean))].forEach(n => io.to(`user:${n}`).emit('applications:update'));
+  [...new Set(names)].forEach(n => io.to(`user:${n}`).emit('applications:update'));
   pushSeats();
 };
 
-// ---------- Login: Google only ----------
-// Google proves the person owns the email. It never creates an account: the email must already be
-// in the users table (added by the admin) or listed in ADMIN_EMAILS. The Google photo is saved for the screens.
+// ---------- Login ----------
+// Students, teachers and psychosocial workers: email only, and the email must already exist in the database.
+// Admins: email + ADMIN_PASSWORD. Without a password the API answers { needPassword: true }.
+app.post('/api/login', wrap(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase(), password = String(req.body.password || '');
+  if (!validEmail(email)) fail(400, 'Enter a valid email address.');
+  if (ADMINS.includes(email)) {
+    if (!password) return res.json({ needPassword: true });
+    if (!ADMIN_PASSWORD || !safeEqual(password, ADMIN_PASSWORD)) fail(401, 'Wrong admin password.');
+    return res.json({ token: sign({ id: 0, role: 'admin', name: cleanName(email.split('@')[0]), email }) });
+  }
+  const u = await one('SELECT id, username, role FROM users WHERE email = $1', [email]);
+  if (!u) fail(403, 'There is no account for this email. Ask your admin to add it.');
+  res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email }) });
+}));
+
+// Google login proves the person owns the email. It never creates an account.
 app.post('/api/google', wrap(async (req, res) => {
   let p;
   try { p = (await gClient.verifyIdToken({ idToken: req.body.credential, audience: process.env.GOOGLE_CLIENT_ID })).getPayload(); }
   catch { fail(401, 'Google sign-in failed. Please try again.'); }
   if (!p.email_verified) fail(403, 'Your Google email is not verified.');
-  const email = p.email.toLowerCase(), picture = p.picture || '';
-  if (ADMINS.includes(email))
-    return res.json({ token: sign({ id: 0, role: 'admin', name: cleanName(p.name || email.split('@')[0]), email, picture }) });
-  const u = await one('SELECT id, username, role FROM users WHERE lower(email) = $1', [email]);
-  if (!u) fail(403, 'There is no account for this Google email. Ask your admin to add it.');
-  if (picture) await query('UPDATE users SET picture = $1 WHERE id = $2', [picture, u.id]);
-  res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email, picture }) });
+  const email = p.email.toLowerCase();
+  if (ADMINS.includes(email)) return res.json({ token: sign({ id: 0, role: 'admin', name: cleanName(p.name || email.split('@')[0]), email }) });
+  const u = await one('SELECT id, username, role FROM users WHERE email = $1', [email]);
+  if (!u) fail(403, 'There is no account for this email. Ask your admin to add it.');
+  res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email }) });
 }));
 app.get('/api/me', auth(), (req, res) => res.json(req.user));
 
 // ---------- Profile (any logged-in person) ----------
 app.get('/api/profile', auth(), wrap(async (req, res) => {
   const me = req.user;
-  let info = { name: me.name, email: me.email || '', role: me.role, picture: me.picture || '', cls: '', combo: '', section: '' };
+  let info = { name: me.name, email: me.email || '', role: me.role, cls: '', combo: '', section: '' };
   if (me.id) {
-    const u = await one(`SELECT username, email, role, picture, ${CLASS_SQL} AS cls, profile->>'combo' AS combo, profile->>'section' AS section FROM users WHERE id = $1`, [me.id]) || fail(404, 'Account not found.');
-    info = { name: u.username, email: u.email, role: u.role, picture: u.picture || me.picture || '', cls: u.cls, combo: u.combo || '', section: u.section || '' };
+    const u = await one(`SELECT username, email, role, ${CLASS_SQL} AS cls, profile->>'combo' AS combo, profile->>'section' AS section FROM users WHERE id = $1`, [me.id]) || fail(404, 'Account not found.');
+    info = { name: u.username, email: u.email, role: u.role, cls: u.cls, combo: u.combo || '', section: u.section || '' };
   }
   let stats = null;
   if (me.role !== 'admin') {
@@ -137,7 +142,7 @@ app.get('/api/profile', auth(), wrap(async (req, res) => {
 
 // ---------- User accounts (admin only) ----------
 app.get('/api/users', auth('admin'), wrap(async (_, res) =>
-  res.json(await query(`SELECT id, username AS name, email, role, picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'grade' AS grade, profile->>'combo' AS combo, profile->>'section' AS section FROM users ORDER BY role, username`))));
+  res.json(await query(`SELECT id, username AS name, email, role, ${CLASS_SQL} AS "className", profile->>'grade' AS grade, profile->>'combo' AS combo, profile->>'section' AS section FROM users ORDER BY role, username`))));
 
 const nameTaken = async (name, exceptId = 0) =>
   (await query('SELECT id, username FROM users')).some(r => r.id !== exceptId && nameKey(r.username) === nameKey(name));
@@ -147,7 +152,7 @@ app.post('/api/users', auth('admin'), wrap(async (req, res) => {
   const { role, grade, combo, section } = req.body;
   const name = cleanName(req.body.name), email = String(req.body.email || '').trim().toLowerCase();
   if (!name) fail(400, 'Enter the full name.');
-  if (!validEmail(email)) fail(400, 'Enter a valid Google email address.');
+  if (!validEmail(email)) fail(400, 'Enter a valid email address.');
   if (!ROLES.includes(role)) fail(400, 'Choose a role.');
   const profile = role === 'student' ? await studentProfile(grade, combo, section) : {};
   if (await nameTaken(name)) fail(409, 'Someone with this name already has an account. Add a middle name or number to tell them apart.');
@@ -170,9 +175,8 @@ app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
   }
   if (req.body.email) {
     const email = String(req.body.email).trim().toLowerCase();
-    if (!validEmail(email)) fail(400, 'Enter a valid Google email address.');
+    if (!validEmail(email)) fail(400, 'Enter a valid email address.');
     add('email', email);
-    add('picture', null); // a new email means a new Google photo
   }
   if (u.role === 'student' && grade) {
     p.push(JSON.stringify(await studentProfile(grade, combo, section)));
@@ -240,11 +244,10 @@ app.post('/api/options/rename', auth('admin'), wrap(async (req, res) => {
 app.get('/api/classes', auth('teacher', 'psychosocial', 'admin'), wrap(async (_, res) =>
   res.json((await query(`SELECT DISTINCT ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND ${CLASS_SQL} <> '' ORDER BY cls`)).map(r => r.cls))));
 
-// Students of a class (or all students for psychosocial workers). Search by name or email happens on the screen.
 app.get('/api/students', auth('teacher', 'psychosocial', 'admin'), wrap(async (req, res) => {
   const cls = req.query.class || '';
   if (req.user.role === 'teacher' && !cls) fail(400, 'Choose a class first.');
-  res.json(await query(`SELECT username AS name, email, picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'family' AS family, profile->>'combo' AS combo
+  res.json(await query(`SELECT username AS name, ${CLASS_SQL} AS "className", profile->>'family' AS family, profile->>'combo' AS combo
     FROM users WHERE role = 'student' AND ($1::text = '' OR ${CLASS_SQL} = $1::text) ORDER BY username`, [cls]));
 }));
 
@@ -318,7 +321,7 @@ app.get('/api/apps', auth(), wrap(async (req, res) => res.json(req.user.role ===
 
 app.patch('/api/apps/:id/status', auth('admin'), wrap(async (req, res) => {
   const { status } = req.body;
-  if (!STATUSES.includes(status)) fail(400, 'Unknown status.');
+  if (!['approved', 'rejected', 'pending'].includes(status)) fail(400, 'Unknown status.');
   const a = await tx(async q => {
     const a = await getApp(q, req.params.id);
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [a.session_id]);
@@ -328,36 +331,6 @@ app.patch('/api/apps/:id/status', auth('admin'), wrap(async (req, res) => {
   });
   pushApps([a.student, a.booked_by]); res.json({ ok: true });
 }));
-
-// Approve, reject or reset many applications at once (a whole class, or everything on screen).
-// Approvals stop at the number of seats left; the answer says how many were skipped because the lab is full.
-app.patch('/api/apps/bulk-status', auth('admin'), wrap(async (req, res) => {
-  const ids = idList(req.body.ids), { status } = req.body;
-  if (!STATUSES.includes(status)) fail(400, 'Unknown status.');
-  if (!ids.length) fail(400, 'Nothing selected.');
-  const out = await tx(async q => {
-    await q('SELECT id FROM sessions FOR UPDATE');
-    const rows = await q('SELECT id, session_id, status, student, booked_by FROM applications WHERE id = ANY($1) ORDER BY created_at, id', [ids]);
-    let changed = 0, full = 0;
-    for (const a of rows) {
-      if (a.status === status) continue;
-      if (status === 'approved' && await seatsLeft(q, a.session_id) < 1) { full++; continue; }
-      await q('UPDATE applications SET status = $1 WHERE id = $2', [status, a.id]); changed++;
-    }
-    return { changed, full, names: rows.flatMap(r => [r.student, r.booked_by]) };
-  });
-  pushApps(out.names); res.json({ changed: out.changed, full: out.full });
-}));
-
-// Mark attendance for many applications at once (att: 'present' | 'absent' | null).
-app.patch('/api/apps/bulk-attendance', auth('admin'), wrap(async (req, res) => {
-  const ids = idList(req.body.ids), att = req.body.att ?? null;
-  if (![null, 'present', 'absent'].includes(att)) fail(400, 'Use present or absent.');
-  if (!ids.length) fail(400, 'Nothing selected.');
-  const rows = await query("UPDATE applications SET attendance = $1 WHERE id = ANY($2) AND status = 'approved' RETURNING student", [att, ids]);
-  pushApps(rows.map(r => r.student)); res.json({ changed: rows.length });
-}));
-
 app.post('/api/apps/approve-all', auth('admin'), wrap(async (_, res) => {
   const approved = await tx(async q => {
     await q('SELECT id FROM sessions FOR UPDATE');
@@ -429,20 +402,14 @@ app.get('/api/stats/overview', auth('admin'), wrap(async (_, res) => {
 }));
 app.get('/api/stats/absenteeism', auth('admin'), wrap(async (_, res) => {
   const out = {};
-  (await listApps('att IS NOT NULL')).forEach(a => {
-    const r = out[a.name] ||= { applied: 0, attended: 0, absent: 0, email: a.email, picture: a.picture, gid: a.gid, cls: a.cls };
-    r.applied++; a.att === 'present' ? r.attended++ : r.absent++;
-  });
+  (await listApps('att IS NOT NULL')).forEach(a => { const r = out[a.name] ||= { applied: 0, attended: 0, absent: 0 }; r.applied++; a.att === 'present' ? r.attended++ : r.absent++; });
   res.json(out);
 }));
-
-// History: filter by date range (from, to) and lab. Search, class, status and attendance are filtered on the screen.
 app.get('/api/history', auth('admin'), wrap(async (req, res) => {
-  const w = [], p = [], dateOk = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
-  if (dateOk(req.query.from)) { p.push(req.query.from); w.push(`date::date >= $${p.length}::date`); }
-  if (dateOk(req.query.to)) { p.push(req.query.to); w.push(`date::date <= $${p.length}::date`); }
+  const w = [], p = [];
+  if (req.query.date) { p.push(req.query.date); w.push(`date = $${p.length}`); }
   if (req.query.labId) { p.push(+req.query.labId); w.push(`"labId" = $${p.length}`); }
-  res.json((await listApps(w.join(' AND '), p)).slice(-3000));
+  res.json(await listApps(w.join(' AND '), p));
 }));
 
 app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.code >= 400 && err.code < 600 ? err.code : 500).json({ error: err.message || 'Something went wrong.' }));
