@@ -986,7 +986,7 @@ function Teacher({ user, opts }) {
 /* 8. ADMIN DASHBOARD                                                  */
 /* ================================================================== */
 
-const ADMIN_TABS = ['Overview', 'Users', 'Labs', 'Schedule', 'Applications', 'Attendance', 'History', 'Lost & Found', 'Settings'];
+const ADMIN_TABS = ['Overview', 'Users', 'Labs', 'Schedule', 'Applications', 'Attendance', 'History', 'Settings'];
 const ROLE_LABEL = { admin: 'Admin', teacher: 'Teacher', psychosocial: 'Psychosocial worker', student: 'Student' };
 const ROLE_CHOICES = ['student', 'teacher', 'psychosocial'];
 
@@ -1235,7 +1235,7 @@ function UsersTab({ users, opts, act }) {
         )}
       </Card>
 
-      <Card t="Minister of Communication" sub="Pick the person below with Make minister. They keep their normal role and can still book labs, and they also get a Lost & Found page where they post found items for everyone to see on the home page.">
+      <Card t="Minister of Communication" sub="Pick the person below with Make minister. They keep their normal role and can still book labs. They also get a Lost & Found page where they set up categories, post found items and remove or repost them. You only assign the person, they do the rest.">
         {ministers.length === 0
           ? <p className="text-xs text-black/60">Nobody is Minister of Communication yet. Find the account in the list below and press Make minister.</p>
           : ministers.map((u) => (
@@ -1681,7 +1681,7 @@ function ListEditor({ title, sub, items, onSave }) {
   );
 }
 
-const SETTINGS_TABS = ['Classes', 'Booking reasons', 'Lost & Found', 'Clubs and staff'];
+const SETTINGS_TABS = ['Classes', 'Booking reasons', 'Clubs and staff'];
 const OTHER_LISTS = { clubs: ['Clubs and activities', 'Shown on student profiles.'], staffRoles: ['Staff roles', 'Job titles for staff.'], families: ['Families', 'Groups students belong to.'] };
 
 function SettingsTab({ opts, saveList, saveSetup, rename }) {
@@ -1692,9 +1692,6 @@ function SettingsTab({ opts, saveList, saveSetup, rename }) {
       {t === 'Classes' && <ClassSetup opts={opts} save={saveSetup} rename={rename} />}
       {t === 'Booking reasons' && (
         <ListEditor title="Booking reasons" sub="Students and staff pick one of these when they book." items={opts.reasons || []} onSave={(l) => saveList('reasons', l)} />
-      )}
-      {t === 'Lost & Found' && (
-        <ListEditor title="Lost-item categories" sub="The Minister of Communication picks one of these for every post, and visitors filter by them." items={catsOf(opts)} onSave={(l) => saveList('trendCategories', l)} />
       )}
       {t === 'Clubs and staff' && Object.entries(OTHER_LISTS).map(([k, [title, sub]]) => (
         <ListEditor key={k} title={title} sub={sub} items={opts[k] || []} onSave={(l) => saveList(k, l)} />
@@ -2072,10 +2069,9 @@ function TrendForm({ initial, cats, user, onSubmit, onCancel }) {
   );
 }
 
-// The Minister of Communication's page (admins see it too).
+// The Minister of Communication's page (only the person the admin assigned sees it).
 function TrendsManager({ user, opts }) {
-  const cats = catsOf(opts);
-  const isAdmin = user.role === 'admin';
+  const [cats, setCats] = useState(catsOf(opts));
   const [items, setItems] = useState(null);
   const [msg, setMsg] = useState('');
   const [ok, setOk] = useState(false);
@@ -2089,6 +2085,7 @@ function TrendsManager({ user, opts }) {
   const load = () => api('/api/trends/manage').then(setItems).catch((e) => { setOk(false); setMsg(e.message); });
   useEffect(() => { load(); }, []);
   useLive({ 'trends:update': load });
+  useEffect(() => { api('/api/options').then((o) => setCats(catsOf(o))).catch(() => {}); }, []);
 
   const act = async (fn, done = '') => {
     try { await fn(); setOk(true); setMsg(done); } catch (e) { setOk(false); setMsg(e.message); }
@@ -2119,7 +2116,7 @@ function TrendsManager({ user, opts }) {
         <Tile v={n('removed')} t="Removed" />
       </div>
 
-      <Card t="Post a found item" sub={`Everyone sees active posts on the home page. A post can be removed ${isAdmin ? '(any time for admins)' : '7 days after it was posted'}, and reposted later to put it back on top.`}
+      <Card t="Post a found item" sub={`Everyone sees active posts on the home page. A post can be removed 7 days after it was posted, and reposted later to put it back on top.`}
         action={!formOpen && <Btn c="or" onClick={() => setFormOpen(true)}>+ New post</Btn>}>
         {formOpen
           ? <TrendForm cats={cats} user={user} onSubmit={create} onCancel={() => setFormOpen(false)} />
@@ -2159,7 +2156,7 @@ function TrendsManager({ user, opts }) {
               {t.status === 'active' ? (
                 <>
                   <Btn c="gr" onClick={() => window.confirm('Mark this item as returned to its owner?') && act(() => api(`/api/trends/${t.id}/returned`, 'PATCH'), 'Marked as returned.')}>Returned</Btn>
-                  <Btn c="or" disabled={!isAdmin && t.daysLeft > 0} title={!isAdmin && t.daysLeft > 0 ? `Available in ${t.daysLeft} day(s)` : ''}
+                  <Btn c="or" disabled={t.daysLeft > 0} title={t.daysLeft > 0 ? `Available in ${t.daysLeft} day(s)` : ''}
                     onClick={() => window.confirm('Take this post off the board?') && act(() => api(`/api/trends/${t.id}/remove`, 'PATCH'), 'Removed from the board. You can repost it any time.')}>Remove</Btn>
                 </>
               ) : (
@@ -2172,6 +2169,9 @@ function TrendsManager({ user, opts }) {
           </div>
         ))}
       </Card>
+
+      <ListEditor title="Categories" sub="You set the categories. Pick one for every post, and visitors filter the board by them." items={cats}
+        onSave={(l) => act(async () => { const r = await api('/api/trends/categories', 'PUT', { list: l }); setCats(r.list); }, 'Categories saved.')} />
 
       {detail && <TrendDetail item={detail} onClose={() => setDetail(null)} />}
       {edit && (
