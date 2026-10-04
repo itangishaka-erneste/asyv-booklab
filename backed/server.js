@@ -16,11 +16,11 @@ const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families',
 const ROLES = ['student', 'teacher', 'psychosocial'];
 const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// A class is a grade + a combination + an optional section letter, for example "S6 IJABO" or "S6 IJABO A".
+// A class is a grade + a combination + an optional section (letter or number), for example "S6 IJABO", "S6 IJABO A" or "S6 IJABO 3".
 const DEFAULT_GRADE_COMBOS = { S4: ['INGABE'], S5: ['INGABO'], S6: ['IJABO'] };
 const DEFAULT_TREND_CATEGORIES = ['Clothes', 'Shoes', 'Keys', 'Bags', 'Phones and electronics', 'Books and stationery', 'Documents and IDs', 'Water bottles and lunch boxes', 'Jewelry and watches', 'Other'];
 const DEFAULTS = { grades: ['S4', 'S5', 'S6'], gradeCombos: DEFAULT_GRADE_COMBOS, trendCategories: DEFAULT_TREND_CATEGORIES };
-const SECTION_RE = /^[A-Z]$/;
+const SECTION_RE = /^[A-Z0-9]{1,2}$/; // a letter (A-Z) or a number (1, 2, ... 12)
 const combosFor = (opts, grade) => opts.gradeCombos?.[grade] ?? DEFAULT_GRADE_COMBOS[grade] ?? [];
 
 // Two names are the same person when they have the same words, in any order, ignoring case and accents.
@@ -89,7 +89,7 @@ const studentProfile = async (grade, combo, section) => {
   if (combos.length && !combos.includes(combo)) fail(400, `Choose a combination for ${grade}: ${combos.join(', ')}.`);
   if (!combos.length) combo = '';
   section = String(section || '').trim().toUpperCase();
-  if (section && !SECTION_RE.test(section)) fail(400, 'The section must be one letter from A to Z, or empty.');
+  if (section && !SECTION_RE.test(section)) fail(400, 'The section must be a letter (A to Z) or a number (1 to 99), or empty.');
   return { grade, combo, section, cls: [grade, combo, section].filter(Boolean).join(' ') };
 };
 

@@ -142,7 +142,7 @@ const COMBOS_S6 = ['MPC', 'PCB', 'HGL', 'MEG'];
 const ALL_COMBOS = [...COMBOS_S4_S5, ...COMBOS_S6];
 const DEFAULT_GRADES = ['S4', 'S5', 'S6'];
 const DEFAULT_GRADE_COMBOS = { S4: COMBOS_S4_S5, S5: COMBOS_S4_S5, S6: COMBOS_S6 };
-const SECTIONS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+const SECTIONS = [...Array.from({ length: 12 }, (_, i) => String(i + 1)), ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')];
 // Categories for the Lost & Found board (the admin can change them in Settings).
 const DEFAULT_CATS = ['Clothes', 'Shoes', 'Keys', 'Bags', 'Phones and electronics', 'Books and stationery', 'Documents and IDs', 'Water bottles and lunch boxes', 'Jewelry and watches', 'Other'];
 
@@ -671,30 +671,8 @@ function Landing({ onLogin, categories }) {
       <CallToAction onLogin={onLogin} />
       <footer className={`${WRAP} py-10 flex flex-wrap justify-between items-center gap-4 text-xs text-black/50 border-t border-black/10`}>
         <Logo />
-        <span>ASYV STUDENT GOVERNMENT 2026-2027</span>
-<div className="flex">
-  {"RESOURCES".split("").map((letter, index) => (
-    <span
-      key={index}
-      className="inline-block animate-bounce"
-      style={{
-        color: [
-          "rgb(255, 0, 0)",
-          "rgb(255, 140, 0)",
-          "rgb(255, 215, 0)",
-          "rgb(0, 180, 80)",
-          "rgb(0, 150, 255)",
-          "rgb(75, 0, 130)",
-          "rgb(220, 0, 180)",
-          "rgb(255, 50, 100)"
-        ][index],
-        animationDelay: `${index * 0.12}s`,
-      }}
-    >
-      {letter}
-    </span>
-  ))}
-</div>      </footer>
+        <span>© 2026 Computer Lab Management System</span>
+      </footer>
     </div>
   );
 }
@@ -1173,7 +1151,7 @@ function ClassPicker({ value, opts, onChange }) {
           <Sel o={combos.length ? combos : [{ v: '', t: 'None' }]} value={value.combo} disabled={!combos.length}
             onChange={(e) => onChange({ ...value, combo: e.target.value })} />
         </Field>
-        <Field l="Section (optional)" hint="Letter A to Z. Leave empty if the class is a single stream.">
+        <Field l="Section (optional)" hint="A number (1, 2, 3...) or a letter A to Z. Leave empty if the class is a single stream.">
           <Sel o={[{ v: '', t: 'No section' }, ...SECTIONS]} value={value.section} onChange={(e) => onChange({ ...value, section: e.target.value })} />
         </Field>
       </div>
@@ -1196,6 +1174,7 @@ function UsersTab({ users, opts, act }) {
   const [rf, setRf] = useState('all');
   const [cf, setCf] = useState('all');
   const [edit, setEdit] = useState(null);
+  const [limit, setLimit] = useState(40);
   const up = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
 
   const create = () => act(async () => {
@@ -1276,7 +1255,7 @@ function UsersTab({ users, opts, act }) {
         </div>
         <p className="mb-2 text-xs text-black/50">{shown.length} shown</p>
         {shown.length === 0 && <Empty>No accounts match.</Empty>}
-        {shown.map((u) => (
+        {shown.slice(0, limit).map((u) => (
           <Row key={u.id}>
             <Person p={u} className="h-10 w-10 text-xs" />
             <span className="flex flex-wrap items-center gap-2">
@@ -1290,6 +1269,11 @@ function UsersTab({ users, opts, act }) {
             </span>
           </Row>
         ))}
+        {shown.length > limit && (
+          <div className="border-t border-black/10 pt-4 text-center">
+            <Btn c="w" onClick={() => setLimit((n) => n + 40)}>Show 40 more ({shown.length - limit} left)</Btn>
+          </div>
+        )}
       </Card>
 
       {edit && (
