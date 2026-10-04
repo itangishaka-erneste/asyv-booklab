@@ -671,8 +671,30 @@ function Landing({ onLogin, categories }) {
       <CallToAction onLogin={onLogin} />
       <footer className={`${WRAP} py-10 flex flex-wrap justify-between items-center gap-4 text-xs text-black/50 border-t border-black/10`}>
         <Logo />
-        <span>© 2026 Computer Lab Management System</span>
-      </footer>
+        <span>ASYV STUDENT GOVERNMENT 2026-2027</span>
+<div className="flex">
+  {"RESOURCES".split("").map((letter, index) => (
+    <span
+      key={index}
+      className="inline-block animate-bounce"
+      style={{
+        color: [
+          "rgb(255, 0, 0)",
+          "rgb(255, 140, 0)",
+          "rgb(255, 215, 0)",
+          "rgb(0, 180, 80)",
+          "rgb(0, 150, 255)",
+          "rgb(75, 0, 130)",
+          "rgb(220, 0, 180)",
+          "rgb(255, 50, 100)"
+        ][index],
+        animationDelay: `${index * 0.12}s`,
+      }}
+    >
+      {letter}
+    </span>
+  ))}
+</div>      </footer>
     </div>
   );
 }
