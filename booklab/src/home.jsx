@@ -354,8 +354,34 @@ const attCounts = (rows) => {
 /* for one day, visible before anybody signs in.                       */
 /* ================================================================== */
 
-const NAV = [['labs', 'Labs'], ['how', 'How to book'], ['trends', 'Lost and found']];
 const WRAP = 'max-w-6xl mx-auto px-6';
+const RC = { free: '#22c55e', wait: '#f59e0b', full: '#ef4444', none: '#94a3b8', navy: '#0b0f1a' };
+const STATUS_COLOR = { available: RC.free, limited: RC.wait, full: RC.full, none: RC.none };
+
+// A progress circle. pct is 0 to 100. Children are shown in the middle.
+const Ring = ({ pct = 0, size = 72, stroke = 8, color = RC.free, track = 'rgba(148,163,184,.25)', children }) => {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r, p = Math.min(Math.max(pct, 0), 100);
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90" aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={c - (c * p) / 100} style={{ transition: 'stroke-dashoffset .8s ease' }} />
+      </svg>
+      <div className="absolute inset-0 grid place-items-center text-center">{children}</div>
+    </div>
+  );
+};
+
+// Day filter for admin pages: Yesterday / Today / Tomorrow / All days + any date.
+const DayFilter = ({ day, onChange }) => (
+  <div className="flex flex-wrap items-center gap-2">
+    <Pills value={day} onChange={onChange} items={[['', 'All days'], [dayOffset(-1), 'Yesterday'], [today(), 'Today'], [dayOffset(1), 'Tomorrow']]} />
+    <Inp type="date" aria-label="Pick a day" value={day} onChange={(e) => onChange(e.target.value)} className="!w-40" />
+  </div>
+);
+
+const NAV = [['labs', 'Labs'], ['how', 'How to book'], ['trends', 'Lost and found']];
 const STATUS_TEXT = { available: 'Available', limited: 'Almost full', full: 'Full', none: 'No lab time' };
 const HOW = [
   ['Pick a day', 'Use the day bar to see the labs and seats left for any date.'],
@@ -367,52 +393,45 @@ const Heading = ({ title, className = '' }) => (
   <h2 className={`text-2xl md:text-3xl font-bold tracking-tight ${className}`}>{title}</h2>
 );
 
-function Header({ onLogin }) {
+function Header({ onLogin, onTrends }) {
+  const link = 'rounded-[6px] px-3 py-2 hover:bg-white/10 hover:text-white';
   return (
-    <header className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b border-black/5">
-      <div className={`${WRAP} h-16 flex items-center justify-between`}>
-        <Logo />
-        <nav className="hidden md:flex gap-2 text-xs font-medium">
-          {NAV.map(([h, t]) => <a key={h} href={`#${h}`} className="px-3 py-2 rounded-[6px] hover:bg-black/5">{t}</a>)}
+    <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0b0f1a]/90 backdrop-blur">
+      <div className={`${WRAP} flex h-16 items-center justify-between`}>
+        <Logo light />
+        <nav className="hidden items-center gap-1 text-xs font-medium text-white/75 md:flex">
+          <a href="#labs" className={link}>Labs</a>
+          <a href="#how" className={link}>How to book</a>
+          <button type="button" onClick={onTrends} className={link}>Trends</button>
         </nav>
-        <Btn c="or" onClick={onLogin}>Log in</Btn>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={onTrends} className="px-3 py-2 text-xs font-medium text-white/75 md:hidden">Trends</button>
+          <Btn c="or" onClick={onLogin}>Log in</Btn>
+        </div>
       </div>
     </header>
   );
 }
 
-// Small tile used in the summary row.
-const Mini = ({ v, t, tone = 'ink' }) => {
-  const color = { ink: 'text-[#0b0f1a]', gr: 'text-[#16a34a]', or: 'text-[#f97316]' }[tone];
-  return (
-    <div className="rounded-[6px] border border-black/10 bg-white p-4">
-      <div className={`text-2xl font-bold ${color}`}>{v}</div>
-      <div className="mt-1 text-xs font-medium text-black/60">{t}</div>
-    </div>
-  );
-};
-
-// Every computer of a lab time as a small square: green is free, grey is taken.
 const PcGrid = ({ s }) => (
   <div className="mt-3">
     <div className="grid grid-cols-[repeat(auto-fill,minmax(52px,1fr))] gap-1.5">
       {Array.from({ length: s.seats }, (_, i) => {
-        const taken = i < s.taken;
-        return (
-          <div key={i} title={`PC ${i + 1}: ${taken ? 'taken' : 'free'}`}
-            className={`rounded-[4px] border px-1 py-1.5 text-center text-[10px] font-semibold ${taken ? 'border-black/10 bg-black/[0.06] text-black/40 line-through' : 'border-[#16a34a]/40 bg-[#16a34a]/10 text-[#15803d]'}`}>
-            PC {i + 1}
-          </div>
-        );
+        const state = i < s.taken ? 'taken' : i < s.taken + (s.pending || 0) ? 'wait' : 'free';
+        const look = {
+          taken: 'border-black/10 bg-black/[0.06] text-black/40 line-through',
+          wait: 'border-[#f59e0b]/50 bg-[#f59e0b]/10 text-[#b45309]',
+          free: 'border-[#22c55e]/40 bg-[#22c55e]/10 text-[#15803d]',
+        }[state];
+        return <div key={i} title={`PC ${i + 1}: ${state === 'wait' ? 'waiting for approval' : state}`} className={`rounded-[4px] border px-1 py-1.5 text-center text-[10px] font-semibold ${look}`}>PC {i + 1}</div>;
       })}
     </div>
-    <p className="mt-2 text-[11px] text-black/50">Green is free, grey is taken (approved bookings). The admin gives each student a computer.</p>
+    <p className="mt-2 text-[11px] text-black/50">Green is free, amber is waiting for the admin, grey is taken. The admin gives each student a computer.</p>
   </div>
 );
 
 function LabCard({ lab, past, onLogin }) {
-  const [open, setOpen] = useState(null); // the lab time whose computers are shown
-  const now = nowHM();
+  const [open, setOpen] = useState(null);
   return (
     <article className="flex flex-col rounded-[6px] border border-black/10 bg-white p-5">
       <div className="flex items-start justify-between gap-3">
@@ -428,23 +447,26 @@ function LabCard({ lab, past, onLogin }) {
       ) : (
         <>
           <p className="mt-4 text-xs font-medium text-black/70">
-            <b className={lab.free ? 'text-[#15803d]' : 'text-[#c2410c]'}>{lab.free}</b> free seats in {lab.sessions.length} lab time{lab.sessions.length === 1 ? '' : 's'}
+            <b className={lab.free ? 'text-[#15803d]' : 'text-[#b91c1c]'}>{lab.free}</b> free seats in {lab.sessions.length} lab time{lab.sessions.length === 1 ? '' : 's'}
+            {lab.pending > 0 && <span className="ml-2 rounded-[4px] bg-[#f59e0b]/10 px-2 py-0.5 text-[11px] font-semibold text-[#b45309]">{lab.pending} waiting for approval</span>}
           </p>
           <div className="mt-2">
             {lab.sessions.map((s) => {
-              const ended = past || (s.to <= now && !past && false);
-              const pct = s.seats ? (s.taken / s.seats) * 100 : 100;
+              const ended = past;
+              const pct = s.seats ? Math.round(((s.taken + s.pending) / s.seats) * 100) : 100;
+              const color = s.left < 1 ? RC.full : s.pending > 0 ? RC.wait : RC.free;
               return (
                 <div key={s.id} className="border-t border-black/10 py-3">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-4">
+                    <Ring pct={pct} size={58} stroke={6} color={color}>
+                      <span className="text-[11px] font-bold">{Math.min(pct, 100)}%</span>
+                    </Ring>
                     <div className="min-w-0 flex-1">
                       <b className="text-sm">{s.from}–{s.to}</b>
-                      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-[3px] bg-black/10">
-                        <div className={`h-full ${s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#f97316]'}`} style={{ width: pct + '%' }} />
-                      </div>
-                      <div className={`mt-1 text-xs ${s.left > 0 ? 'font-medium text-[#15803d]' : 'font-bold text-[#c2410c]'}`}>
+                      <div className={`mt-0.5 text-xs ${s.left > 0 ? 'font-medium text-[#15803d]' : 'font-bold text-[#b91c1c]'}`}>
                         {s.left > 0 ? `${s.left} of ${s.seats} free` : `Full, ${s.seats} of ${s.seats} taken`}
                       </div>
+                      {s.pending > 0 && <div className="mt-0.5 text-[11px] font-semibold text-[#b45309]">{s.pending} student{s.pending === 1 ? '' : 's'} applied, waiting for the admin</div>}
                     </div>
                     <div className="flex shrink-0 flex-col items-stretch gap-1.5">
                       <Btn disabled={ended || s.left < 1} onClick={onLogin}>{ended ? 'Past' : s.left < 1 ? 'Full' : 'Apply'}</Btn>
@@ -465,90 +487,143 @@ function LabCard({ lab, past, onLogin }) {
   );
 }
 
-function LabBoard({ onLogin }) {
-  const [day, setDay] = useState(today());
-  const [data, setData] = useState(null);
-  const [err, setErr] = useState('');
-  const [labId, setLabId] = useState('');
-  const [view, setView] = useState('all');
-
-  // Loads the chosen day, and refreshes it every 30 seconds so the seat counts stay true.
+function HeroPanel() {
+  const [d, setD] = useState(null);
   useEffect(() => {
     let alive = true;
-    const load = () => api(`/api/overview?date=${day}`)
-      .then((d) => { if (alive) { setData(d); setErr(''); } })
-      .catch((e) => { if (alive) setErr(e.message); });
+    const load = () => api(`/api/overview?date=${today()}`).then((x) => alive && setD(x)).catch(() => {});
     load();
-    const t = setInterval(load, 30000);
+    const t = setInterval(load, 15000);
     return () => { alive = false; clearInterval(t); };
-  }, [day]);
-
-  const loading = !data || data.date !== day;
-  const labs = (data?.labs || []).filter((l) => (!labId || String(l.id) === labId) && (view === 'all' || l.free > 0));
-  const tot = data?.totals || {};
-  // Days that have lab times, nearest to the chosen day first, so it is easy to jump there.
-  const near = (data?.days || [])
-    .filter((d) => d !== day)
-    .sort((a, b) => Math.abs(new Date(a) - new Date(day)) - Math.abs(new Date(b) - new Date(day)))
-    .slice(0, 6)
-    .sort();
+  }, []);
+  const t = d?.totals || {};
+  const freePct = t.seats ? Math.round((t.free / t.seats) * 100) : 0;
+  const labs = (d?.labs || []).slice(0, 4);
+  const row = (k, v, c) => <div className="flex items-center justify-between"><span className="text-white/60">{k}</span><b style={{ color: c }}>{v}</b></div>;
 
   return (
-    <div>
-      <div className="rounded-[6px] border border-black/10 bg-white p-4">
-        <p className="mb-3 text-xs font-medium text-black/60">Showing labs for</p>
-        <h3 className="mb-4 text-lg font-bold">{niceDay(day)}{day === today() && <span className="ml-2 align-middle"><Badge s="active">Today</Badge></span>}</h3>
-        <DayBar day={day} onChange={setDay} />
-        {near.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-black/50">Days with lab times:</span>
-            {near.map((d) => (
-              <button key={d} type="button" onClick={() => setDay(d)} className="rounded-[6px] border border-black/20 bg-white px-2.5 py-1 font-semibold hover:bg-black/5">{d.slice(5)}</button>
-            ))}
-          </div>
-        )}
+    <div className="rounded-[6px] border border-white/15 bg-white/[0.07] p-5 backdrop-blur">
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <p className="text-[11px] uppercase tracking-wider text-white/50">Today at a glance</p>
+          <p className="text-sm font-semibold">{niceDay(today())}</p>
+        </div>
+        <span className="flex items-center gap-1.5 text-[11px] text-white/60"><span className="h-2 w-2 animate-pulse rounded-full bg-[#22c55e]" />Live</span>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Mini v={tot.labs ?? '-'} t="Labs" />
-        <Mini v={tot.computers ?? '-'} t="Computers in total" />
-        <Mini v={tot.times ?? '-'} t="Lab times this day" />
-        <Mini v={tot.free ?? '-'} t="Free seats this day" tone="gr" />
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
-        <Sel o={[{ v: '', t: 'All labs' }, ...(data?.labs || []).map((l) => ({ v: String(l.id), t: l.name }))]} value={labId} onChange={(e) => setLabId(e.target.value)} aria-label="Choose a lab" />
-        <Pills value={view} onChange={setView} items={[['all', 'All labs'], ['free', 'Only with free seats']]} />
-      </div>
-
-      {err && <div className="mt-4"><Alert>{err}</Alert></div>}
-      <div className="mt-6">
-        {loading && !err && <Empty>Loading the labs…</Empty>}
-        {!loading && data.labs.length === 0 && <Empty>No labs have been added yet.</Empty>}
-        {!loading && data.labs.length > 0 && labs.length === 0 && <Empty>No lab matches these filters.</Empty>}
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-2">
-          {!loading && labs.map((l) => <LabCard key={l.id} lab={l} past={day < today()} onLogin={onLogin} />)}
+      <div className="flex items-center gap-6">
+        <Ring size={132} stroke={12} pct={freePct} color={RC.free} track="rgba(255,255,255,.12)">
+          <div><div className="text-3xl font-extrabold">{d ? freePct : '-'}%</div><div className="text-[10px] text-white/60">seats free</div></div>
+        </Ring>
+        <div className="grid flex-1 gap-2.5 text-xs">
+          {row('Free seats', t.free ?? '-', '#4ade80')}
+          {row('Waiting for approval', t.pending ?? '-', '#fbbf24')}
+          {row('Lab times today', t.times ?? '-', '#fff')}
+          {row('Labs', t.labs ?? '-', '#fff')}
         </div>
       </div>
+
+      <div className="mt-6 grid grid-cols-2 gap-3 border-t border-white/10 pt-5 sm:grid-cols-4">
+        {labs.length === 0 && <p className="col-span-full text-center text-xs text-white/55">{d ? 'No lab time today. Pick another day below.' : 'Loading the labs…'}</p>}
+        {labs.map((l) => {
+          const used = l.seats ? Math.round(((l.seats - l.free) / l.seats) * 100) : 0;
+          return (
+            <div key={l.id} className="flex flex-col items-center text-center">
+              <Ring size={68} stroke={7} pct={used} color={STATUS_COLOR[l.status]} track="rgba(255,255,255,.12)">
+                <span className="text-xs font-bold">{l.seats ? used + '%' : '-'}</span>
+              </Ring>
+              <b className="mt-2 w-full truncate text-[11px]">{l.name}</b>
+              <span className="text-[10px] text-white/55">{l.seats ? `${l.free} free` : 'no lab time'}</span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-4 text-[10px] leading-relaxed text-white/45">Circles show how much of each lab is taken today. Amber means students applied and the admin has not answered yet.</p>
     </div>
   );
 }
 
+function DashboardPeek({ onLogin }) {
+  const rings = [['Lab 1', 82, RC.free], ['Lab 2', 64, RC.wait], ['Lab 3', 45, RC.free]];
+  const side = ['Overview', 'Users', 'Labs', 'Schedule', 'Applications', 'Attendance'];
+  return (
+    <section className="relative overflow-hidden bg-gradient-to-b from-[#0b0f1a] to-[#0f2a1f] text-white">
+      <style>{`@keyframes lbfloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-16px)}}.lbfloat{animation:lbfloat 3.2s ease-in-out infinite}@media (prefers-reduced-motion:reduce){.lbfloat{animation:none}}`}</style>
+      <div className={`${WRAP} pt-16 text-center`}>
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-[#4ade80]">Computer resources</p>
+        <Heading title="Every lab, every seat, one dashboard." className="mx-auto mt-3 max-w-2xl" />
+        <p className="mx-auto mt-3 max-w-xl text-xs leading-relaxed text-white/65">Book, follow your approval and see attendance in one place. Log in to open yours.</p>
+        <Btn c="or" className="mt-6" onClick={onLogin}>Open my dashboard</Btn>
+      </div>
+      <div className={`${WRAP} mt-12`}>
+        <div className="lbfloat mx-auto h-[300px] max-w-4xl overflow-hidden rounded-t-[6px] border border-white/15 bg-[#f6f7f9] text-[#0b0f1a] shadow-2xl">
+          <div className="flex items-center gap-1.5 border-b border-black/10 bg-white px-4 py-2.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-[#ef4444]" /><span className="h-2.5 w-2.5 rounded-full bg-[#f59e0b]" /><span className="h-2.5 w-2.5 rounded-full bg-[#22c55e]" />
+            <span className="ml-3 text-[11px] text-black/40">LabBook dashboard (preview)</span>
+          </div>
+          <div className="flex">
+            <div className="hidden w-40 shrink-0 space-y-1 bg-[#0b0f1a] p-3 sm:block">
+              {side.map((x, i) => <div key={x} className={`rounded-[6px] px-3 py-2 text-[11px] font-semibold ${i === 0 ? 'bg-[#f97316] text-white' : 'text-white/60'}`}>{x}</div>)}
+            </div>
+            <div className="min-w-0 flex-1 p-5">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <Mini v="128" t="Applications" /><Mini v="96" t="Approved" tone="gr" /><Mini v="18" t="Waiting" tone="or" /><Mini v="74%" t="Attendance" tone="gr" />
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-around gap-4 rounded-[6px] border border-black/10 bg-white p-4">
+                {rings.map(([n, p, c]) => (
+                  <div key={n} className="flex flex-col items-center">
+                    <Ring size={84} stroke={9} pct={p} color={c}><span className="text-sm font-bold">{p}%</span></Ring>
+                    <span className="mt-2 text-[11px] font-semibold text-black/60">{n} used</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Landing({ onLogin, categories }) {
+  const [showTrends, setShowTrends] = useState(false);
+  const openTrends = () => {
+    setShowTrends(true);
+    setTimeout(() => document.getElementById('trends')?.scrollIntoView({ behavior: 'smooth' }), 60);
+  };
+
   return (
     <div className="bg-white text-[#0b0f1a] antialiased text-sm">
-      <Header onLogin={onLogin} />
+      <Header onLogin={onLogin} onTrends={openTrends} />
 
-      <section className="bg-[#0b0f1a] text-white">
-        <div className={`${WRAP} py-12`}>
-          <h1 className="max-w-2xl text-3xl md:text-4xl font-bold leading-tight tracking-tight">Computer labs: see what is free, then book.</h1>
-          <p className="mt-4 max-w-xl text-sm leading-relaxed text-white/70">
-            Choose a day to see every lab, its computers and the seats left. When you find a time, log in and apply.
-          </p>
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            <a href="#labs" className="inline-block rounded-[6px] bg-[#f97316] px-5 py-2.5 text-xs font-semibold text-white hover:opacity-90">See the labs</a>
-            <Btn c="w" onClick={onLogin}>Log in with Google</Btn>
+      <section className="relative overflow-hidden bg-gradient-to-br from-[#0b0f1a] via-[#0f2a1f] to-[#14532d] text-white">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-[#22c55e]/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 left-1/4 h-80 w-80 rounded-full bg-[#f97316]/10 blur-3xl" />
+        <div className={`${WRAP} relative grid gap-12 py-16 lg:min-h-[640px] lg:grid-cols-[1fr_460px] lg:items-center lg:py-24`}>
+          <div>
+            <span className="inline-flex items-center gap-2 rounded-[6px] border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-white/80">
+              <span className="h-2 w-2 rounded-full bg-[#22c55e]" />Live seat counts
+            </span>
+            <h1 className="mt-5 max-w-xl text-4xl font-bold leading-tight tracking-tight md:text-5xl">Computer labs: see what is free, then book.</h1>
+            <p className="mt-5 max-w-lg text-sm leading-relaxed text-white/70">
+              Choose a day to see every lab, its computers and the seats left. When you find a time, log in and apply.
+              If the admin is away your application waits as pending, and everybody can see it here.
+            </p>
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              <button type="button" onClick={onLogin}
+                className="inline-flex items-center gap-3 rounded-[6px] bg-white px-5 py-3 text-xs font-semibold text-[#0b0f1a] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#f97316]">
+                <span className="grid h-5 w-5 place-items-center rounded-full border border-black/10 text-[11px] font-black text-[#4285F4]">G</span>
+                Continue with Google
+              </button>
+              <a href="#labs" className="rounded-[6px] border border-white/25 px-5 py-3 text-xs font-semibold text-white hover:bg-white/10">See the labs</a>
+            </div>
+            <div className="mt-8 flex flex-wrap gap-5 text-[11px] text-white/60">
+              <span><i className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#22c55e]" />Free</span>
+              <span><i className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#f59e0b]" />Waiting for approval</span>
+              <span><i className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#ef4444]" />Full</span>
+            </div>
           </div>
+          <HeroPanel />
         </div>
       </section>
 
@@ -576,7 +651,16 @@ function Landing({ onLogin, categories }) {
         </aside>
       </section>
 
-      <TrendsSection categories={categories} />
+      <DashboardPeek onLogin={onLogin} />
+
+      {showTrends && (
+        <>
+          <TrendsSection categories={categories} />
+          <div className="bg-black/[0.03] pb-10 text-center">
+            <Btn c="w" onClick={() => { setShowTrends(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Hide Lost and found</Btn>
+          </div>
+        </>
+      )}
 
       <footer className={`${WRAP} py-10 flex flex-wrap justify-between items-center gap-4 text-xs text-black/50 border-t border-black/10`}>
         <Logo />
@@ -920,7 +1004,36 @@ const Stat = ({ v, t, tone }) => {
   );
 };
 
-function Overview({ stats, opts }) {
+function DaySnapshot({ apps, sessions }) {
+  const [day, setDay] = useState(today());
+  const ss = sessions.filter((s) => !day || dayOf(s) === day);
+  const rows = apps.filter((a) => !day || a.date === day);
+  const seats = ss.reduce((n, s) => n + s.seats, 0), free = ss.reduce((n, s) => n + s.left, 0);
+  const k = (st) => rows.filter((a) => a.status === st).length;
+  const marked = rows.filter((a) => a.att), present = marked.filter((a) => a.att === 'present').length;
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const items = [
+    ['Seats used', pct(seats - free, seats), RC.free, `${seats - free} of ${seats}`],
+    ['Approved', pct(k('approved'), rows.length), RC.free, `${k('approved')} of ${rows.length}`],
+    ['Waiting', pct(k('pending'), rows.length), RC.wait, `${k('pending')} to answer`],
+    ['Attendance', pct(present, marked.length), RC.free, marked.length ? `${present} of ${marked.length} marked` : 'not marked yet'],
+  ];
+  return (
+    <Card t="Day snapshot" sub={day ? niceDay(day) : 'All days'} action={<DayFilter day={day} onChange={setDay} />}>
+      <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
+        {items.map(([name, p, c, note]) => (
+          <div key={name} className="flex flex-col items-center text-center">
+            <Ring size={96} stroke={10} pct={p} color={c}><span className="text-lg font-bold">{p}%</span></Ring>
+            <b className="mt-2 text-xs">{name}</b>
+            <span className="text-[11px] text-black/50">{note}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function Overview({ stats, opts, apps, sessions }) {
   const t = stats.totals || {};
   const people = stats.people || {};
   const rate = stats.attendance.rate;
@@ -935,6 +1048,7 @@ function Overview({ stats, opts }) {
 
   return (
     <div>
+      <DaySnapshot apps={apps} sessions={sessions} />
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
         <Stat v={t.applications} t="Applications" />
         <Stat v={t.approved} t="Approved" tone="gr" />
@@ -1234,7 +1348,8 @@ function LabsTab({ labs, act }) {
 function ScheduleTab({ labs, sessions, act }) {
   const [sch, setSch] = useState({ date: today(), from: '14:00', to: '16:00', labId: 'all' });
   const [q, setQ] = useState('');
-  const shown = sessions.filter((s) => match(q, s.lab, s.date, s.from, s.to));
+  const [day, setDay] = useState('');
+  const shown = sessions.filter((s) => (!day || dayOf(s) === day) && match(q, s.lab, s.date, s.from, s.to));
   return (
     <Card t="Prepare a schedule">
       <div className="grid md:grid-cols-4 gap-4">
@@ -1248,6 +1363,7 @@ function ScheduleTab({ labs, sessions, act }) {
         labIds: sch.labId === 'all' ? undefined : [+sch.labId],
       }))}>Publish schedule</Btn>
 
+      <div className="mb-3"><DayFilter day={day} onChange={setDay} /></div>
       <div className="mb-3 max-w-sm"><SearchBox value={q} onChange={setQ} placeholder="Search lab, date or time" /></div>
       {shown.length === 0 && <Empty>{sessions.length ? 'No lab time matches.' : 'Nothing published yet.'}</Empty>}
       {shown.map((s) => (
@@ -1269,12 +1385,14 @@ function ScheduleTab({ labs, sessions, act }) {
 /* ---------- applications: approve by lab time and class ---------- */
 
 function ApplicationsTab({ apps, sessions, black, act, bulk }) {
-  const [f, setF] = useState({ q: '', status: 'pending', sid: '', cls: '' });
+  const [f, setF] = useState({ q: '', status: 'pending', sid: '', cls: '', day: '' });
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
-  const count = (s) => apps.filter((a) => s === 'all' || a.status === s).length;
-  const classes = [...new Set(apps.map((a) => a.cls).filter(Boolean))].sort();
+  const inDay = apps.filter((a) => !f.day || a.date === f.day);
+  const count = (s) => inDay.filter((a) => s === 'all' || a.status === s).length;
+  const classes = [...new Set(inDay.map((a) => a.cls).filter(Boolean))].sort();
   const seats = Object.fromEntries(sessions.map((s) => [s.id, s]));
-  const shown = apps.filter((a) =>
+  const daySessions = sessions.filter((s) => !f.day || dayOf(s) === f.day);
+  const shown = inDay.filter((a) =>
     (f.status === 'all' || a.status === f.status) &&
     (!f.sid || String(a.sid) === f.sid) &&
     (!f.cls || a.cls === f.cls) &&
@@ -1285,9 +1403,10 @@ function ApplicationsTab({ apps, sessions, black, act, bulk }) {
     <div>
       <Card t="Applications" sub="Students of the same class who applied for the same lab time are listed together."
         action={<Btn disabled={!pendingShown.length} onClick={() => bulk(pendingShown, 'approved')}>Approve all shown ({pendingShown.length})</Btn>}>
+        <div className="mb-4"><DayFilter day={f.day} onChange={(v) => setF((p) => ({ ...p, day: v, sid: '' }))} /></div>
         <div className="grid gap-3 md:grid-cols-[1fr_220px_160px]">
           <SearchBox value={f.q} onChange={(v) => set('q', v)} />
-          <Sel o={[{ v: '', t: 'All lab times' }, ...sessions.map((s) => ({ v: String(s.id), t: fmt(s) }))]} value={f.sid} onChange={(e) => set('sid', e.target.value)} />
+          <Sel o={[{ v: '', t: 'All lab times' }, ...daySessions.map((s) => ({ v: String(s.id), t: fmt(s) }))]} value={f.sid} onChange={(e) => set('sid', e.target.value)} />
           <Sel o={[{ v: '', t: 'All classes' }, ...classes]} value={f.cls} onChange={(e) => set('cls', e.target.value)} />
         </div>
         <div className="mt-4">
@@ -1660,7 +1779,7 @@ function Admin({ opts: initial, tab }) {
   return (
     <div>
       {err && <Alert>{err}</Alert>}
-      {tab === 'Overview' && (stats ? <Overview stats={stats} opts={opts} /> : <Empty>Loading the numbers…</Empty>)}
+      {tab === 'Overview' && (stats ? <Overview stats={stats} opts={opts} apps={apps} sessions={sessions} /> : <Empty>Loading the numbers…</Empty>)}
       {tab === 'Users' && <UsersTab users={users} opts={opts} act={act} />}
       {tab === 'Labs' && <LabsTab labs={labs} act={act} />}
       {tab === 'Schedule' && <ScheduleTab labs={labs} sessions={sessions} act={act} />}

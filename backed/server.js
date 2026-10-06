@@ -318,16 +318,22 @@ const HM = t => String(t || '').slice(0, 5);
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 app.get('/api/overview', wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : new Date().toISOString().slice(0, 10);
-  const [labRows, sessions] = await Promise.all([query('SELECT id, name, pcs FROM labs ORDER BY name'), listSessions()]);
+  const [labRows, sessions, pend] = await Promise.all([
+    query('SELECT id, name, pcs FROM labs ORDER BY name'),
+    listSessions(),
+    query("SELECT sid, COUNT(*)::int AS n FROM application_details WHERE status = 'pending' GROUP BY sid"),
+  ]);
+  const pendBy = Object.fromEntries(pend.map(r => [r.sid, r.n]));
   const dayOf = s => String(s.date).slice(0, 10);
   const today = sessions.filter(s => dayOf(s) === date);
   const labs = labRows.map(l => {
     const list = today.filter(s => s.labId == l.id)
-      .map(s => ({ id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken: Math.max(s.seats - s.left, 0) }))
+      .map(s => ({ id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken: Math.max(s.seats - s.left, 0), pending: pendBy[s.id] || 0 }))
       .sort((a, b) => a.from.localeCompare(b.from));
     const seats = list.reduce((n, s) => n + s.seats, 0), free = list.reduce((n, s) => n + s.left, 0);
+    const pending = list.reduce((n, s) => n + s.pending, 0);
     const status = !list.length ? 'none' : free === 0 ? 'full' : free / seats <= 0.3 ? 'limited' : 'available';
-    return { id: l.id, name: l.name, pcs: l.pcs, status, seats, free, sessions: list };
+    return { id: l.id, name: l.name, pcs: l.pcs, status, seats, free, pending, sessions: list };
   });
   res.json({
     date,
@@ -335,6 +341,7 @@ app.get('/api/overview', wrap(async (req, res) => {
     totals: {
       labs: labs.length, computers: labs.reduce((n, l) => n + l.pcs, 0),
       times: today.length, free: labs.reduce((n, l) => n + l.free, 0), seats: labs.reduce((n, l) => n + l.seats, 0),
+      pending: labs.reduce((n, l) => n + l.pending, 0),
     },
     labs,
   });
