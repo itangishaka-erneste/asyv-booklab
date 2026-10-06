@@ -901,7 +901,7 @@ function Auth({ onDone, onBack }) {
   return (
     <div className="fixed inset-0 grid overflow-hidden bg-white text-[13px] text-[#0b0f1a] lg:grid-cols-[2fr_3fr]">
       <aside className="relative hidden h-full overflow-hidden bg-cover bg-center lg:block" style={{
-        backgroundImage: `linear-gradient(180deg, rgba(11,15,26,0.55), rgba(11,15,26,0.75)), url("https://images.unsplash.com/photo-1556157382-97eda2d62296?auto=format&fit=crop&w=1200&q=80")`,
+        backgroundImage: `linear-gradient(180deg, rgba(11,15,26,0.55), rgba(11,15,26,0.75)), url("https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcST7TcvochSBGi8U3bk4uFExeX2gwYuAxQg_FY5T4VXDtXRljapt_lG2kcr&s=10")`,
         backgroundPosition: 'center',
         backgroundSize: 'cover',
       }}>
@@ -910,7 +910,7 @@ function Auth({ onDone, onBack }) {
           <div className="max-w-sm space-y-4">
             <div className="overflow-hidden rounded-[12px] border border-white/15 bg-white/8 backdrop-blur-sm shadow-lg">
               <img
-                src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcST7TcvochSBGi8U3bk4uFExeX2gwYuAxQg_FY5T4VXDtXRljapt_lG2kcr&s=10"
+                src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRgEfmKO5Rm1q_4uyJezc_2xhRGbyZI2j83oB_QTaKndQ&s=10"
                 alt="School minister"
                 className="h-44 w-full object-cover object-center"
               />
