@@ -42,6 +42,18 @@ function useLive(handlers) {
   }, []);
 }
 
+// Same idea for visitors who are NOT logged in (the public home page). No token is sent, so the
+// server only tells them "something changed" and they read the public numbers again.
+function usePublicLive(handlers) {
+  const ref = useRef(handlers);
+  ref.current = handlers;
+  useEffect(() => {
+    const socket = io(BASE);
+    Object.keys(ref.current).forEach((ev) => socket.on(ev, (...a) => ref.current[ev]?.(...a)));
+    return () => socket.disconnect();
+  }, []);
+}
+
 const C = { ink: '#0b0f1a', or: '#f97316', gr: '#16a34a', grid: '#e5e7eb', mute: '#94a3b8' };
 
 /* ================================================================== */
@@ -191,6 +203,7 @@ const BADGE = {
   removed: 'bg-red-50 text-red-600',
   available: 'bg-[#16a34a]/10 text-[#15803d]',
   limited: 'bg-[#f97316]/10 text-[#c2410c]',
+  requested: 'bg-[#f97316]/10 text-[#c2410c]',
   full: 'bg-red-50 text-red-600',
   none: 'bg-black/5 text-black/60',
 };
@@ -350,18 +363,14 @@ const attCounts = (rows) => {
 };
 
 /* ================================================================== */
-/* 4. LANDING PAGE: the labs, their computers and the seats left       */
-/* for one day, visible before anybody signs in.                       */
+/* 4. LANDING PAGE: a full-height hero with live charts and a          */
+/* dashboard preview, then the labs, their computers and the seats    */
+/* left for one day, visible before anybody signs in.                  */
 /* ================================================================== */
 
-const NAV = [['labs', 'Labs'], ['how', 'How to book'], ['trends', 'Lost and found']];
+const NAV = [['labs', 'Labs'], ['trends', 'Lost and found']];
 const WRAP = 'max-w-6xl mx-auto px-6';
-const STATUS_TEXT = { available: 'Available', limited: 'Almost full', full: 'Full', none: 'No lab time' };
-const HOW = [
-  ['Pick a day', 'Use the day bar to see the labs and seats left for any date.'],
-  ['Log in with Google', 'Use the Google email your school added for you.'],
-  ['Press Apply', 'Choose the lab time and send. The admin approves it.'],
-];
+const STATUS_TEXT = { available: 'Available', limited: 'Almost full', requested: 'Fully requested', full: 'Full', none: 'No lab time' };
 
 const Heading = ({ title, className = '' }) => (
   <h2 className={`text-2xl md:text-3xl font-bold tracking-tight ${className}`}>{title}</h2>
@@ -381,6 +390,26 @@ function Header({ onLogin }) {
   );
 }
 
+// Reads the public overview of one day. It refreshes when the server says something changed
+// (a new application, an approval, a new schedule...) and every 30 seconds as a safety net.
+function useOverview(day) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const reload = useRef(() => {});
+  useEffect(() => {
+    let alive = true;
+    const run = () => api(`/api/overview?date=${day}`)
+      .then((d) => { if (alive) { setData(d); setErr(''); } })
+      .catch((e) => { if (alive) setErr(e.message); });
+    reload.current = run;
+    run();
+    const t = setInterval(run, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, [day]);
+  usePublicLive({ 'overview:update': () => reload.current() });
+  return { data, err };
+}
+
 // Small tile used in the summary row.
 const Mini = ({ v, t, tone = 'ink' }) => {
   const color = { ink: 'text-[#0b0f1a]', gr: 'text-[#16a34a]', or: 'text-[#f97316]' }[tone];
@@ -392,96 +421,382 @@ const Mini = ({ v, t, tone = 'ink' }) => {
   );
 };
 
-// Every computer of a lab time as a small square: green is free, grey is taken.
+/* ---------- hero: animations ---------- */
+
+const HERO_CSS = `
+@keyframes lbIn{from{opacity:0;transform:translateY(16px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes lbRing{from{stroke-dashoffset:var(--c)}to{stroke-dashoffset:var(--off)}}
+@keyframes lbGrow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes lbSlide{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes lbFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+@keyframes lbPulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes lbSpin{to{transform:rotate(360deg)}}
+@keyframes lbBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
+.lb-in{animation:lbIn .6s ease both}
+.lb-ring{animation:lbRing 1.2s cubic-bezier(.2,.8,.2,1) both}
+.lb-grow{transform-origin:bottom;animation:lbGrow .8s cubic-bezier(.2,.8,.2,1) both}
+.lb-slide{transform-origin:left;animation:lbSlide .9s cubic-bezier(.2,.8,.2,1) both}
+.lb-float{animation:lbFloat 5s ease-in-out infinite}
+.lb-pulse{animation:lbPulse 1.6s ease-in-out infinite}
+.lb-spin{animation:lbSpin 40s linear infinite}
+.lb-spin-rev{animation:lbSpin 60s linear infinite reverse}
+.lb-bounce{animation:lbBounce 1.8s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.lb-in,.lb-ring,.lb-grow,.lb-slide,.lb-float,.lb-pulse,.lb-spin,.lb-spin-rev,.lb-bounce{animation:none!important}}
+`;
+
+const RING_R = 52;
+const RING_C = 2 * Math.PI * RING_R;
+const SPOT_STATUS = {
+  available: 'bg-[#16a34a]/20 text-[#4ade80]',
+  limited: 'bg-[#f97316]/20 text-[#fdba74]',
+  requested: 'bg-[#f97316]/20 text-[#fdba74]',
+  full: 'bg-red-500/20 text-red-300',
+  none: 'bg-white/10 text-white/60',
+};
+
+// One lab at a time, changing every few seconds: a ring (free, waiting for approval, taken) and
+// one column for each lab time of the day. Hover to pause, click a dot or a row to jump to a lab.
+function Spotlight({ labs, loading }) {
+  const [i, setI] = useState(0);
+  const [hold, setHold] = useState(false);
+  useEffect(() => {
+    if (hold || labs.length < 2) return undefined;
+    const t = setInterval(() => setI((n) => (n + 1) % labs.length), 4500);
+    return () => clearInterval(t);
+  }, [hold, labs.length]);
+
+  const lab = labs.length ? labs[i % labs.length] : null;
+  const seats = lab?.seats || 0;
+  const reqPct = seats ? Math.min((lab.taken + lab.waiting) / seats, 1) : 0;
+  const takenPct = seats ? Math.min(lab.taken / seats, 1) : 0;
+  const arc = (p) => ({ '--c': RING_C, '--off': RING_C * (1 - p), strokeDasharray: RING_C, strokeDashoffset: RING_C * (1 - p) });
+
+  return (
+    <div className="relative mx-auto w-full max-w-md" onMouseEnter={() => setHold(true)} onMouseLeave={() => setHold(false)}>
+      {/* slowly rotating decoration behind the card */}
+      <div aria-hidden="true" className="pointer-events-none absolute -inset-6">
+        <svg viewBox="0 0 200 200" className="lb-spin h-full w-full opacity-40">
+          <circle cx="100" cy="100" r="96" fill="none" stroke="#f97316" strokeWidth="1" strokeDasharray="2 8" strokeLinecap="round" />
+        </svg>
+        <svg viewBox="0 0 200 200" className="lb-spin-rev absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] opacity-30">
+          <circle cx="100" cy="100" r="96" fill="none" stroke="#16a34a" strokeWidth="1" strokeDasharray="14 10" />
+        </svg>
+      </div>
+
+      <div className="lb-float relative rounded-[6px] border border-white/15 bg-white/[0.07] p-5 shadow-2xl backdrop-blur">
+        <div className="mb-4 flex items-center justify-between text-[11px] font-semibold text-white/60">
+          <span className="flex items-center gap-2"><span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />Live status · today</span>
+          {labs.length > 0 && <span>{(i % labs.length) + 1} / {labs.length}</span>}
+        </div>
+
+        {!lab ? (
+          <p className="py-16 text-center text-xs text-white/60">{loading ? 'Loading the labs…' : 'No labs have been added yet.'}</p>
+        ) : (
+          <div key={lab.id} className="lb-in">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="truncate text-lg font-bold">{lab.name}</h3>
+                <p className="mt-0.5 text-xs text-white/60">{lab.pcs} computers</p>
+              </div>
+              <span className={`rounded-[4px] px-2 py-1 text-[11px] font-semibold ${SPOT_STATUS[lab.status]}`}>{STATUS_TEXT[lab.status]}</span>
+            </div>
+
+            <div className="mt-4 grid grid-cols-[132px_1fr] items-center gap-5">
+              <div className="relative h-[132px] w-[132px]">
+                <svg viewBox="0 0 132 132" className="h-full w-full -rotate-90">
+                  <circle cx="66" cy="66" r={RING_R} fill="none" stroke="#16a34a" strokeOpacity={seats ? 0.35 : 0.12} strokeWidth="12" />
+                  <circle key={`w${lab.id}`} className="lb-ring" cx="66" cy="66" r={RING_R} fill="none" stroke="#f97316" strokeWidth="12" strokeLinecap="butt" style={arc(reqPct)} />
+                  <circle key={`t${lab.id}`} className="lb-ring" cx="66" cy="66" r={RING_R} fill="none" stroke="#e2e8f0" strokeWidth="12" strokeLinecap="butt" style={{ ...arc(takenPct), animationDelay: '.25s' }} />
+                </svg>
+                <div className="absolute inset-0 grid place-items-center text-center">
+                  <div>
+                    <div className="text-3xl font-extrabold leading-none">{lab.free}</div>
+                    <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-white/55">free seats</div>
+                  </div>
+                </div>
+              </div>
+
+              <ul className="space-y-2 text-xs">
+                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-white/70"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#16a34a]" />Free</span><b>{lab.free}</b></li>
+                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-white/70"><i className="lb-pulse inline-block h-2.5 w-2.5 rounded-[2px] bg-[#f97316]" />Waiting for approval</span><b>{lab.waiting}</b></li>
+                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-white/70"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-slate-200" />Taken</span><b>{lab.taken}</b></li>
+              </ul>
+            </div>
+
+            <div className="mt-5">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/50">Lab times today</p>
+              {lab.sessions.length === 0 ? (
+                <p className="rounded-[6px] bg-white/5 px-3 py-4 text-center text-xs text-white/55">No lab time today.</p>
+              ) : (
+                <div className="flex h-24 items-end gap-2">
+                  {lab.sessions.slice(0, 6).map((s, k) => {
+                    const t = s.seats ? (s.taken / s.seats) * 100 : 0;
+                    const w = s.seats ? (s.waiting / s.seats) * 100 : 0;
+                    return (
+                      <div key={s.id} className="flex h-full min-w-0 flex-1 flex-col justify-end text-center" title={`${s.from}–${s.to}: ${s.open} free, ${s.waiting} waiting, ${s.taken} taken`}>
+                        <div className="relative flex min-h-0 flex-1 flex-col justify-end overflow-hidden rounded-[3px] bg-[#16a34a]/30">
+                          <div className="lb-grow bg-[#f97316]" style={{ height: w + '%', animationDelay: `${0.15 * k}s` }} />
+                          <div className="lb-grow bg-slate-200" style={{ height: t + '%', animationDelay: `${0.15 * k + 0.1}s` }} />
+                        </div>
+                        <span className="mt-1 block truncate text-[10px] text-white/55">{s.from}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {labs.length > 1 && (
+          <>
+            <div className="mt-5 flex items-center justify-center gap-1.5">
+              {labs.map((l, k) => (
+                <button key={l.id} type="button" aria-label={`Show ${l.name}`} onClick={() => setI(k)}
+                  className={`h-1.5 rounded-full transition-all ${k === i % labs.length ? 'w-6 bg-[#f97316]' : 'w-1.5 bg-white/30 hover:bg-white/60'}`} />
+              ))}
+            </div>
+            <div className="mt-4 space-y-1.5 border-t border-white/10 pt-4">
+              {labs.slice(0, 5).map((l, k) => {
+                const p = l.seats ? Math.min((l.taken + l.waiting) / l.seats, 1) * 100 : 0;
+                return (
+                  <button key={l.id} type="button" onClick={() => setI(k)} className={`flex w-full items-center gap-3 rounded-[4px] px-2 py-1 text-left text-[11px] ${k === i % labs.length ? 'bg-white/10' : 'hover:bg-white/5'}`}>
+                    <span className="w-20 shrink-0 truncate font-semibold">{l.name}</span>
+                    <span className="h-1.5 flex-1 overflow-hidden rounded-[3px] bg-[#16a34a]/30">
+                      <span className="lb-slide block h-full bg-[#f97316]" style={{ width: p + '%', animationDelay: `${0.1 * k}s` }} />
+                    </span>
+                    <span className="w-8 shrink-0 text-right text-white/60">{Math.round(p)}%</span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// A picture of the admin dashboard, drawn with code so it needs no image file. To use a real
+// screenshot instead, replace the body of this component with <img src={shot} alt="..." />.
+function DashboardPreview() {
+  const nav = ['Overview', 'Users', 'Labs', 'Schedule', 'Applications', 'Attendance'];
+  const tiles = [['128', 'Applications', 'text-[#0b0f1a]'], ['96', 'Approved', 'text-[#16a34a]'], ['24', 'Waiting', 'text-[#f97316]'], ['91%', 'Attendance rate', 'text-[#16a34a]']];
+  const bars = [46, 72, 58, 90, 64, 80, 52];
+  const rows = [['Aline Mukamana', 'S6 MPC · Lab 1 · 14:00', 'pending'], ['Eric Niyonzima', 'S5 MSI · Lab 2 · 14:00', 'approved'], ['Divine Uwase', 'S4 ART · Lab 1 · 16:00', 'pending']];
+  return (
+    <div className="mx-auto w-full max-w-5xl">
+      <p className="mb-3 text-center text-[11px] font-semibold uppercase tracking-widest text-white/45">Everything in one dashboard</p>
+      <div className="overflow-hidden rounded-t-[6px] border border-b-0 border-white/20 bg-[#f6f7f9] shadow-[0_-20px_80px_rgba(249,115,22,0.18)]">
+        <div className="flex items-center gap-2 border-b border-black/10 bg-white px-4 py-2.5">
+          <i className="h-2.5 w-2.5 rounded-full bg-red-400" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400" /><i className="h-2.5 w-2.5 rounded-full bg-green-500" />
+          <span className="ml-3 flex-1 truncate rounded-[4px] bg-black/5 px-3 py-1 text-[11px] text-black/50">labbook / Applications</span>
+        </div>
+        <div className="flex text-[#0b0f1a]">
+          <aside className="hidden w-44 shrink-0 bg-[#0b0f1a] p-3 sm:block">
+            <div className="mb-4 text-xs font-extrabold text-white">Lab<span className="text-[#16a34a]">Book</span></div>
+            {nav.map((x) => (
+              <div key={x} className={`mb-1 flex items-center gap-2 rounded-[6px] px-2.5 py-2 text-[11px] font-semibold ${x === 'Applications' ? 'bg-[#f97316] text-white' : 'text-white/65'}`}>
+                <Icon n={x} className="h-3.5 w-3.5" />{x}
+              </div>
+            ))}
+          </aside>
+          <div className="min-w-0 flex-1 p-4 md:p-5">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              {tiles.map(([v, t, c]) => (
+                <div key={t} className="rounded-[6px] border border-black/10 bg-white p-3">
+                  <div className={`text-lg font-bold ${c}`}>{v}</div>
+                  <div className="mt-0.5 text-[10px] font-medium text-black/55">{t}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-[1.1fr_1fr]">
+              <div className="rounded-[6px] border border-black/10 bg-white p-3">
+                <div className="mb-2 text-[11px] font-semibold">Applications by day</div>
+                <div className="flex h-24 items-end gap-2">
+                  {bars.map((h, k) => <div key={k} className="flex-1 rounded-t-[3px] bg-[#f97316]/80" style={{ height: h + '%' }} />)}
+                </div>
+              </div>
+              <div className="rounded-[6px] border border-black/10 bg-white p-3">
+                <div className="mb-1 text-[11px] font-semibold">Latest applications</div>
+                {rows.map(([n, d, s]) => (
+                  <div key={n} className="flex items-center justify-between gap-2 border-t border-black/10 py-2">
+                    <span className="min-w-0"><b className="block truncate text-[11px]">{n}</b><span className="block truncate text-[10px] text-black/50">{d}</span></span>
+                    <Badge s={s} />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="h-16" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Hero({ onLogin }) {
+  const { data } = useOverview(today());
+  const labs = data?.labs || [];
+  const tot = data?.totals || {};
+  const chips = [[tot.free ?? '-', 'free seats today', 'text-[#4ade80]'], [tot.waiting ?? '-', 'waiting for approval', 'text-[#fdba74]'], [tot.labs ?? '-', 'labs', 'text-white']];
+
+  return (
+    <section className="relative overflow-hidden bg-[#0b0f1a] text-white">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0"
+        style={{ background: 'radial-gradient(circle at 85% 15%, rgba(249,115,22,0.20), transparent 45%), radial-gradient(circle at 10% 90%, rgba(22,163,74,0.20), transparent 45%)' }} />
+      <div className={`${WRAP} relative`}>
+        <div className="flex min-h-[calc(100svh-4rem)] flex-col justify-center py-12">
+          <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_1fr]">
+            <div className="lb-in">
+              <span className="inline-flex items-center gap-2 rounded-[6px] border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-white/80">
+                <span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />Seats update live, no refresh needed
+              </span>
+              <h1 className="mt-5 max-w-xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Computer labs: see what is free, then book.</h1>
+              <p className="mt-5 max-w-lg text-sm leading-relaxed text-white/70">
+                Choose a day to see every lab, its computers and the seats left. Seats that students already asked for show as waiting, so you always see the real picture. When you find a time, log in and apply.
+              </p>
+              <div className="mt-7 flex flex-wrap items-center gap-3">
+                <a href="#labs" className="inline-block rounded-[6px] bg-[#f97316] px-5 py-2.5 text-xs font-semibold text-white hover:opacity-90">See the labs</a>
+                <Btn c="w" onClick={onLogin}>Log in with Google</Btn>
+              </div>
+              <div className="mt-9 grid max-w-md grid-cols-3 gap-3">
+                {chips.map(([v, t, c]) => (
+                  <div key={t} className="rounded-[6px] border border-white/10 bg-white/5 p-3">
+                    <div className={`text-2xl font-bold ${c}`}>{v}</div>
+                    <div className="mt-0.5 text-[11px] leading-tight text-white/60">{t}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <Spotlight labs={labs} loading={!data} />
+          </div>
+          <a href="#dashboard" className="lb-bounce mx-auto mt-10 inline-block text-[11px] font-semibold text-white/50 hover:text-white/80">Scroll to see the dashboard ↓</a>
+        </div>
+
+        <div id="dashboard" className="scroll-mt-16 pt-4">
+          <DashboardPreview />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ---------- the available labs ---------- */
+
+// Every computer of a lab time as a small square. Green is free, orange is waiting for the admin's
+// approval (in the order people applied), grey is taken (approved).
 const PcGrid = ({ s }) => (
   <div className="mt-3">
     <div className="grid grid-cols-[repeat(auto-fill,minmax(52px,1fr))] gap-1.5">
       {Array.from({ length: s.seats }, (_, i) => {
         const taken = i < s.taken;
+        const waiting = !taken && i < s.taken + s.waiting;
+        const look = taken
+          ? 'border-black/10 bg-black/[0.06] text-black/40 line-through'
+          : waiting
+            ? 'lb-pulse border-[#f97316]/50 bg-[#f97316]/10 text-[#c2410c]'
+            : 'border-[#16a34a]/40 bg-[#16a34a]/10 text-[#15803d]';
         return (
-          <div key={i} title={`PC ${i + 1}: ${taken ? 'taken' : 'free'}`}
-            className={`rounded-[4px] border px-1 py-1.5 text-center text-[10px] font-semibold ${taken ? 'border-black/10 bg-black/[0.06] text-black/40 line-through' : 'border-[#16a34a]/40 bg-[#16a34a]/10 text-[#15803d]'}`}>
+          <div key={i} title={`PC ${i + 1}: ${taken ? 'taken' : waiting ? 'waiting for approval' : 'free'}`}
+            className={`rounded-[4px] border px-1 py-1.5 text-center text-[10px] font-semibold ${look}`}>
             PC {i + 1}
           </div>
         );
       })}
     </div>
-    <p className="mt-2 text-[11px] text-black/50">Green is free, grey is taken (approved bookings). The admin gives each student a computer.</p>
+    <p className="mt-2 text-[11px] leading-relaxed text-black/50">
+      Green is free, orange is waiting for approval, grey is taken.
+      {s.over > 0 && <b className="text-[#c2410c]"> {s.over} more student{s.over === 1 ? ' is' : 's are'} in the queue.</b>}
+    </p>
   </div>
 );
 
+const Legend3 = () => (
+  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] font-medium text-black/60">
+    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#16a34a]" />Free</span>
+    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#f97316]" />Waiting for approval</span>
+    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#0b0f1a]" />Taken</span>
+  </div>
+);
+
+const TOP_BAR = { available: 'bg-[#16a34a]', limited: 'bg-[#f97316]', requested: 'bg-[#f97316]', full: 'bg-red-500', none: 'bg-black/15' };
+
 function LabCard({ lab, past, onLogin }) {
   const [open, setOpen] = useState(null); // the lab time whose computers are shown
-  const now = nowHM();
   return (
-    <article className="flex flex-col rounded-[6px] border border-black/10 bg-white p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-bold">{lab.name}</h3>
-          <p className="mt-1 text-xs text-black/60">{lab.pcs} computers in this lab</p>
-        </div>
-        <Badge s={lab.status}>{STATUS_TEXT[lab.status]}</Badge>
-      </div>
-
-      {lab.sessions.length === 0 ? (
-        <p className="mt-5 rounded-[6px] bg-black/[0.04] px-3 py-4 text-center text-xs text-black/55">No lab time on this day.</p>
-      ) : (
-        <>
-          <p className="mt-4 text-xs font-medium text-black/70">
-            <b className={lab.free ? 'text-[#15803d]' : 'text-[#c2410c]'}>{lab.free}</b> free seats in {lab.sessions.length} lab time{lab.sessions.length === 1 ? '' : 's'}
-          </p>
-          <div className="mt-2">
-            {lab.sessions.map((s) => {
-              const ended = past || (s.to <= now && !past && false);
-              const pct = s.seats ? (s.taken / s.seats) * 100 : 100;
-              return (
-                <div key={s.id} className="border-t border-black/10 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <b className="text-sm">{s.from}–{s.to}</b>
-                      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-[3px] bg-black/10">
-                        <div className={`h-full ${s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#f97316]'}`} style={{ width: pct + '%' }} />
-                      </div>
-                      <div className={`mt-1 text-xs ${s.left > 0 ? 'font-medium text-[#15803d]' : 'font-bold text-[#c2410c]'}`}>
-                        {s.left > 0 ? `${s.left} of ${s.seats} free` : `Full, ${s.seats} of ${s.seats} taken`}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 flex-col items-stretch gap-1.5">
-                      <Btn disabled={ended || s.left < 1} onClick={onLogin}>{ended ? 'Past' : s.left < 1 ? 'Full' : 'Apply'}</Btn>
-                      <button type="button" aria-expanded={open === s.id} onClick={() => setOpen(open === s.id ? null : s.id)}
-                        className="text-[11px] font-semibold text-black/60 hover:text-black hover:underline">
-                        {open === s.id ? 'Hide computers' : 'Show computers'}
-                      </button>
-                    </div>
-                  </div>
-                  {open === s.id && <PcGrid s={s} />}
-                </div>
-              );
-            })}
+    <article className="flex flex-col overflow-hidden rounded-[6px] border border-black/10 bg-white transition-shadow hover:shadow-lg">
+      <div className={`h-1.5 ${TOP_BAR[lab.status]}`} />
+      <div className="flex flex-1 flex-col p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[6px] bg-[#0b0f1a] text-white"><Icon n="Labs" className="h-5 w-5" /></span>
+            <div className="min-w-0">
+              <h3 className="truncate text-base font-bold">{lab.name}</h3>
+              <p className="mt-0.5 text-xs text-black/55">{lab.pcs} computers in this lab</p>
+            </div>
           </div>
-        </>
-      )}
+          <Badge s={lab.status}>{STATUS_TEXT[lab.status]}</Badge>
+        </div>
+
+        {lab.sessions.length === 0 ? (
+          <p className="mt-5 rounded-[6px] bg-black/[0.04] px-3 py-6 text-center text-xs text-black/55">No lab time on this day.</p>
+        ) : (
+          <>
+            <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-[6px] bg-[#16a34a]/10 py-2"><div className="text-lg font-bold text-[#15803d]">{lab.free}</div><div className="text-[10px] font-semibold text-[#15803d]/80">Free</div></div>
+              <div className="rounded-[6px] bg-[#f97316]/10 py-2"><div className="text-lg font-bold text-[#c2410c]">{lab.waiting}</div><div className="text-[10px] font-semibold text-[#c2410c]/80">Waiting</div></div>
+              <div className="rounded-[6px] bg-black/[0.06] py-2"><div className="text-lg font-bold text-[#0b0f1a]">{lab.taken}</div><div className="text-[10px] font-semibold text-black/55">Taken</div></div>
+            </div>
+            <p className="mt-4 text-xs font-medium text-black/60">{lab.sessions.length} lab time{lab.sessions.length === 1 ? '' : 's'} on this day</p>
+
+            <div className="mt-1">
+              {lab.sessions.map((s) => {
+                const ended = past;
+                const tp = s.seats ? (s.taken / s.seats) * 100 : 100;
+                const wp = s.seats ? (s.waiting / s.seats) * 100 : 0;
+                const requestedFull = s.left > 0 && s.open < 1;
+                const text = s.left < 1
+                  ? `Full, ${s.seats} of ${s.seats} taken`
+                  : requestedFull
+                    ? `All seats requested · ${s.waiting} waiting for approval${s.over ? ` · ${s.over} in the queue` : ''}`
+                    : `${s.open} of ${s.seats} free${s.waiting ? ` · ${s.waiting} waiting` : ''}`;
+                return (
+                  <div key={s.id} className="border-t border-black/10 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <b className="text-sm">{s.from}–{s.to}</b>
+                        <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-[3px] bg-[#16a34a]/25">
+                          <div className="h-full bg-[#0b0f1a] transition-all duration-700" style={{ width: tp + '%' }} />
+                          <div className="h-full bg-[#f97316] transition-all duration-700" style={{ width: wp + '%' }} />
+                        </div>
+                        <div className={`mt-1 text-xs ${s.left < 1 ? 'font-bold text-red-600' : requestedFull ? 'font-bold text-[#c2410c]' : 'font-medium text-[#15803d]'}`}>{text}</div>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-stretch gap-1.5">
+                        <Btn c={requestedFull ? 'or' : 'ink'} disabled={ended || s.left < 1} onClick={onLogin}>{ended ? 'Past' : s.left < 1 ? 'Full' : requestedFull ? 'Join queue' : 'Apply'}</Btn>
+                        <button type="button" aria-expanded={open === s.id} onClick={() => setOpen(open === s.id ? null : s.id)}
+                          className="text-[11px] font-semibold text-black/60 hover:text-black hover:underline">
+                          {open === s.id ? 'Hide computers' : 'Show computers'}
+                        </button>
+                      </div>
+                    </div>
+                    {open === s.id && <PcGrid s={s} />}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
     </article>
   );
 }
 
 function LabBoard({ onLogin }) {
   const [day, setDay] = useState(today());
-  const [data, setData] = useState(null);
-  const [err, setErr] = useState('');
   const [labId, setLabId] = useState('');
   const [view, setView] = useState('all');
-
-  // Loads the chosen day, and refreshes it every 30 seconds so the seat counts stay true.
-  useEffect(() => {
-    let alive = true;
-    const load = () => api(`/api/overview?date=${day}`)
-      .then((d) => { if (alive) { setData(d); setErr(''); } })
-      .catch((e) => { if (alive) setErr(e.message); });
-    load();
-    const t = setInterval(load, 30000);
-    return () => { alive = false; clearInterval(t); };
-  }, [day]);
+  const { data, err } = useOverview(day);
 
   const loading = !data || data.date !== day;
   const labs = (data?.labs || []).filter((l) => (!labId || String(l.id) === labId) && (view === 'all' || l.free > 0));
@@ -495,10 +810,15 @@ function LabBoard({ onLogin }) {
 
   return (
     <div>
-      <div className="rounded-[6px] border border-black/10 bg-white p-4">
-        <p className="mb-3 text-xs font-medium text-black/60">Showing labs for</p>
-        <h3 className="mb-4 text-lg font-bold">{niceDay(day)}{day === today() && <span className="ml-2 align-middle"><Badge s="active">Today</Badge></span>}</h3>
-        <DayBar day={day} onChange={setDay} />
+      <div className="rounded-[6px] border border-black/10 bg-white p-5">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-medium text-black/55">Showing labs for</p>
+            <h3 className="mt-1 text-xl font-bold">{niceDay(day)}{day === today() && <span className="ml-2 align-middle"><Badge s="active">Today</Badge></span>}</h3>
+          </div>
+          <Legend3 />
+        </div>
+        <div className="mt-4"><DayBar day={day} onChange={setDay} /></div>
         {near.length > 0 && (
           <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
             <span className="text-black/50">Days with lab times:</span>
@@ -509,11 +829,12 @@ function LabBoard({ onLogin }) {
         )}
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-5">
         <Mini v={tot.labs ?? '-'} t="Labs" />
         <Mini v={tot.computers ?? '-'} t="Computers in total" />
         <Mini v={tot.times ?? '-'} t="Lab times this day" />
         <Mini v={tot.free ?? '-'} t="Free seats this day" tone="gr" />
+        <Mini v={tot.waiting ?? '-'} t="Waiting for approval" tone="or" />
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
@@ -526,7 +847,7 @@ function LabBoard({ onLogin }) {
         {loading && !err && <Empty>Loading the labs…</Empty>}
         {!loading && data.labs.length === 0 && <Empty>No labs have been added yet.</Empty>}
         {!loading && data.labs.length > 0 && labs.length === 0 && <Empty>No lab matches these filters.</Empty>}
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-2">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {!loading && labs.map((l) => <LabCard key={l.id} lab={l} past={day < today()} onLogin={onLogin} />)}
         </div>
       </div>
@@ -537,43 +858,17 @@ function LabBoard({ onLogin }) {
 function Landing({ onLogin, categories }) {
   return (
     <div className="bg-white text-[#0b0f1a] antialiased text-sm">
+      <style>{HERO_CSS}</style>
       <Header onLogin={onLogin} />
+      <Hero onLogin={onLogin} />
 
-      <section className="bg-[#0b0f1a] text-white">
-        <div className={`${WRAP} py-12`}>
-          <h1 className="max-w-2xl text-3xl md:text-4xl font-bold leading-tight tracking-tight">Computer labs: see what is free, then book.</h1>
-          <p className="mt-4 max-w-xl text-sm leading-relaxed text-white/70">
-            Choose a day to see every lab, its computers and the seats left. When you find a time, log in and apply.
-          </p>
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            <a href="#labs" className="inline-block rounded-[6px] bg-[#f97316] px-5 py-2.5 text-xs font-semibold text-white hover:opacity-90">See the labs</a>
-            <Btn c="w" onClick={onLogin}>Log in with Google</Btn>
-          </div>
-        </div>
-      </section>
-
-      <section id="labs" className={`${WRAP} scroll-mt-16 py-14 grid gap-10 lg:grid-cols-[1fr_300px] lg:items-start`}>
-        <div className="min-w-0">
-          <Heading title="Available labs" />
-          <p className="mb-6 mt-2 text-xs text-black/60">Seat counts update on their own. Go back or forward to see other days.</p>
-          <LabBoard onLogin={onLogin} />
-        </div>
-
-        <aside id="how" className="scroll-mt-20 lg:sticky lg:top-24">
-          <div className="rounded-[6px] border border-black/10 bg-[#f6f7f9] p-5">
-            <h3 className="text-sm font-bold">How to book</h3>
-            <ol className="mt-4 space-y-4">
-              {HOW.map(([t, d], i) => (
-                <li key={t} className="flex gap-3">
-                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#0b0f1a] text-[11px] font-bold text-white">{i + 1}</span>
-                  <span className="text-xs leading-relaxed"><b className="block text-[#0b0f1a]">{t}</b><span className="text-black/60">{d}</span></span>
-                </li>
-              ))}
-            </ol>
-            <Btn className="mt-5 w-full !py-2.5" onClick={onLogin}>Log in to book</Btn>
-            <p className="mt-3 text-[11px] leading-relaxed text-black/50">Accounts are created by your school admin. If Google does not accept your email, ask the admin to add it.</p>
-          </div>
-        </aside>
+      <section id="labs" className={`${WRAP} scroll-mt-16 py-16`}>
+        <p className="text-[11px] font-bold uppercase tracking-widest text-[#f97316]">Live availability</p>
+        <Heading title="Available labs" className="mt-2" />
+        <p className="mb-8 mt-2 max-w-xl text-xs leading-relaxed text-black/60">
+          Seat counts update on their own, even when someone applies. Go back or forward to see other days.
+        </p>
+        <LabBoard onLogin={onLogin} />
       </section>
 
       <TrendsSection categories={categories} />
@@ -1828,7 +2123,9 @@ function TrendsSection({ categories }) {
   const [more, setMore] = useState(false);
   const [open, setOpen] = useState(null);
 
-  useEffect(() => { api('/api/trends').then(setItems).catch(() => setItems([])); }, []);
+  const load = () => api('/api/trends').then(setItems).catch(() => setItems((cur) => cur || []));
+  useEffect(() => { load(); }, []);
+  usePublicLive({ 'trends:update': load });
 
   const list = items || [];
   const names = [...new Set([...(categories?.length ? categories : DEFAULT_CATS), ...list.map((t) => t.category)])].filter((c) => list.some((t) => t.category === c));

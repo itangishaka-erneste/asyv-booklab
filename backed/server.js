@@ -94,15 +94,26 @@ const studentProfile = async (grade, combo, section) => {
 };
 
 // ---------- Socket.io ----------
+// Two kinds of visitors:
+//  - people who are logged in (token): they join the "auth" room and get the full seat list;
+//  - guests on the public home page (no token): they join the "public" room and only get a tiny
+//    "overview:update" signal, then they re-read /api/overview (which has counts only, never names).
 io.use((socket, next) => {
-  try { socket.user = jwt.verify(socket.handshake.auth.token, SECRET); next(); }
+  const t = socket.handshake.auth?.token;
+  if (!t) { socket.user = null; return next(); }
+  try { socket.user = jwt.verify(t, SECRET); next(); }
   catch { next(new Error('unauthorized')); }
 });
 io.on('connection', socket => {
+  if (!socket.user) { socket.join('public'); return; }
+  socket.join('auth');
   socket.join(socket.user.role === 'admin' ? 'admins' : `user:${socket.user.name}`);
   listSessions().then(s => socket.emit('seats', s)).catch(() => {});
 });
-const pushSeats = () => listSessions().then(s => io.emit('seats', s)).catch(() => {});
+const pushSeats = () => {
+  io.emit('overview:update'); // the public home page refreshes its seat counts, pending requests included
+  listSessions().then(s => io.to('auth').emit('seats', s)).catch(() => {});
+};
 const pushApps = (names = []) => {
   io.to('admins').emit('applications:update');
   [...new Set(names.filter(Boolean))].forEach(n => io.to(`user:${n}`).emit('applications:update'));
@@ -314,20 +325,37 @@ app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => { await 
 // ---------- Public lab overview (no login) ----------
 // The home page shows every lab, its computers and the seats left for one day, so people can look
 // before they sign in. ?date=YYYY-MM-DD picks the day (today when missing). Only counts are shared, never names.
+//
+// Pending requests are counted too. A seat that is waiting for the admin's approval is shown as
+// "waiting" (orange), so when many students have applied the lab already looks full to visitors:
+//   taken   = approved seats
+//   waiting = pending applications (never more than the seats still not approved)
+//   over    = pending applications beyond the seats (a queue)
+//   open    = seats left after the pending ones, what a visitor can really hope to get
 const HM = t => String(t || '').slice(0, 5);
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 app.get('/api/overview', wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : new Date().toISOString().slice(0, 10);
-  const [labRows, sessions] = await Promise.all([query('SELECT id, name, pcs FROM labs ORDER BY name'), listSessions()]);
+  const [labRows, sessions, pend] = await Promise.all([
+    query('SELECT id, name, pcs FROM labs ORDER BY name'),
+    listSessions(),
+    query("SELECT sid, COUNT(*)::int AS n FROM application_details WHERE status = 'pending' GROUP BY sid"),
+  ]);
+  const pendBy = new Map(pend.map(r => [Number(r.sid), r.n]));
   const dayOf = s => String(s.date).slice(0, 10);
   const today = sessions.filter(s => dayOf(s) === date);
   const labs = labRows.map(l => {
     const list = today.filter(s => s.labId == l.id)
-      .map(s => ({ id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken: Math.max(s.seats - s.left, 0) }))
+      .map(s => {
+        const taken = Math.max(s.seats - s.left, 0), p = pendBy.get(Number(s.id)) || 0;
+        const waiting = Math.min(p, Math.max(s.left, 0));
+        return { id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken, waiting, over: p - waiting, open: Math.max(s.left - waiting, 0) };
+      })
       .sort((a, b) => a.from.localeCompare(b.from));
-    const seats = list.reduce((n, s) => n + s.seats, 0), free = list.reduce((n, s) => n + s.left, 0);
-    const status = !list.length ? 'none' : free === 0 ? 'full' : free / seats <= 0.3 ? 'limited' : 'available';
-    return { id: l.id, name: l.name, pcs: l.pcs, status, seats, free, sessions: list };
+    const sum = k => list.reduce((n, s) => n + s[k], 0);
+    const seats = sum('seats'), left = sum('left'), free = sum('open');
+    const status = !list.length ? 'none' : left === 0 ? 'full' : free === 0 ? 'requested' : free / seats <= 0.3 ? 'limited' : 'available';
+    return { id: l.id, name: l.name, pcs: l.pcs, status, seats, free, taken: sum('taken'), waiting: sum('waiting'), sessions: list };
   });
   res.json({
     date,
@@ -335,6 +363,7 @@ app.get('/api/overview', wrap(async (req, res) => {
     totals: {
       labs: labs.length, computers: labs.reduce((n, l) => n + l.pcs, 0),
       times: today.length, free: labs.reduce((n, l) => n + l.free, 0), seats: labs.reduce((n, l) => n + l.seats, 0),
+      waiting: labs.reduce((n, l) => n + l.waiting, 0),
     },
     labs,
   });
