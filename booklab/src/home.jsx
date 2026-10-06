@@ -900,7 +900,7 @@ function Auth({ onDone, onBack }) {
 
   return (
     <div className="fixed inset-0 grid overflow-hidden bg-white text-[13px] text-[#0b0f1a] lg:grid-cols-[2fr_3fr]">
-      <aside className="relative hidden h-full overflow-hidden bg-gradient-to-br from-[#0b0f1a] to-[#14532d] lg:block">
+      <aside className="relative hidden h-full overflow-hidden bg-cover bg-center lg:block" style={{ backgroundImage: `url(${dashb})` }}>
         <div className="relative h-full flex flex-col justify-between p-10 text-white">
           <Logo light />
           <div className="max-w-sm space-y-3">
