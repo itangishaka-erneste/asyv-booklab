@@ -910,7 +910,7 @@ function Auth({ onDone, onBack }) {
           <div className="max-w-sm space-y-4">
             <div className="overflow-hidden rounded-[12px] border border-white/15 bg-white/8 backdrop-blur-sm shadow-lg">
               <img
-                src="https://images.unsplash.com/photo-1556157382-97eda2d62296?auto=format&fit=crop&w=900&q=80"
+                src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcST7TcvochSBGi8U3bk4uFExeX2gwYuAxQg_FY5T4VXDtXRljapt_lG2kcr&s=10"
                 alt="School minister"
                 className="h-44 w-full object-cover object-center"
               />
