@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import dashb from './assets/dashb.png';
 import { io } from 'socket.io-client';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -220,14 +221,20 @@ const Field = ({ l, hint, children }) => (
   </label>
 );
 
-const Empty = ({ children }) => <p className="py-6 text-center text-xs text-black/50">{children}</p>;
+const Empty = ({ children }) => <p className="py-6 text-center text-sm text-black/50">{children}</p>;
 
 const Logo = ({ light }) => (
   <div className={`inline-flex items-center gap-3 text-base font-extrabold tracking-tight ${light ? 'text-white' : 'text-[#111827]'}`}>
-    <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[6px] bg-white">
-      <img src={logo} alt="LabBook logo" className="h-7 w-7 object-contain" />
+    <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[6px] bg-transparent">
+      <img src={logo} alt="LabBook logo" className="h-10 w-10 object-contain" />
     </span>
-    <span className="leading-none">Lab<span className="text-[#16a34a]">Book</span></span>
+    <span className="inline-flex items-center text-base font-extrabold leading-none text-[#16a34a] sm:text-lg" aria-label="Asyv_Lms">
+      {'Asyv_lms'.split('').map((letter, index) => (
+        <span key={`${letter}-${index}`} className="inline-block animate-bounce" style={{ animationDelay: `${index * 0.1}s` }}>
+          {index > 0 ? <span className="text-[#f97316]">{letter}</span> : letter}
+        </span>
+      ))}
+    </span>
   </div>
 );
 
@@ -448,8 +455,8 @@ const RING_R = 52;
 const RING_C = 2 * Math.PI * RING_R;
 const SPOT_STATUS = {
   available: 'bg-[#16a34a]/20 text-[#4ade80]',
-  limited: 'bg-[#f97316]/20 text-[#fdba74]',
-  requested: 'bg-[#f97316]/20 text-[#fdba74]',
+  limited: 'bg-[#2563eb]/20 text-[#93c5fd]',
+  requested: 'bg-[#2563eb]/20 text-[#93c5fd]',
   full: 'bg-red-500/20 text-red-300',
   none: 'bg-white/10 text-white/60',
 };
@@ -475,28 +482,28 @@ function Spotlight({ labs, loading }) {
     <div className="relative mx-auto w-full max-w-md" onMouseEnter={() => setHold(true)} onMouseLeave={() => setHold(false)}>
       {/* slowly rotating decoration behind the card */}
       <div aria-hidden="true" className="pointer-events-none absolute -inset-6">
-        <svg viewBox="0 0 200 200" className="lb-spin h-full w-full opacity-40">
-          <circle cx="100" cy="100" r="96" fill="none" stroke="#f97316" strokeWidth="1" strokeDasharray="2 8" strokeLinecap="round" />
+        <svg viewBox="0 0 200 200" className="lb-spin h-full w-full opacity-80">
+          <circle cx="100" cy="100" r="96" fill="none" stroke="#ffffff" strokeWidth="1.2" strokeDasharray="4 14" strokeLinecap="round" />
         </svg>
-        <svg viewBox="0 0 200 200" className="lb-spin-rev absolute inset-4 h-[calc(100%-2rem)] w-[calc(100%-2rem)] opacity-30">
-          <circle cx="100" cy="100" r="96" fill="none" stroke="#16a34a" strokeWidth="1" strokeDasharray="14 10" />
+        <svg viewBox="0 0 200 200" className="lb-spin-rev absolute inset-5 h-[calc(100%-2.5rem)] w-[calc(100%-2.5rem)] opacity-60">
+          <circle cx="100" cy="100" r="96" fill="none" stroke="#ffffff" strokeWidth="1.1" strokeDasharray="12 18" strokeLinecap="round" />
         </svg>
       </div>
 
-      <div className="lb-float relative rounded-[6px] border border-white/15 bg-white/[0.07] p-5 shadow-2xl backdrop-blur">
-        <div className="mb-4 flex items-center justify-between text-[11px] font-semibold text-white/60">
+      <div className="lb-float relative rounded-[6px] border border-black/10 bg-green-50 p-5 text-[#0b0f1a] shadow-2xl">
+        <div className="mb-4 flex items-center justify-between rounded bg-green-700 px-2 py-1 text-[11px] font-normal text-white">
           <span className="flex items-center gap-2"><span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />Live status · today</span>
           {labs.length > 0 && <span>{(i % labs.length) + 1} / {labs.length}</span>}
         </div>
 
         {!lab ? (
-          <p className="py-16 text-center text-xs text-white/60">{loading ? 'Loading the labs…' : 'No labs have been added yet.'}</p>
+          <p className="py-16 text-center text-xs text-black/60">{loading ? 'Loading the labs…' : 'No labs have been added yet.'}</p>
         ) : (
           <div key={lab.id} className="lb-in">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="truncate text-lg font-bold">{lab.name}</h3>
-                <p className="mt-0.5 text-xs text-white/60">{lab.pcs} computers</p>
+                <p className="mt-0.5 text-xs text-black/60">{lab.pcs} computers</p>
               </div>
               <span className={`rounded-[4px] px-2 py-1 text-[11px] font-semibold ${SPOT_STATUS[lab.status]}`}>{STATUS_TEXT[lab.status]}</span>
             </div>
@@ -505,28 +512,28 @@ function Spotlight({ labs, loading }) {
               <div className="relative h-[132px] w-[132px]">
                 <svg viewBox="0 0 132 132" className="h-full w-full -rotate-90">
                   <circle cx="66" cy="66" r={RING_R} fill="none" stroke="#16a34a" strokeOpacity={seats ? 0.35 : 0.12} strokeWidth="12" />
-                  <circle key={`w${lab.id}`} className="lb-ring" cx="66" cy="66" r={RING_R} fill="none" stroke="#f97316" strokeWidth="12" strokeLinecap="butt" style={arc(reqPct)} />
+                  <circle key={`w${lab.id}`} className="lb-ring" cx="66" cy="66" r={RING_R} fill="none" stroke="#3b82f6" strokeWidth="12" strokeLinecap="butt" style={arc(reqPct)} />
                   <circle key={`t${lab.id}`} className="lb-ring" cx="66" cy="66" r={RING_R} fill="none" stroke="#e2e8f0" strokeWidth="12" strokeLinecap="butt" style={{ ...arc(takenPct), animationDelay: '.25s' }} />
                 </svg>
                 <div className="absolute inset-0 grid place-items-center text-center">
                   <div>
                     <div className="text-3xl font-extrabold leading-none">{lab.free}</div>
-                    <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-white/55">free seats</div>
+                    <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-black/55">free seats</div>
                   </div>
                 </div>
               </div>
 
               <ul className="space-y-2 text-xs">
-                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-white/70"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#16a34a]" />Free</span><b>{lab.free}</b></li>
-                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-white/70"><i className="lb-pulse inline-block h-2.5 w-2.5 rounded-[2px] bg-[#f97316]" />Waiting for approval</span><b>{lab.waiting}</b></li>
-                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-white/70"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-slate-200" />Taken</span><b>{lab.taken}</b></li>
+                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-black/70"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#16a34a]" />Free</span><b>{lab.free}</b></li>
+                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-black/70"><i className="lb-pulse inline-block h-2.5 w-2.5 rounded-[2px] bg-[#3b82f6]" />Waiting for approval</span><b>{lab.waiting}</b></li>
+                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-black/70"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-slate-400" />Taken</span><b>{lab.taken}</b></li>
               </ul>
             </div>
 
             <div className="mt-5">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/50">Lab times today</p>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-black/50">Lab times today</p>
               {lab.sessions.length === 0 ? (
-                <p className="rounded-[6px] bg-white/5 px-3 py-4 text-center text-xs text-white/55">No lab time today.</p>
+                <p className="rounded-[6px] bg-black/5 px-3 py-4 text-center text-xs text-black/55">No lab time today.</p>
               ) : (
                 <div className="flex h-24 items-end gap-2">
                   {lab.sessions.slice(0, 6).map((s, k) => {
@@ -535,10 +542,10 @@ function Spotlight({ labs, loading }) {
                     return (
                       <div key={s.id} className="flex h-full min-w-0 flex-1 flex-col justify-end text-center" title={`${s.from}–${s.to}: ${s.open} free, ${s.waiting} waiting, ${s.taken} taken`}>
                         <div className="relative flex min-h-0 flex-1 flex-col justify-end overflow-hidden rounded-[3px] bg-[#16a34a]/30">
-                          <div className="lb-grow bg-[#f97316]" style={{ height: w + '%', animationDelay: `${0.15 * k}s` }} />
+                          <div className="lb-grow bg-[#3b82f6]" style={{ height: w + '%', animationDelay: `${0.15 * k}s` }} />
                           <div className="lb-grow bg-slate-200" style={{ height: t + '%', animationDelay: `${0.15 * k + 0.1}s` }} />
                         </div>
-                        <span className="mt-1 block truncate text-[10px] text-white/55">{s.from}</span>
+                        <span className="mt-1 block truncate text-[10px] text-black/55">{s.from}</span>
                       </div>
                     );
                   })}
@@ -553,19 +560,19 @@ function Spotlight({ labs, loading }) {
             <div className="mt-5 flex items-center justify-center gap-1.5">
               {labs.map((l, k) => (
                 <button key={l.id} type="button" aria-label={`Show ${l.name}`} onClick={() => setI(k)}
-                  className={`h-1.5 rounded-full transition-all ${k === i % labs.length ? 'w-6 bg-[#f97316]' : 'w-1.5 bg-white/30 hover:bg-white/60'}`} />
+                  className={`h-1.5 rounded-full transition-all ${k === i % labs.length ? 'w-6 bg-[#3b82f6]' : 'w-1.5 bg-white/30 hover:bg-white/60'}`} />
               ))}
             </div>
             <div className="mt-4 space-y-1.5 border-t border-white/10 pt-4">
               {labs.slice(0, 5).map((l, k) => {
                 const p = l.seats ? Math.min((l.taken + l.waiting) / l.seats, 1) * 100 : 0;
                 return (
-                  <button key={l.id} type="button" onClick={() => setI(k)} className={`flex w-full items-center gap-3 rounded-[4px] px-2 py-1 text-left text-[11px] ${k === i % labs.length ? 'bg-white/10' : 'hover:bg-white/5'}`}>
+                  <button key={l.id} type="button" onClick={() => setI(k)} className={`flex w-full items-center gap-3 rounded-[4px] px-2 py-1 text-left text-[11px] ${k === i % labs.length ? 'bg-black/5' : 'hover:bg-black/5'}`}>
                     <span className="w-20 shrink-0 truncate font-semibold">{l.name}</span>
                     <span className="h-1.5 flex-1 overflow-hidden rounded-[3px] bg-[#16a34a]/30">
-                      <span className="lb-slide block h-full bg-[#f97316]" style={{ width: p + '%', animationDelay: `${0.1 * k}s` }} />
+                      <span className="lb-slide block h-full bg-[#3b82f6]" style={{ width: p + '%', animationDelay: `${0.1 * k}s` }} />
                     </span>
-                    <span className="w-8 shrink-0 text-right text-white/60">{Math.round(p)}%</span>
+                    <span className="w-8 shrink-0 text-right text-black/60">{Math.round(p)}%</span>
                   </button>
                 );
               })}
@@ -577,60 +584,11 @@ function Spotlight({ labs, loading }) {
   );
 }
 
-// A picture of the admin dashboard, drawn with code so it needs no image file. To use a real
-// screenshot instead, replace the body of this component with <img src={shot} alt="..." />.
 function DashboardPreview() {
-  const nav = ['Overview', 'Users', 'Labs', 'Schedule', 'Applications', 'Attendance'];
-  const tiles = [['128', 'Applications', 'text-[#0b0f1a]'], ['96', 'Approved', 'text-[#16a34a]'], ['24', 'Waiting', 'text-[#f97316]'], ['91%', 'Attendance rate', 'text-[#16a34a]']];
-  const bars = [46, 72, 58, 90, 64, 80, 52];
-  const rows = [['Aline Mukamana', 'S6 MPC · Lab 1 · 14:00', 'pending'], ['Eric Niyonzima', 'S5 MSI · Lab 2 · 14:00', 'approved'], ['Divine Uwase', 'S4 ART · Lab 1 · 16:00', 'pending']];
   return (
-    <div className="mx-auto w-full max-w-5xl">
-      <p className="mb-3 text-center text-[11px] font-semibold uppercase tracking-widest text-white/45">Everything in one dashboard</p>
-      <div className="overflow-hidden rounded-t-[6px] border border-b-0 border-white/20 bg-[#f6f7f9] shadow-[0_-20px_80px_rgba(249,115,22,0.18)]">
-        <div className="flex items-center gap-2 border-b border-black/10 bg-white px-4 py-2.5">
-          <i className="h-2.5 w-2.5 rounded-full bg-red-400" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400" /><i className="h-2.5 w-2.5 rounded-full bg-green-500" />
-          <span className="ml-3 flex-1 truncate rounded-[4px] bg-black/5 px-3 py-1 text-[11px] text-black/50">labbook / Applications</span>
-        </div>
-        <div className="flex text-[#0b0f1a]">
-          <aside className="hidden w-44 shrink-0 bg-[#0b0f1a] p-3 sm:block">
-            <div className="mb-4 text-xs font-extrabold text-white">Lab<span className="text-[#16a34a]">Book</span></div>
-            {nav.map((x) => (
-              <div key={x} className={`mb-1 flex items-center gap-2 rounded-[6px] px-2.5 py-2 text-[11px] font-semibold ${x === 'Applications' ? 'bg-[#f97316] text-white' : 'text-white/65'}`}>
-                <Icon n={x} className="h-3.5 w-3.5" />{x}
-              </div>
-            ))}
-          </aside>
-          <div className="min-w-0 flex-1 p-4 md:p-5">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              {tiles.map(([v, t, c]) => (
-                <div key={t} className="rounded-[6px] border border-black/10 bg-white p-3">
-                  <div className={`text-lg font-bold ${c}`}>{v}</div>
-                  <div className="mt-0.5 text-[10px] font-medium text-black/55">{t}</div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-[1.1fr_1fr]">
-              <div className="rounded-[6px] border border-black/10 bg-white p-3">
-                <div className="mb-2 text-[11px] font-semibold">Applications by day</div>
-                <div className="flex h-24 items-end gap-2">
-                  {bars.map((h, k) => <div key={k} className="flex-1 rounded-t-[3px] bg-[#f97316]/80" style={{ height: h + '%' }} />)}
-                </div>
-              </div>
-              <div className="rounded-[6px] border border-black/10 bg-white p-3">
-                <div className="mb-1 text-[11px] font-semibold">Latest applications</div>
-                {rows.map(([n, d, s]) => (
-                  <div key={n} className="flex items-center justify-between gap-2 border-t border-black/10 py-2">
-                    <span className="min-w-0"><b className="block truncate text-[11px]">{n}</b><span className="block truncate text-[10px] text-black/50">{d}</span></span>
-                    <Badge s={s} />
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="h-16" />
-          </div>
-        </div>
-      </div>
+    <div className="mx-auto p-4 w-full max-w-5xl">
+      <p className="mb-3 text-center text-[11px] font-semibold uppercase tracking-widest text-white/45">Admin dashboard</p>
+      <img src={dashb} alt="LabBook dashboard preview" className="mx-auto block h-auto w-4/5 p-4 rounded-t-[10px] border border-none shadow-[0_-20px_80px_rgba(59,130,246,0.18)]" />
     </div>
   );
 }
@@ -639,39 +597,39 @@ function Hero({ onLogin }) {
   const { data } = useOverview(today());
   const labs = data?.labs || [];
   const tot = data?.totals || {};
-  const chips = [[tot.free ?? '-', 'free seats today', 'text-[#4ade80]'], [tot.waiting ?? '-', 'waiting for approval', 'text-[#fdba74]'], [tot.labs ?? '-', 'labs', 'text-white']];
+  const chips = [[tot.free ?? '-', 'free seats today', 'text-[#4ade80]'], [tot.waiting ?? '-', 'waiting for approval', 'text-[#93c5fd]'], [tot.labs ?? '-', 'labs', 'text-white']];
 
   return (
-    <section className="relative overflow-hidden bg-[#0b0f1a] text-white">
+    <section className="relative overflow-hidden bg-white text-[#0b0f1a]">
       <div aria-hidden="true" className="pointer-events-none absolute inset-0"
-        style={{ background: 'radial-gradient(circle at 85% 15%, rgba(249,115,22,0.20), transparent 45%), radial-gradient(circle at 10% 90%, rgba(22,163,74,0.20), transparent 45%)' }} />
+        style={{ background: 'radial-gradient(circle at 85% 15%, rgba(59,130,246,0.16), transparent 45%), radial-gradient(circle at 10% 90%, rgba(22,163,74,0.12), transparent 45%)' }} />
       <div className={`${WRAP} relative`}>
         <div className="flex min-h-[calc(100svh-4rem)] flex-col justify-center py-12">
           <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_1fr]">
             <div className="lb-in">
-              <span className="inline-flex items-center gap-2 rounded-[6px] border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-white/80">
+              <span className="inline-flex items-center gap-2 rounded-[6px] border border-black/15 bg-[#0b0f1a] px-3 py-1.5 text-[11px] font-semibold text-white">
                 <span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />Seats update live, no refresh needed
               </span>
               <h1 className="mt-5 max-w-xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Computer labs: see what is free, then book.</h1>
-              <p className="mt-5 max-w-lg text-sm leading-relaxed text-white/70">
+              <p className="mt-5 max-w-lg text-sm leading-relaxed text-black/65">
                 Choose a day to see every lab, its computers and the seats left. Seats that students already asked for show as waiting, so you always see the real picture. When you find a time, log in and apply.
               </p>
               <div className="mt-7 flex flex-wrap items-center gap-3">
-                <a href="#labs" className="inline-block rounded-[6px] bg-[#f97316] px-5 py-2.5 text-xs font-semibold text-white hover:opacity-90">See the labs</a>
-                <Btn c="w" onClick={onLogin}>Log in with Google</Btn>
+                <a href="#labs" className="inline-flex items-center gap-2 rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white hover:opacity-90"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m4 0h1m-6 4h1m4 0h1m-6 4h1m4 0h1" /></svg>See the labs</a>
+                <Btn c="w" onClick={onLogin}><span className="inline-flex items-center gap-2"><svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor"><path d="M21.35 12.2c0-.7-.06-1.37-.18-2.02H12v3.82h5.23a4.47 4.47 0 0 1-1.94 2.93v2.48h3.14c1.84-1.7 2.92-4.2 2.92-7.21ZM12 21c2.63 0 4.84-.87 6.45-2.36l-3.14-2.48c-.87.58-1.98.92-3.31.92-2.55 0-4.71-1.72-5.49-4.04H3.27v2.56A9.74 9.74 0 0 0 12 21ZM6.51 13.04a5.85 5.85 0 0 1 0-3.74V6.74H3.27a9.75 9.75 0 0 0 0 8.86l3.24-2.56ZM12 5.26c1.43 0 2.71.49 3.72 1.47l2.79-2.79C16.83 2.34 14.62 1.5 12 1.5a9.74 9.74 0 0 0-8.73 5.24l3.24 2.56C7.29 6.98 9.45 5.26 12 5.26Z" /></svg>Log in with Google</span></Btn>
               </div>
               <div className="mt-9 grid max-w-md grid-cols-3 gap-3">
                 {chips.map(([v, t, c]) => (
-                  <div key={t} className="rounded-[6px] border border-white/10 bg-white/5 p-3">
+                  <div key={t} className="rounded-[6px] border border-black/15 bg-[#0b0f1a] p-3">
                     <div className={`text-2xl font-bold ${c}`}>{v}</div>
-                    <div className="mt-0.5 text-[11px] leading-tight text-white/60">{t}</div>
+                    <div className="mt-0.5 text-[11px] leading-tight text-black/55">{t}</div>
                   </div>
                 ))}
               </div>
             </div>
             <Spotlight labs={labs} loading={!data} />
           </div>
-          <a href="#dashboard" className="lb-bounce mx-auto mt-10 inline-block text-[11px] font-semibold text-white/50 hover:text-white/80">Scroll to see the dashboard ↓</a>
+          <a href="#dashboard" className="lb-bounce mx-auto mt-10 inline-block text-[11px] font-semibold text-black/50 hover:text-black/80">Scroll to see the dashboard ↓</a>
         </div>
 
         <div id="dashboard" className="scroll-mt-16 pt-4">
@@ -693,9 +651,9 @@ const PcGrid = ({ s }) => (
         const taken = i < s.taken;
         const waiting = !taken && i < s.taken + s.waiting;
         const look = taken
-          ? 'border-black/10 bg-black/[0.06] text-black/40 line-through'
+          ? 'border-black/10 bg-black/[0.06] text-black/40'
           : waiting
-            ? 'lb-pulse border-[#f97316]/50 bg-[#f97316]/10 text-[#c2410c]'
+            ? 'lb-pulse border-orange-500/50 bg-orange-500/10 text-orange-700'
             : 'border-[#16a34a]/40 bg-[#16a34a]/10 text-[#15803d]';
         return (
           <div key={i} title={`PC ${i + 1}: ${taken ? 'taken' : waiting ? 'waiting for approval' : 'free'}`}
@@ -715,12 +673,12 @@ const PcGrid = ({ s }) => (
 const Legend3 = () => (
   <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] font-medium text-black/60">
     <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#16a34a]" />Free</span>
-    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#f97316]" />Waiting for approval</span>
+    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-orange-500" />Waiting for approval</span>
     <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#0b0f1a]" />Taken</span>
   </div>
 );
 
-const TOP_BAR = { available: 'bg-[#16a34a]', limited: 'bg-[#f97316]', requested: 'bg-[#f97316]', full: 'bg-red-500', none: 'bg-black/15' };
+const TOP_BAR = { available: 'bg-[#16a34a]', limited: 'bg-[#3b82f6]', requested: 'bg-[#3b82f6]', full: 'bg-red-500', none: 'bg-black/15' };
 
 function LabCard({ lab, past, onLogin }) {
   const [open, setOpen] = useState(null); // the lab time whose computers are shown
@@ -745,7 +703,7 @@ function LabCard({ lab, past, onLogin }) {
           <>
             <div className="mt-4 grid grid-cols-3 gap-2 text-center">
               <div className="rounded-[6px] bg-[#16a34a]/10 py-2"><div className="text-lg font-bold text-[#15803d]">{lab.free}</div><div className="text-[10px] font-semibold text-[#15803d]/80">Free</div></div>
-              <div className="rounded-[6px] bg-[#f97316]/10 py-2"><div className="text-lg font-bold text-[#c2410c]">{lab.waiting}</div><div className="text-[10px] font-semibold text-[#c2410c]/80">Waiting</div></div>
+              <div className="rounded-[6px] bg-[#3b82f6]/10 py-2"><div className="text-lg font-bold text-[#1d4ed8]">{lab.waiting}</div><div className="text-[10px] font-semibold text-[#1d4ed8]/80">Waiting</div></div>
               <div className="rounded-[6px] bg-black/[0.06] py-2"><div className="text-lg font-bold text-[#0b0f1a]">{lab.taken}</div><div className="text-[10px] font-semibold text-black/55">Taken</div></div>
             </div>
             <p className="mt-4 text-xs font-medium text-black/60">{lab.sessions.length} lab time{lab.sessions.length === 1 ? '' : 's'} on this day</p>
@@ -768,12 +726,12 @@ function LabCard({ lab, past, onLogin }) {
                         <b className="text-sm">{s.from}–{s.to}</b>
                         <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-[3px] bg-[#16a34a]/25">
                           <div className="h-full bg-[#0b0f1a] transition-all duration-700" style={{ width: tp + '%' }} />
-                          <div className="h-full bg-[#f97316] transition-all duration-700" style={{ width: wp + '%' }} />
+                          <div className="h-full bg-[#3b82f6] transition-all duration-700" style={{ width: wp + '%' }} />
                         </div>
-                        <div className={`mt-1 text-xs ${s.left < 1 ? 'font-bold text-red-600' : requestedFull ? 'font-bold text-[#c2410c]' : 'font-medium text-[#15803d]'}`}>{text}</div>
+                        <div className={`mt-1 text-xs ${s.left < 1 ? 'font-bold text-red-600' : requestedFull ? 'font-bold text-[#1d4ed8]' : 'font-medium text-[#15803d]'}`}>{text}</div>
                       </div>
                       <div className="flex shrink-0 flex-col items-stretch gap-1.5">
-                        <Btn c={requestedFull ? 'or' : 'ink'} disabled={ended || s.left < 1} onClick={onLogin}>{ended ? 'Past' : s.left < 1 ? 'Full' : requestedFull ? 'Join queue' : 'Apply'}</Btn>
+                        <Btn c={requestedFull ? 'ink' : 'ink'} disabled={ended || s.left < 1} onClick={onLogin}>{ended ? 'Past' : s.left < 1 ? 'Full' : requestedFull ? 'Join queue' : 'Apply'}</Btn>
                         <button type="button" aria-expanded={open === s.id} onClick={() => setOpen(open === s.id ? null : s.id)}
                           className="text-[11px] font-semibold text-black/60 hover:text-black hover:underline">
                           {open === s.id ? 'Hide computers' : 'Show computers'}
@@ -863,7 +821,6 @@ function Landing({ onLogin, categories }) {
       <Hero onLogin={onLogin} />
 
       <section id="labs" className={`${WRAP} scroll-mt-16 py-16`}>
-        <p className="text-[11px] font-bold uppercase tracking-widest text-[#f97316]">Live availability</p>
         <Heading title="Available labs" className="mt-2" />
         <p className="mb-8 mt-2 max-w-xl text-xs leading-relaxed text-black/60">
           Seat counts update on their own, even when someone applies. Go back or forward to see other days.
@@ -873,8 +830,15 @@ function Landing({ onLogin, categories }) {
 
       <TrendsSection categories={categories} />
 
-      <footer className={`${WRAP} py-10 flex flex-wrap justify-between items-center gap-4 text-xs text-black/50 border-t border-black/10`}>
+      <footer className={`${WRAP} flex flex-wrap items-center justify-between gap-4 border-t border-white/10 bg-slate-900 py-10 text-xs text-white/60`}>
         <Logo />
+        <span className="text-2xl font-bold tracking-wide text-white" aria-label="Resources">
+          {[..."Resources"].map((letter, index) => (
+            <span key={`${letter}-${index}`} className={`inline-block animate-bounce ${["text-blue-500", "text-red-500", "text-yellow-500", "text-green-500"][index % 4]}`} style={{ animationDelay: `${index * 0.08}s` }} aria-hidden="true">
+              {letter}
+            </span>
+          ))}
+        </span>
         <span>© 2026 Computer Lab Management System</span>
       </footer>
     </div>
