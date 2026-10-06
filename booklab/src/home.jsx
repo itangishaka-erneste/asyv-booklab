@@ -5,9 +5,6 @@ import {
   AreaChart, Area, PieChart, Pie, Cell,
 } from 'recharts';
 import logo from './assets/as.png';
-import front from './assets/book.JPG';
-import milker from './assets/milker.jpg';
-import minister from './assets/minister.jpg';
 
 /* ================================================================== */
 /* 0. API + LIVE UPDATES                                               */
@@ -45,92 +42,7 @@ function useLive(handlers) {
   }, []);
 }
 
-/* ================================================================== */
-/* 1. PHOTOS, SLIDESHOW AND SCROLL REVEAL                              */
-/* ================================================================== */
-
-const PHOTOS = [
-  { src: front, alt: 'The school computer lab' },
-  { src: milker, alt: 'Inside the lab' },
-  { src: minister, alt: 'Lab staff' },
-];
 const C = { ink: '#0b0f1a', or: '#f97316', gr: '#16a34a', grid: '#e5e7eb', mute: '#94a3b8' };
-
-// Shows a photo, or a plain gradient if the picture cannot load.
-const Photo = ({ src, alt, className = '', style }) => {
-  const [bad, setBad] = useState(false);
-  if (bad) return <div role="img" aria-label={alt} style={style} className={`bg-gradient-to-br from-[#0b0f1a] to-[#16a34a] ${className}`} />;
-  return <img src={src} alt={alt} style={style} onError={() => setBad(true)} className={`object-cover ${className}`} />;
-};
-
-const ORIGINS = ['20% 30%', '80% 70%', '50% 15%', '15% 80%'];
-
-// Photos cross-fade while the visible one slowly zooms in (Ken Burns). Click a bar to jump to a photo.
-function Slideshow({ images = PHOTOS, interval = 5500, start = 0, bars = false, className = '' }) {
-  const [i, setI] = useState(start % images.length);
-  useEffect(() => {
-    const t = setTimeout(() => setI((n) => (n + 1) % images.length), interval);
-    return () => clearTimeout(t);
-  }, [i, images.length, interval]);
-  return (
-    <div className={`relative overflow-hidden bg-[#0b0f1a] ${className}`}>
-      {images.map((im, k) => {
-        const on = k === i;
-        return (
-          <Photo
-            key={im.alt + k}
-            src={im.src}
-            alt={im.alt}
-            className="absolute inset-0 h-full w-full"
-            style={{
-              opacity: on ? 1 : 0,
-              transform: on ? 'scale(1.16) translate(-1.5%, -1%)' : 'scale(1)',
-              transformOrigin: ORIGINS[k % ORIGINS.length],
-              transition: `opacity 1.4s ease, transform ${on ? interval + 1800 : 1400}ms ease-out`,
-            }}
-          />
-        );
-      })}
-      {bars && (
-        <div className="absolute bottom-3 left-3 flex gap-1.5">
-          {images.map((im, k) => (
-            <button key={k} type="button" aria-label={`Show photo ${k + 1}`} onClick={() => setI(k)}
-              className="h-1 overflow-hidden rounded-[2px] bg-white/40" style={{ width: k === i ? 40 : 18, transition: 'width .4s ease' }}>
-              {k === i && <span key={i} className="block h-full bg-[#f97316]" style={{ animation: `fill ${interval}ms linear forwards` }} />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Fades and slides a block in once, when it first scrolls into view.
-function Reveal({ children, delay = 0, className = '' }) {
-  const ref = useRef(null);
-  const [on, setOn] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { setOn(true); io.disconnect(); } }, { threshold: 0.12 });
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-  return (
-    <div ref={ref} className={className}
-      style={{ opacity: on ? 1 : 0, transform: on ? 'none' : 'translateY(26px)', transition: `opacity .7s ease ${delay}ms, transform .7s ease ${delay}ms` }}>
-      {children}
-    </div>
-  );
-}
-
-const AnimStyles = () => (
-  <style>{`
-    @keyframes fill { from { width: 0 } to { width: 100% } }
-    @keyframes floaty { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }
-    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
-  `}</style>
-);
 
 /* ================================================================== */
 /* 2. SCHOOL RULES                                                     */
@@ -139,11 +51,10 @@ const AnimStyles = () => (
 
 const COMBOS_S4_S5 = ['MSI', 'MSII', 'ART', 'HUMANITIES'];
 const COMBOS_S6 = ['MPC', 'PCB', 'HGL', 'MEG'];
-const ALL_COMBOS = [...COMBOS_S4_S5, ...COMBOS_S6];
 const DEFAULT_GRADES = ['S4', 'S5', 'S6'];
 const DEFAULT_GRADE_COMBOS = { S4: COMBOS_S4_S5, S5: COMBOS_S4_S5, S6: COMBOS_S6 };
 const SECTIONS = [...Array.from({ length: 12 }, (_, i) => String(i + 1)), ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')];
-// Categories for the Lost & Found board (the admin can change them in Settings).
+// Categories for the Lost & Found board (the Minister of Communication can change them).
 const DEFAULT_CATS = ['Clothes', 'Shoes', 'Keys', 'Bags', 'Phones and electronics', 'Books and stationery', 'Documents and IDs', 'Water bottles and lunch boxes', 'Jewelry and watches', 'Other'];
 
 const gradesOf = (opts) => (opts.grades?.length ? opts.grades : DEFAULT_GRADES);
@@ -160,8 +71,18 @@ const match = (q, ...fields) => {
   const hay = fields.join(' ').toLowerCase();
   return String(q || '').toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
 };
-const today = () => new Date().toISOString().slice(0, 10);
-const dayOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+
+// Days are always the LOCAL day of the person (not UTC), so "today" is really today at school.
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const dayOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return ymd(d); };
+const today = () => dayOffset(0);
+const shiftDay = (s, n) => { const [y, m, d] = s.split('-').map(Number); return ymd(new Date(y, m - 1, d + n)); };
+const niceDay = (s) => {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+};
+const nowHM = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const dayOf = (s) => String(s.date).slice(0, 10);
 const fmt = (s) => `${s.lab} · ${s.date} ${s.from}–${s.to}`;
 
 /* ================================================================== */
@@ -268,6 +189,10 @@ const BADGE = {
   active: 'bg-[#16a34a]/10 text-[#15803d]',
   returned: 'bg-sky-50 text-sky-700',
   removed: 'bg-red-50 text-red-600',
+  available: 'bg-[#16a34a]/10 text-[#15803d]',
+  limited: 'bg-[#f97316]/10 text-[#c2410c]',
+  full: 'bg-red-50 text-red-600',
+  none: 'bg-black/5 text-black/60',
 };
 const Badge = ({ s, children }) => (
   <span className={`inline-block rounded-[4px] px-2 py-0.5 text-[11px] font-semibold capitalize ${BADGE[s] || 'bg-black/5 text-black/60'}`}>{children || s}</span>
@@ -351,6 +276,22 @@ const Pills = ({ value, onChange, items }) => (
   </div>
 );
 
+// The day filter used on the home page and on the student page. Goes back or forward one day at a
+// time, jumps to any date, and returns to today. With `all`, an "All days" choice is added (day = '').
+function DayBar({ day, onChange, all = false }) {
+  const t = today();
+  const base = day || t;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Btn c="w" aria-label="Previous day" onClick={() => onChange(shiftDay(base, -1))}>← Day before</Btn>
+      <Inp type="date" aria-label="Choose a day" value={day} onChange={(e) => e.target.value && onChange(e.target.value)} className="!w-40" />
+      <Btn c="w" aria-label="Next day" onClick={() => onChange(shiftDay(base, 1))}>Day after →</Btn>
+      {day !== t && <Btn c="or" onClick={() => onChange(t)}>Today</Btn>}
+      {all && day !== '' && <Btn c="w" onClick={() => onChange('')}>All days</Btn>}
+    </div>
+  );
+}
+
 const Row = ({ children }) => (
   <div className="flex flex-wrap justify-between items-center border-t border-black/10 py-3.5 gap-3">{children}</div>
 );
@@ -409,50 +350,18 @@ const attCounts = (rows) => {
 };
 
 /* ================================================================== */
-/* 4. LANDING PAGE                                                     */
+/* 4. LANDING PAGE: the labs, their computers and the seats left       */
+/* for one day, visible before anybody signs in.                       */
 /* ================================================================== */
 
-const NAV = [['services', 'Services'], ['lab', 'The lab'], ['how', 'How it works'], ['team', 'Team'], ['faq', 'FAQ'], ['trends', 'Trends']];
-const HERO_POINTS = ['Live seat counts', 'Fair approvals', 'Attendance reports'];
-const STATS = [['Live', 'seat counts'], ['3 roles', 'students, staff, admins'], ['Google', 'secure sign in'], ['Full', 'attendance history']];
-
-const SERVICES = [
-  { title: 'Online lab booking', text: 'Reserve a seat from any device and see what is open before you apply.', theme: 'dark', span: 'md:col-span-2' },
-  { title: 'Live seat counts', text: 'Seats update instantly, so nobody is turned away at the door.', theme: 'light' },
-  { title: 'Class bookings', text: 'Teachers book a whole class or chosen students in one step.', theme: 'light' },
-  { title: 'Attendance tracking', text: 'Mark attendance and spot repeated absences early.', theme: 'green' },
-  { title: 'Full lab history', text: 'Search any day and lab to see who came and who was absent.', theme: 'light' },
-];
-const CARD_THEMES = {
-  dark: { box: 'bg-[#0b0f1a] text-white', text: 'text-white/75' },
-  green: { box: 'bg-[#16a34a] text-white', text: 'text-white/80' },
-  light: { box: 'bg-white', text: 'text-black/60' },
-};
-
-const STEPS = [
-  ['Get your account', 'Your school admin adds your Google email, so only you can sign in as you.'],
-  ['Find an open lab', 'Browse published lab times and check the seats left in real time.'],
-  ['Apply and attend', 'Choose a reason, get approved and show up. Attendance is recorded.'],
-];
-const TEAM = [
-  ['JUSTIN MUTANGANA', 'Head of ICT', 'Sets lab schedules and approves requests.'],
-  ['All Teachers', 'All teachers allowed', 'Books classes for any student'],
-  ['Pacific Siboman', 'Minister of ICT', 'Supports students and teachers, and manages the system.'],
-  ['Students', 'All students allowed', 'Applies for themselves and attends labs.'],
-  ['Mwamikazi Deborah', 'Minister of ICT', 'Supports students and teachers, and manages the system.'],
-  ['psychosocial workers', 'All psychosocial workers allowed', 'Books classes for any student'],
-];
-const FAQ = [
-  ['How do I get an account?', 'You do not sign up yourself. The school adds every student and teacher using their Google email.'],
-  ['How do I log in?', 'Press Continue with Google and choose the Google account the school has on record for you. There is no password to share.'],
-  ['Who can book a lab?', 'Students apply for themselves. Teachers and psychosocial workers can book for a class or chosen students.'],
-  ['What if a lab is full?', 'Apply is disabled when no seats remain, and admins can move students between labs.'],
-  ['Can I book the same lab twice?', 'No. Each student can hold only one booking per lab time, and bookings that overlap are blocked.'],
-  ['Can booking access be removed?', 'Yes. Admins can blacklist a student who misuses lab time.'],
-  ['I lost something. What do I do?', 'Open Trends in the menu. The Minister of Communication posts every item that is found, with photos. Tap your item and contact the minister to claim it.'],
-];
-
+const NAV = [['labs', 'Labs'], ['how', 'How to book'], ['trends', 'Lost and found']];
 const WRAP = 'max-w-6xl mx-auto px-6';
+const STATUS_TEXT = { available: 'Available', limited: 'Almost full', full: 'Full', none: 'No lab time' };
+const HOW = [
+  ['Pick a day', 'Use the day bar to see the labs and seats left for any date.'],
+  ['Log in with Google', 'Use the Google email your school added for you.'],
+  ['Press Apply', 'Choose the lab time and send. The admin approves it.'],
+];
 
 const Heading = ({ title, className = '' }) => (
   <h2 className={`text-2xl md:text-3xl font-bold tracking-tight ${className}`}>{title}</h2>
@@ -472,203 +381,203 @@ function Header({ onLogin }) {
   );
 }
 
-function Hero({ onLogin }) {
+// Small tile used in the summary row.
+const Mini = ({ v, t, tone = 'ink' }) => {
+  const color = { ink: 'text-[#0b0f1a]', gr: 'text-[#16a34a]', or: 'text-[#f97316]' }[tone];
   return (
-    <section className={`${WRAP} pt-12 pb-24 grid lg:grid-cols-2 gap-16 items-center`}>
-      <div>
-        <Reveal>
-          <span className="inline-flex items-center gap-2 rounded-[6px] border border-black/10 px-3 py-1.5 text-xs font-medium">
-            <span className="w-1.5 h-1.5 rounded-[2px] bg-[#16a34a]" />Now taking lab bookings
-          </span>
-        </Reveal>
-        <Reveal delay={100}>
-          <h1 className="mt-6 text-3xl md:text-5xl font-bold leading-[1.1] tracking-tight">
-            Book your lab seat in <span className="text-[#f97316]">seconds.</span>
-          </h1>
-        </Reveal>
-        <Reveal delay={200}>
-          <p className="mt-6 text-sm text-black/60 max-w-md leading-relaxed">
-            A modern way to run your school's computer labs. Publish schedules, take bookings,
-            approve fairly and track attendance, all in one place.
+    <div className="rounded-[6px] border border-black/10 bg-white p-4">
+      <div className={`text-2xl font-bold ${color}`}>{v}</div>
+      <div className="mt-1 text-xs font-medium text-black/60">{t}</div>
+    </div>
+  );
+};
+
+// Every computer of a lab time as a small square: green is free, grey is taken.
+const PcGrid = ({ s }) => (
+  <div className="mt-3">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(52px,1fr))] gap-1.5">
+      {Array.from({ length: s.seats }, (_, i) => {
+        const taken = i < s.taken;
+        return (
+          <div key={i} title={`PC ${i + 1}: ${taken ? 'taken' : 'free'}`}
+            className={`rounded-[4px] border px-1 py-1.5 text-center text-[10px] font-semibold ${taken ? 'border-black/10 bg-black/[0.06] text-black/40 line-through' : 'border-[#16a34a]/40 bg-[#16a34a]/10 text-[#15803d]'}`}>
+            PC {i + 1}
+          </div>
+        );
+      })}
+    </div>
+    <p className="mt-2 text-[11px] text-black/50">Green is free, grey is taken (approved bookings). The admin gives each student a computer.</p>
+  </div>
+);
+
+function LabCard({ lab, past, onLogin }) {
+  const [open, setOpen] = useState(null); // the lab time whose computers are shown
+  const now = nowHM();
+  return (
+    <article className="flex flex-col rounded-[6px] border border-black/10 bg-white p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-bold">{lab.name}</h3>
+          <p className="mt-1 text-xs text-black/60">{lab.pcs} computers in this lab</p>
+        </div>
+        <Badge s={lab.status}>{STATUS_TEXT[lab.status]}</Badge>
+      </div>
+
+      {lab.sessions.length === 0 ? (
+        <p className="mt-5 rounded-[6px] bg-black/[0.04] px-3 py-4 text-center text-xs text-black/55">No lab time on this day.</p>
+      ) : (
+        <>
+          <p className="mt-4 text-xs font-medium text-black/70">
+            <b className={lab.free ? 'text-[#15803d]' : 'text-[#c2410c]'}>{lab.free}</b> free seats in {lab.sessions.length} lab time{lab.sessions.length === 1 ? '' : 's'}
           </p>
-        </Reveal>
-        <Reveal delay={300}>
-          <div className="mt-8 flex flex-wrap items-center gap-4">
-            <Btn className="!px-7 !py-3" onClick={onLogin}>Continue with Google</Btn>
-            <span className="text-xs text-black/50">Accounts are created by your school admin.</span>
+          <div className="mt-2">
+            {lab.sessions.map((s) => {
+              const ended = past || (s.to <= now && !past && false);
+              const pct = s.seats ? (s.taken / s.seats) * 100 : 100;
+              return (
+                <div key={s.id} className="border-t border-black/10 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <b className="text-sm">{s.from}–{s.to}</b>
+                      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-[3px] bg-black/10">
+                        <div className={`h-full ${s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#f97316]'}`} style={{ width: pct + '%' }} />
+                      </div>
+                      <div className={`mt-1 text-xs ${s.left > 0 ? 'font-medium text-[#15803d]' : 'font-bold text-[#c2410c]'}`}>
+                        {s.left > 0 ? `${s.left} of ${s.seats} free` : `Full, ${s.seats} of ${s.seats} taken`}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-stretch gap-1.5">
+                      <Btn disabled={ended || s.left < 1} onClick={onLogin}>{ended ? 'Past' : s.left < 1 ? 'Full' : 'Apply'}</Btn>
+                      <button type="button" aria-expanded={open === s.id} onClick={() => setOpen(open === s.id ? null : s.id)}
+                        className="text-[11px] font-semibold text-black/60 hover:text-black hover:underline">
+                        {open === s.id ? 'Hide computers' : 'Show computers'}
+                      </button>
+                    </div>
+                  </div>
+                  {open === s.id && <PcGrid s={s} />}
+                </div>
+              );
+            })}
           </div>
-          <ul className="mt-8 flex flex-wrap gap-x-8 gap-y-2 text-xs font-medium text-black/70">
-            {HERO_POINTS.map((p) => <li key={p}><span className="text-[#16a34a] font-bold mr-2">✓</span>{p}</li>)}
-          </ul>
-        </Reveal>
+        </>
+      )}
+    </article>
+  );
+}
+
+function LabBoard({ onLogin }) {
+  const [day, setDay] = useState(today());
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [labId, setLabId] = useState('');
+  const [view, setView] = useState('all');
+
+  // Loads the chosen day, and refreshes it every 30 seconds so the seat counts stay true.
+  useEffect(() => {
+    let alive = true;
+    const load = () => api(`/api/overview?date=${day}`)
+      .then((d) => { if (alive) { setData(d); setErr(''); } })
+      .catch((e) => { if (alive) setErr(e.message); });
+    load();
+    const t = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, [day]);
+
+  const loading = !data || data.date !== day;
+  const labs = (data?.labs || []).filter((l) => (!labId || String(l.id) === labId) && (view === 'all' || l.free > 0));
+  const tot = data?.totals || {};
+  // Days that have lab times, nearest to the chosen day first, so it is easy to jump there.
+  const near = (data?.days || [])
+    .filter((d) => d !== day)
+    .sort((a, b) => Math.abs(new Date(a) - new Date(day)) - Math.abs(new Date(b) - new Date(day)))
+    .slice(0, 6)
+    .sort();
+
+  return (
+    <div>
+      <div className="rounded-[6px] border border-black/10 bg-white p-4">
+        <p className="mb-3 text-xs font-medium text-black/60">Showing labs for</p>
+        <h3 className="mb-4 text-lg font-bold">{niceDay(day)}{day === today() && <span className="ml-2 align-middle"><Badge s="active">Today</Badge></span>}</h3>
+        <DayBar day={day} onChange={setDay} />
+        {near.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-black/50">Days with lab times:</span>
+            {near.map((d) => (
+              <button key={d} type="button" onClick={() => setDay(d)} className="rounded-[6px] border border-black/20 bg-white px-2.5 py-1 font-semibold hover:bg-black/5">{d.slice(5)}</button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <Reveal delay={250}>
-        <div className="relative pb-4">
-          <div className="overflow-hidden rounded-[6px] border border-black/10 shadow-lg">
-            <Slideshow bars className="h-[420px] w-full" />
-          </div>
-          <div className="absolute left-3 bottom-0 flex items-center gap-3 rounded-[6px] border border-black/5 bg-white px-4 py-3 text-xs font-semibold shadow-md" style={{ animation: 'floaty 5s ease-in-out infinite' }}>
-            <span className="grid h-7 w-7 place-items-center rounded-[6px] bg-[#16a34a] text-white">✓</span>
-            <span>Booking approved<br /><span className="font-normal text-black/50">Lab 1 · 14:00</span></span>
-          </div>
-          <div className="absolute right-3 top-4 flex items-center gap-3 rounded-[6px] border border-black/5 bg-white px-4 py-3 text-xs font-semibold shadow-md" style={{ animation: 'floaty 6s ease-in-out 1s infinite' }}>
-            <span className="grid h-7 w-7 place-items-center rounded-[6px] bg-[#f97316] text-white">4</span>
-            <span>seats left<br /><span className="font-normal text-black/50">updating live</span></span>
-          </div>
-        </div>
-      </Reveal>
-    </section>
-  );
-}
-
-function StatsBar() {
-  return (
-    <section className="bg-[#0b0f1a] text-white">
-      <div className={`${WRAP} py-10 grid grid-cols-2 md:grid-cols-4 gap-8`}>
-        {STATS.map(([a, b], i) => (
-          <Reveal key={a} delay={i * 90}>
-            <div className="text-xl font-bold text-[#f97316]">{a}</div>
-            <div className="text-xs text-white/60 mt-1">{b}</div>
-          </Reveal>
-        ))}
+      <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+        <Mini v={tot.labs ?? '-'} t="Labs" />
+        <Mini v={tot.computers ?? '-'} t="Computers in total" />
+        <Mini v={tot.times ?? '-'} t="Lab times this day" />
+        <Mini v={tot.free ?? '-'} t="Free seats this day" tone="gr" />
       </div>
-    </section>
-  );
-}
 
-function Services() {
-  return (
-    <section id="services" className={`${WRAP} py-24`}>
-      <Reveal><Heading title="Everything a school lab needs, without the paperwork." className="max-w-xl" /></Reveal>
-      <div className="mt-12 grid md:grid-cols-3 gap-6">
-        {SERVICES.map(({ title, text, theme, span = '' }, i) => {
-          const t = CARD_THEMES[theme];
-          return (
-            <Reveal key={title} delay={i * 80} className={span}>
-              <div className={`h-full min-h-[160px] flex flex-col justify-end rounded-[6px] border border-black/10 p-6 ${t.box}`}>
-                <h3 className="text-base font-semibold">{title}</h3>
-                <p className={`mt-2 text-xs leading-relaxed ${t.text}`}>{text}</p>
-              </div>
-            </Reveal>
-          );
-        })}
+      <div className="mt-4 grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
+        <Sel o={[{ v: '', t: 'All labs' }, ...(data?.labs || []).map((l) => ({ v: String(l.id), t: l.name }))]} value={labId} onChange={(e) => setLabId(e.target.value)} aria-label="Choose a lab" />
+        <Pills value={view} onChange={setView} items={[['all', 'All labs'], ['free', 'Only with free seats']]} />
       </div>
-    </section>
-  );
-}
 
-function InsideLab() {
-  const second = [PHOTOS[2], PHOTOS[0], PHOTOS[1]];
-  return (
-    <section id="lab" className={`${WRAP} pb-24 grid lg:grid-cols-2 gap-16 items-center`}>
-      <Reveal>
-        <div className="relative pb-12 pr-12">
-          <Slideshow images={[PHOTOS[1], PHOTOS[0], PHOTOS[2]]} interval={6000} className="h-[400px] w-full rounded-[6px] border border-black/10" />
-          <Slideshow images={second} interval={4200} start={1} className="absolute bottom-0 right-0 h-44 w-52 rounded-[6px] border-4 border-white shadow-lg" />
-        </div>
-      </Reveal>
-      <Reveal delay={150}>
-        <h2 className="text-2xl font-bold tracking-tight">Less queueing. More learning.</h2>
-        <p className="mt-4 text-sm text-black/60 leading-relaxed">
-          Every seat is accounted for. Students arrive knowing they have a computer, teachers
-          know who is attending, and admins see how each lab is used.
-        </p>
-        <div className="mt-8 flex flex-wrap gap-2">
-          {ALL_COMBOS.map((c) => <span key={c} className="rounded-[6px] border border-black/15 px-3 py-1.5 text-xs font-medium">{c}</span>)}
-        </div>
-        <p className="mt-3 text-xs text-black/50">Senior 4 and 5: {COMBOS_S4_S5.join(', ')}. Senior 6: {COMBOS_S6.join(', ')}.</p>
-      </Reveal>
-    </section>
-  );
-}
-
-function HowItWorks() {
-  return (
-    <section id="how" className="bg-black/[0.03]">
-      <div className={`${WRAP} py-24`}>
-        <Reveal><Heading title="Three steps from account to seat." /></Reveal>
-        <div className="mt-12 grid md:grid-cols-3 gap-6">
-          {STEPS.map(([t, d], i) => (
-            <Reveal key={t} delay={i * 100}>
-              <div className="h-full rounded-[6px] border border-black/5 bg-white p-6">
-                <div className="text-3xl font-bold text-[#16a34a]">{i + 1}</div>
-                <h3 className="mt-4 text-sm font-semibold">{t}</h3>
-                <p className="mt-2 text-xs leading-relaxed text-black/60">{d}</p>
-              </div>
-            </Reveal>
-          ))}
+      {err && <div className="mt-4"><Alert>{err}</Alert></div>}
+      <div className="mt-6">
+        {loading && !err && <Empty>Loading the labs…</Empty>}
+        {!loading && data.labs.length === 0 && <Empty>No labs have been added yet.</Empty>}
+        {!loading && data.labs.length > 0 && labs.length === 0 && <Empty>No lab matches these filters.</Empty>}
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-2">
+          {!loading && labs.map((l) => <LabCard key={l.id} lab={l} past={day < today()} onLogin={onLogin} />)}
         </div>
       </div>
-    </section>
-  );
-}
-
-function Team() {
-  return (
-    <section id="team" className={`${WRAP} py-24`}>
-      <Reveal><Heading title="The people behind the labs." /></Reveal>
-      <div className="mt-12 grid md:grid-cols-3 gap-6">
-        {TEAM.map(([name, role, text], i) => (
-          <Reveal key={name} delay={i * 100}>
-            <div className="h-full rounded-[6px] border border-black/10 p-6">
-              <Avatar name={name} className="h-14 w-14 text-sm" />
-              <h3 className="mt-4 text-sm font-semibold">{name}</h3>
-              <div className="mt-1 text-xs font-medium text-[#f97316]">{role}</div>
-              <p className="mt-3 text-xs leading-relaxed text-black/60">{text}</p>
-            </div>
-          </Reveal>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function Faq() {
-  return (
-    <section id="faq" className="max-w-2xl mx-auto px-6 pb-24">
-      <h2 className="text-2xl font-bold tracking-tight mb-6">Questions</h2>
-      {FAQ.map(([q, a]) => (
-        <details key={q} className="border-b border-black/10 py-4">
-          <summary className="cursor-pointer text-sm font-semibold">{q}</summary>
-          <p className="mt-3 text-xs leading-relaxed text-black/60">{a}</p>
-        </details>
-      ))}
-    </section>
-  );
-}
-
-function CallToAction({ onLogin }) {
-  return (
-    <section className="px-6 pb-20">
-      <Reveal>
-        <div className="relative mx-auto max-w-6xl overflow-hidden rounded-[6px] text-white">
-          <Slideshow images={[PHOTOS[2], PHOTOS[0], PHOTOS[1]]} interval={6500} className="absolute inset-0 h-full w-full" />
-          <div className="absolute inset-0 bg-[#0b0f1a]/80" />
-          <div className="relative flex flex-wrap items-center justify-between gap-8 px-8 py-16 md:px-14">
-            <h2 className="max-w-md text-2xl font-bold tracking-tight">Ready to book your next lab session?</h2>
-            <Btn c="or" className="!px-7 !py-3" onClick={onLogin}>Continue with Google</Btn>
-          </div>
-        </div>
-      </Reveal>
-    </section>
+    </div>
   );
 }
 
 function Landing({ onLogin, categories }) {
   return (
     <div className="bg-white text-[#0b0f1a] antialiased text-sm">
-      <AnimStyles />
       <Header onLogin={onLogin} />
-      <Hero onLogin={onLogin} />
-      <StatsBar />
-      <Services />
-      <InsideLab />
-      <HowItWorks />
-      <Team />
-      <Faq />
+
+      <section className="bg-[#0b0f1a] text-white">
+        <div className={`${WRAP} py-12`}>
+          <h1 className="max-w-2xl text-3xl md:text-4xl font-bold leading-tight tracking-tight">Computer labs: see what is free, then book.</h1>
+          <p className="mt-4 max-w-xl text-sm leading-relaxed text-white/70">
+            Choose a day to see every lab, its computers and the seats left. When you find a time, log in and apply.
+          </p>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <a href="#labs" className="inline-block rounded-[6px] bg-[#f97316] px-5 py-2.5 text-xs font-semibold text-white hover:opacity-90">See the labs</a>
+            <Btn c="w" onClick={onLogin}>Log in with Google</Btn>
+          </div>
+        </div>
+      </section>
+
+      <section id="labs" className={`${WRAP} scroll-mt-16 py-14 grid gap-10 lg:grid-cols-[1fr_300px] lg:items-start`}>
+        <div className="min-w-0">
+          <Heading title="Available labs" />
+          <p className="mb-6 mt-2 text-xs text-black/60">Seat counts update on their own. Go back or forward to see other days.</p>
+          <LabBoard onLogin={onLogin} />
+        </div>
+
+        <aside id="how" className="scroll-mt-20 lg:sticky lg:top-24">
+          <div className="rounded-[6px] border border-black/10 bg-[#f6f7f9] p-5">
+            <h3 className="text-sm font-bold">How to book</h3>
+            <ol className="mt-4 space-y-4">
+              {HOW.map(([t, d], i) => (
+                <li key={t} className="flex gap-3">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#0b0f1a] text-[11px] font-bold text-white">{i + 1}</span>
+                  <span className="text-xs leading-relaxed"><b className="block text-[#0b0f1a]">{t}</b><span className="text-black/60">{d}</span></span>
+                </li>
+              ))}
+            </ol>
+            <Btn className="mt-5 w-full !py-2.5" onClick={onLogin}>Log in to book</Btn>
+            <p className="mt-3 text-[11px] leading-relaxed text-black/50">Accounts are created by your school admin. If Google does not accept your email, ask the admin to add it.</p>
+          </div>
+        </aside>
+      </section>
+
       <TrendsSection categories={categories} />
-      <CallToAction onLogin={onLogin} />
+
       <footer className={`${WRAP} py-10 flex flex-wrap justify-between items-center gap-4 text-xs text-black/50 border-t border-black/10`}>
         <Logo />
         <span>© 2026 Computer Lab Management System</span>
@@ -732,10 +641,7 @@ function Auth({ onDone, onBack }) {
 
   return (
     <div className="fixed inset-0 grid overflow-hidden bg-white text-[13px] text-[#0b0f1a] lg:grid-cols-[2fr_3fr]">
-      <AnimStyles />
-      <aside className="relative hidden h-full overflow-hidden lg:block">
-        <Slideshow interval={5000} className="absolute inset-0 h-full w-full" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0b0f1a] via-[#0b0f1a]/50 to-[#0b0f1a]/10" />
+      <aside className="relative hidden h-full overflow-hidden bg-gradient-to-br from-[#0b0f1a] to-[#14532d] lg:block">
         <div className="relative h-full flex flex-col justify-between p-10 text-white">
           <Logo light />
           <div className="max-w-sm space-y-3">
@@ -789,29 +695,32 @@ function Student({ opts }) {
   const [apps, setApps] = useState([]);
   const [reason, setReason] = useState(opts.reasons[0] || '');
   const [msg, setMsg] = useState('');
+  const [ok, setOk] = useState(false);
   const [q, setQ] = useState('');
+  const [day, setDay] = useState(today());
   const [view, setView] = useState('open');
   const [ast, setAst] = useState('all');
 
-  const loadApps = () => api('/api/apps').then(setApps).catch((e) => setMsg(e.message));
-  useEffect(() => { api('/api/sessions').then(setSessions).catch((e) => setMsg(e.message)); loadApps(); }, []);
+  const loadApps = () => api('/api/apps').then(setApps).catch((e) => { setOk(false); setMsg(e.message); });
+  useEffect(() => { api('/api/sessions').then(setSessions).catch((e) => { setOk(false); setMsg(e.message); }); loadApps(); }, []);
   useLive({ seats: setSessions, 'applications:update': loadApps });
 
   const apply = async (id) => {
     try {
       const r = await api('/api/apply', 'POST', { sessionId: id, reason });
-      setMsg(r.created ? '' : 'You already have a booking at this lab time.');
-    } catch (e) { setMsg(e.message); }
+      setOk(!!r.created);
+      setMsg(r.created ? 'Sent. Wait for the admin to approve your booking.' : 'You already have a booking at this lab time.');
+    } catch (e) { setOk(false); setMsg(e.message); }
   };
   const mine = (id) => apps.find((a) => a.sid === id && a.status !== 'rejected');
   const n = (k) => apps.filter((a) => a.status === k).length;
 
-  const labs = sessions.filter((s) => match(q, s.lab, s.date, s.from) && (view === 'all' || s.left > 0));
-  const myApps = apps.filter((a) => (ast === 'all' || a.status === ast) && match(q, a.lab, a.date, a.reason));
+  const labs = sessions.filter((s) => (!day || dayOf(s) === day) && match(q, s.lab) && (view === 'all' || s.left > 0));
+  const myApps = apps.filter((a) => ast === 'all' || a.status === ast);
 
   return (
     <div>
-      {msg && <Alert>{msg}</Alert>}
+      {msg && <Alert ok={ok}>{msg}</Alert>}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <Tile v={apps.length} t="Applications" />
@@ -820,20 +729,22 @@ function Student({ opts }) {
         <Tile v={apps.filter((a) => a.att === 'present').length} t="Times attended" tone="gr" />
       </div>
 
-      <Card t="Open labs" sub="Seat counts update live while you look.">
+      <Card t="Book a lab" sub={day ? niceDay(day) : 'All days'}>
+        <div className="mb-4"><DayBar day={day} onChange={setDay} all /></div>
         <div className="mb-5 grid gap-4 md:grid-cols-[1fr_220px_auto] md:items-end">
-          <Field l="Search lab or date"><SearchBox value={q} onChange={setQ} placeholder="Lab 1, 2026-10-05..." /></Field>
+          <Field l="Lab"><SearchBox value={q} onChange={setQ} placeholder="Lab name" /></Field>
           <Field l="Reason for booking"><Sel o={opts.reasons} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
           <Pills value={view} onChange={setView} items={[['open', 'With seats'], ['all', 'All labs']]} />
         </div>
-        {labs.length === 0 && <Empty>{sessions.length ? 'No lab matches your search.' : 'No labs are open yet. Check back after the admin posts a schedule.'}</Empty>}
+        {labs.length === 0 && <Empty>{sessions.length ? 'No lab time on this day. Try the day before or after.' : 'No labs are open yet. Check back after the admin posts a schedule.'}</Empty>}
         {labs.map((s) => {
           const pct = s.seats ? ((s.seats - s.left) / s.seats) * 100 : 100;
+          const m = mine(s.id);
           return (
             <div key={s.id} className="flex justify-between items-center border-t border-black/10 py-4 gap-4">
               <div className="min-w-0 flex-1">
                 <b>{s.lab}</b>
-                <span className="text-black/60"> · {s.date} · {s.from}–{s.to}</span>
+                <span className="text-black/60"> · {day ? '' : `${s.date} · `}{s.from}–{s.to}</span>
                 <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-[3px] bg-black/10">
                   <div className={`h-full ${s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#f97316]'}`} style={{ width: pct + '%' }} />
                 </div>
@@ -841,16 +752,14 @@ function Student({ opts }) {
                   {s.left > 0 ? `${s.left} of ${s.seats} seats left` : 'Full'}
                 </div>
               </div>
-              {mine(s.id)
-                ? <Badge s={mine(s.id).status} />
-                : <Btn disabled={s.left < 1} onClick={() => apply(s.id)}>Apply</Btn>}
+              {m ? <Badge s={m.status} /> : <Btn disabled={s.left < 1} onClick={() => apply(s.id)}>Apply</Btn>}
             </div>
           );
         })}
       </Card>
 
       <Card t="My applications" action={<Pills value={ast} onChange={setAst} items={[['all', 'All', apps.length], ['pending', 'Waiting', n('pending')], ['approved', 'Approved', n('approved')], ['rejected', 'Rejected', n('rejected')]]} />}>
-        {myApps.length === 0 && <Empty>{apps.length ? 'No application matches.' : 'You have not applied yet. Pick an open lab above.'}</Empty>}
+        {myApps.length === 0 && <Empty>{apps.length ? 'No application matches.' : 'You have not applied yet. Pick a lab above.'}</Empty>}
         {myApps.map((a) => (
           <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-black/10 py-3">
             <span><b>{a.lab}</b> <span className="text-black/60">· {a.date} {a.from} · {a.reason}</span></span>
@@ -1570,12 +1479,10 @@ function HistoryTab({ apps: rows, labs }) {
         <Stat v={marked ? Math.round((c.present / marked) * 100) + '%' : '-'} t="Attendance rate" tone="gr" />
       </div>
 
-      {(
-        <Groups rows={shown} desc empty="Nothing matches. Try another day, lab or status."
-          meta={(g) => { const k = attCounts(g.rows); return `${g.rows.length} students · ${k.present} attended · ${k.absent} absent · ${k.none} not marked`; }}
-          classActions={(list) => { const k = attCounts(list); return <span className="text-[11px] text-black/60"><b className="text-[#15803d]">{k.present}</b> attended · <b className="text-red-600">{k.absent}</b> absent · {k.none} not marked</span>; }}
-          row={(a) => (<><Person p={a} /><span className="flex items-center gap-2"><span className="text-black/60">{a.reason}</span><Badge s={a.status} /><AttBadge att={a.att} /></span></>)} />
-      )}
+      <Groups rows={shown} desc empty="Nothing matches. Try another day, lab or status."
+        meta={(g) => { const k = attCounts(g.rows); return `${g.rows.length} students · ${k.present} attended · ${k.absent} absent · ${k.none} not marked`; }}
+        classActions={(list) => { const k = attCounts(list); return <span className="text-[11px] text-black/60"><b className="text-[#15803d]">{k.present}</b> attended · <b className="text-red-600">{k.absent}</b> absent · {k.none} not marked</span>; }}
+        row={(a) => (<><Person p={a} /><span className="flex items-center gap-2"><span className="text-black/60">{a.reason}</span><Badge s={a.status} /><AttBadge att={a.att} /></span></>)} />
     </div>
   );
 }
@@ -1930,16 +1837,13 @@ function TrendsSection({ categories }) {
 
   return (
     <section id="trends" className="scroll-mt-16 bg-black/[0.03]">
-      <div className={`${WRAP} py-24`}>
-        <Reveal>
-          <span className="inline-flex items-center gap-2 rounded-[6px] border border-black/10 bg-white px-3 py-1.5 text-xs font-medium">
-            <span className="h-1.5 w-1.5 rounded-[2px] bg-[#f97316]" />Lost and found
-          </span>
-          <Heading title="Lost something? Look here first." className="mt-4 max-w-xl" />
+      <div className={`${WRAP} py-16`}>
+        <div>
+          <Heading title="Lost something? Look here first." className="max-w-xl" />
           <p className="mt-3 max-w-xl text-xs leading-relaxed text-black/60">
             Everything found at school is posted here by the Minister of Communication. Tap your item and contact the minister to get it back.
           </p>
-        </Reveal>
+        </div>
 
         {list.length > 0 && (
           <div className="mt-8 grid gap-4 md:grid-cols-[1fr_320px] md:items-center">
@@ -2118,7 +2022,7 @@ function TrendsManager({ user, opts }) {
   };
   const create = async (body) => {
     await api('/api/trends', 'POST', body);
-    setFormOpen(false); setOk(true); setMsg('Posted. Everyone can now see it on the home page under Trends.'); load();
+    setFormOpen(false); setOk(true); setMsg('Posted. Everyone can now see it on the home page under Lost and found.'); load();
   };
   const update = async (body) => {
     await api(`/api/trends/${edit.id}`, 'PUT', body);

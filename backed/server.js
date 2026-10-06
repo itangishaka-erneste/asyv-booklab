@@ -311,6 +311,35 @@ app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
 }));
 app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM sessions WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
+// ---------- Public lab overview (no login) ----------
+// The home page shows every lab, its computers and the seats left for one day, so people can look
+// before they sign in. ?date=YYYY-MM-DD picks the day (today when missing). Only counts are shared, never names.
+const HM = t => String(t || '').slice(0, 5);
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+app.get('/api/overview', wrap(async (req, res) => {
+  const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : new Date().toISOString().slice(0, 10);
+  const [labRows, sessions] = await Promise.all([query('SELECT id, name, pcs FROM labs ORDER BY name'), listSessions()]);
+  const dayOf = s => String(s.date).slice(0, 10);
+  const today = sessions.filter(s => dayOf(s) === date);
+  const labs = labRows.map(l => {
+    const list = today.filter(s => s.labId == l.id)
+      .map(s => ({ id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken: Math.max(s.seats - s.left, 0) }))
+      .sort((a, b) => a.from.localeCompare(b.from));
+    const seats = list.reduce((n, s) => n + s.seats, 0), free = list.reduce((n, s) => n + s.left, 0);
+    const status = !list.length ? 'none' : free === 0 ? 'full' : free / seats <= 0.3 ? 'limited' : 'available';
+    return { id: l.id, name: l.name, pcs: l.pcs, status, seats, free, sessions: list };
+  });
+  res.json({
+    date,
+    days: [...new Set(sessions.map(dayOf))].sort(),
+    totals: {
+      labs: labs.length, computers: labs.reduce((n, l) => n + l.pcs, 0),
+      times: today.length, free: labs.reduce((n, l) => n + l.free, 0), seats: labs.reduce((n, l) => n + l.seats, 0),
+    },
+    labs,
+  });
+}));
+
 // ---------- Applications ----------
 // A person can never hold two live bookings for the same lab time, or for two lab times that overlap on the same day.
 app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
