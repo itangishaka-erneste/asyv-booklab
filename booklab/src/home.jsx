@@ -900,12 +900,25 @@ function Auth({ onDone, onBack }) {
 
   return (
     <div className="fixed inset-0 grid overflow-hidden bg-white text-[13px] text-[#0b0f1a] lg:grid-cols-[2fr_3fr]">
-      <aside className="relative hidden h-full overflow-hidden bg-cover bg-center lg:block" style={{ backgroundImage: `url(${dashb})` }}>
+      <aside className="relative hidden h-full overflow-hidden bg-cover bg-center lg:block" style={{
+        backgroundImage: `linear-gradient(180deg, rgba(11,15,26,0.55), rgba(11,15,26,0.75)), url("https://images.unsplash.com/photo-1556157382-97eda2d62296?auto=format&fit=crop&w=1200&q=80")`,
+        backgroundPosition: 'center',
+        backgroundSize: 'cover',
+      }}>
         <div className="relative h-full flex flex-col justify-between p-10 text-white">
           <Logo light />
-          <div className="max-w-sm space-y-3">
-            <h2 className="text-2xl font-bold leading-tight tracking-tight">Your seat is waiting.</h2>
-            <p className="text-xs text-white/75 leading-relaxed">Book a computer and see seats left in real time.</p>
+          <div className="max-w-sm space-y-4">
+            <div className="overflow-hidden rounded-[12px] border border-white/15 bg-white/8 backdrop-blur-sm shadow-lg">
+              <img
+                src="https://images.unsplash.com/photo-1556157382-97eda2d62296?auto=format&fit=crop&w=900&q=80"
+                alt="School minister"
+                className="h-44 w-full object-cover object-center"
+              />
+            </div>
+            <div className="space-y-3">
+              <h2 className="text-2xl font-bold leading-tight tracking-tight">Your seat is waiting.</h2>
+              <p className="text-xs text-white/75 leading-relaxed">Book a computer and see seats left in real time.</p>
+            </div>
           </div>
         </div>
       </aside>
