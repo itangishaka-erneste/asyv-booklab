@@ -604,7 +604,7 @@ function Hero({ onLogin }) {
       <div aria-hidden="true" className="pointer-events-none absolute inset-0"
         style={{ background: 'radial-gradient(circle at 85% 15%, rgba(59,130,246,0.16), transparent 45%), radial-gradient(circle at 10% 90%, rgba(22,163,74,0.12), transparent 45%)' }} />
       <div className={`${WRAP} relative`}>
-        <div className="flex min-h-[calc(100svh-4rem)] flex-col justify-center py-12">
+        <div className="flex min-h-[calc(100svh-4rem)] flex-col justify-center py-6">
           <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_1fr]">
             <div className="lb-in">
               <span className="inline-flex items-center gap-2 rounded-[6px] border border-black/15 bg-[#0b0f1a] px-3 py-1.5 text-[11px] font-semibold text-white">
