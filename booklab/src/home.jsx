@@ -490,7 +490,7 @@ function Spotlight({ labs, loading }) {
         </svg>
       </div>
 
-      <div className="lb-float relative rounded-[6px] border border-black/10 bg-green-50 p-5 text-white shadow-2xl">
+      <div className="lb-float relative rounded-[6px] border border-black/10 bg-black p-5 text-white shadow-2xl">
         <div className="mb-4 flex items-center justify-between rounded bg-green-700 px-2 py-1 text-[11px] font-normal text-white">
           <span className="flex items-center gap-2"><span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />Live status · today</span>
           {labs.length > 0 && <span>{(i % labs.length) + 1} / {labs.length}</span>}
