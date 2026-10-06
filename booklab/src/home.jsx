@@ -490,7 +490,7 @@ function Spotlight({ labs, loading }) {
         </svg>
       </div>
 
-      <div className="lb-float relative rounded-[6px] border border-black/10 bg-green-50 p-5 text-[#0b0f1a] shadow-2xl">
+      <div className="lb-float relative rounded-[6px] border border-black/10 bg-green-50 p-5 text-white shadow-2xl">
         <div className="mb-4 flex items-center justify-between rounded bg-green-700 px-2 py-1 text-[11px] font-normal text-white">
           <span className="flex items-center gap-2"><span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />Live status · today</span>
           {labs.length > 0 && <span>{(i % labs.length) + 1} / {labs.length}</span>}
@@ -502,8 +502,8 @@ function Spotlight({ labs, loading }) {
           <div key={lab.id} className="lb-in">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="truncate text-lg font-bold">{lab.name}</h3>
-                <p className="mt-0.5 text-xs text-black/60">{lab.pcs} computers</p>
+                <h3 className="truncate text-lg font-bold text-white">{lab.name}</h3>
+                <p className="mt-0.5 text-xs text-white/70">{lab.pcs} computers</p>
               </div>
               <span className={`rounded-[4px] px-2 py-1 text-[11px] font-semibold ${SPOT_STATUS[lab.status]}`}>{STATUS_TEXT[lab.status]}</span>
             </div>
@@ -517,23 +517,23 @@ function Spotlight({ labs, loading }) {
                 </svg>
                 <div className="absolute inset-0 grid place-items-center text-center">
                   <div>
-                    <div className="text-3xl font-extrabold leading-none">{lab.free}</div>
-                    <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-black/55">free seats</div>
+                    <div className="text-3xl font-extrabold leading-none text-white">{lab.free}</div>
+                    <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-white">free seats</div>
                   </div>
                 </div>
               </div>
 
-              <ul className="space-y-2 text-xs">
-                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-black/70"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#16a34a]" />Free</span><b>{lab.free}</b></li>
-                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-black/70"><i className="lb-pulse inline-block h-2.5 w-2.5 rounded-[2px] bg-[#3b82f6]" />Waiting for approval</span><b>{lab.waiting}</b></li>
-                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-black/70"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-slate-400" />Taken</span><b>{lab.taken}</b></li>
+              <ul className="space-y-2 text-xs text-white">
+                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-white/80"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#16a34a]" />Free</span><b className="text-white">{lab.free}</b></li>
+                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-white/80"><i className="lb-pulse inline-block h-2.5 w-2.5 rounded-[2px] bg-[#3b82f6]" />Waiting for approval</span><b className="text-white">{lab.waiting}</b></li>
+                <li className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-white/80"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-slate-400" />Taken</span><b className="text-white">{lab.taken}</b></li>
               </ul>
             </div>
 
             <div className="mt-5">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-black/50">Lab times today</p>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/70">Lab times today</p>
               {lab.sessions.length === 0 ? (
-                <p className="rounded-[6px] bg-black/5 px-3 py-4 text-center text-xs text-black/55">No lab time today.</p>
+                <p className="rounded-[6px] bg-black/5 px-3 py-4 text-center text-xs text-white/70">No lab time today.</p>
               ) : (
                 <div className="flex h-24 items-end gap-2">
                   {lab.sessions.slice(0, 6).map((s, k) => {
@@ -545,7 +545,7 @@ function Spotlight({ labs, loading }) {
                           <div className="lb-grow bg-[#3b82f6]" style={{ height: w + '%', animationDelay: `${0.15 * k}s` }} />
                           <div className="lb-grow bg-slate-200" style={{ height: t + '%', animationDelay: `${0.15 * k + 0.1}s` }} />
                         </div>
-                        <span className="mt-1 block truncate text-[10px] text-black/55">{s.from}</span>
+                        <span className="mt-1 block truncate text-[10px] text-white/70">{s.from}</span>
                       </div>
                     );
                   })}
@@ -597,7 +597,7 @@ function Hero({ onLogin }) {
   const { data } = useOverview(today());
   const labs = data?.labs || [];
   const tot = data?.totals || {};
-  const chips = [[tot.free ?? '-', 'free seats today', 'text-[#4ade80]'], [tot.waiting ?? '-', 'waiting for approval', 'text-[#93c5fd]'], [tot.labs ?? '-', 'labs', 'text-white']];
+  const chips = [[tot.free ?? '-', 'free seats today', 'text-white'], [tot.waiting ?? '-', 'waiting for approval', 'text-white'], [tot.labs ?? '-', 'labs', 'text-white']];
 
   return (
     <section className="relative overflow-hidden bg-white text-[#0b0f1a]">
@@ -622,7 +622,7 @@ function Hero({ onLogin }) {
                 {chips.map(([v, t, c]) => (
                   <div key={t} className="rounded-[6px] border border-black/15 bg-[#0b0f1a] p-3">
                     <div className={`text-2xl font-bold ${c}`}>{v}</div>
-                    <div className="mt-0.5 text-[11px] leading-tight text-black/55">{t}</div>
+                    <div className="mt-0.5 text-[11px] leading-tight text-white/70">{t}</div>
                   </div>
                 ))}
               </div>
@@ -651,7 +651,7 @@ const PcGrid = ({ s }) => (
         const taken = i < s.taken;
         const waiting = !taken && i < s.taken + s.waiting;
         const look = taken
-          ? 'border-black/10 bg-black/[0.06] text-black/40'
+          ? 'border-orangered/50 bg-orangered/10 text-orangered'
           : waiting
             ? 'lb-pulse border-orange-500/50 bg-orange-500/10 text-orange-700'
             : 'border-[#16a34a]/40 bg-[#16a34a]/10 text-[#15803d]';
