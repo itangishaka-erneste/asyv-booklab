@@ -34,7 +34,6 @@ async function api(path, method = 'GET', body) {
   return data;
 }
 
-// Logged-in live updates (JWT sent).
 function useLive(handlers) {
   const ref = useRef(handlers);
   ref.current = handlers;
@@ -45,7 +44,6 @@ function useLive(handlers) {
   }, []);
 }
 
-// Guests on the public page (no token).
 function usePublicLive(handlers) {
   const ref = useRef(handlers);
   ref.current = handlers;
@@ -56,8 +54,9 @@ function usePublicLive(handlers) {
   }, []);
 }
 
-// Shared palette: orange for primary actions, with green, blue, and ink accents.
-const C = { or: '#ff4500', dark: '#b32d00', soft: '#ff9a73', pale: '#ffd9c9', grid: '#e2e8f0', ink: '#111827', green: '#15803d', blue: '#2563eb' };
+// Palette: white is the base. Green = go / free / main action. Orangered = waiting, full, delete, highlights.
+// Small touches: blue for links and information, black for taken places and key text.
+const C = { g: '#16a34a', or: '#ff4500', bl: '#2563eb', ink: '#111827', pale: '#bbf7d0', grid: '#eef2ee', gray: '#e5e7eb' };
 
 /* ================================================================== */
 /* 2. SCHOOL RULES                                                     */
@@ -83,7 +82,6 @@ const match = (q, ...fields) => {
   const hay = fields.join(' ').toLowerCase();
   return String(q || '').toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
 };
-// Same rule as the server: same words in any order, ignoring case and accents.
 const nameKey = (n) => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
 
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -96,6 +94,9 @@ const niceDay = (s) => {
 };
 const dayOf = (s) => String(s.date).slice(0, 10);
 const fmt = (s) => `${s.lab} · ${s.date} ${s.from}–${s.to}`;
+// Who a lab time is for: a class, a group, or everyone (empty text).
+const forLabel = (s) => s.forGroupName || s.forClass || '';
+const audOf = (s) => (s.forClass ? `c:${s.forClass}` : s.forGroup ? `g:${s.forGroup}` : '');
 
 /* ================================================================== */
 /* 3. SMALL UI KIT                                                     */
@@ -126,26 +127,25 @@ const Icon = ({ n, className = 'h-4 w-4' }) => (
   </svg>
 );
 
-// Shared button variants combine the primary orange with blue, green, and neutral ink.
+// ink = green (main action), or = orangered (reject, delete, highlight), bl = blue (small), dk = black (small), w = white
 const Btn = ({ c = 'ink', className = '', ...p }) => {
   const look = {
-    ink: 'bg-[#ff4500] text-white',
-    or: 'bg-[#b32d00] text-white',
-    gr: 'bg-[#15803d] text-white',
-    blue: 'bg-[#2563eb] text-white',
-    black: 'bg-[#111827] text-white',
-    w: 'bg-white text-[#111827] border border-slate-300',
+    ink: 'bg-[#16a34a] text-white',
+    or: 'bg-[#ff4500] text-white',
+    bl: 'bg-[#2563eb] text-white',
+    dk: 'bg-[#111827] text-white',
+    w: 'bg-white text-[#111827] border border-black/20 hover:bg-black/5',
   }[c];
   return (
     <button
       type="button"
-      className={`px-4 py-2 text-xs font-semibold rounded-[6px] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ff4500] disabled:opacity-40 disabled:cursor-not-allowed ${look} ${className}`}
+      className={`px-4 py-2 text-xs font-semibold rounded-[6px] hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#16a34a] disabled:opacity-40 disabled:cursor-not-allowed ${look} ${className}`}
       {...p}
     />
   );
 };
 
-const FIELD = 'w-full px-3 py-2 text-xs rounded-[6px] border border-slate-300 bg-white focus:outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#2563eb]/15 disabled:bg-black/5';
+const FIELD = 'w-full px-3 py-2 text-xs rounded-[6px] border border-black/20 bg-white focus:outline-none focus:border-[#16a34a] focus:ring-2 focus:ring-[#16a34a]/20 disabled:bg-black/5';
 const Inp = ({ className = '', ...p }) => <input className={`${FIELD} ${className}`} {...p} />;
 const Txt = ({ className = '', ...p }) => <textarea rows={4} className={`${FIELD} ${className}`} {...p} />;
 const Sel = ({ o = [], className = '', ...p }) => (
@@ -159,7 +159,7 @@ const Sel = ({ o = [], className = '', ...p }) => (
 );
 
 const Card = ({ t, sub, action, children }) => (
-  <section className="rounded-[6px] border border-slate-200 bg-white p-5 mb-6 shadow-sm">
+  <section className="rounded-[6px] border border-black/10 bg-white p-5 mb-6">
     {(t || action) && (
       <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
         <div>
@@ -177,7 +177,7 @@ const Alert = ({ ok, children }) => (
   <p
     role={ok ? 'status' : 'alert'}
     className={`rounded-[6px] border px-4 py-3 mb-5 text-xs font-medium ${
-      ok ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-800'
+      ok ? 'border-[#16a34a]/40 bg-[#16a34a]/5 text-[#15803d]' : 'border-[#ff4500]/40 bg-[#ff4500]/5 text-[#c2310a]'
     }`}
   >
     {children}
@@ -185,26 +185,28 @@ const Alert = ({ ok, children }) => (
 );
 
 const BADGE = {
-  approved: 'bg-green-700 text-white',
-  pending: 'bg-[#ff4500]/15 text-[#b32d00]',
+  approved: 'bg-[#16a34a] text-white',
+  pending: 'bg-[#ff4500]/10 text-[#c2310a]',
   rejected: 'bg-black/10 text-black/55',
-  present: 'bg-green-700 text-white',
-  absent: 'bg-red-100 text-red-800',
-  active: 'bg-blue-600 text-white',
-  returned: 'bg-[#ff9a73]/30 text-[#b32d00]',
+  present: 'bg-[#16a34a] text-white',
+  absent: 'bg-[#ff4500]/10 text-[#c2310a]',
+  active: 'bg-[#16a34a] text-white',
+  returned: 'bg-[#2563eb]/10 text-[#1d4ed8]',
   removed: 'bg-black/10 text-black/55',
-  available: 'bg-green-100 text-green-800',
-  limited: 'bg-[#ff9a73]/30 text-[#b32d00]',
-  requested: 'bg-[#ff9a73]/30 text-[#b32d00]',
-  full: 'bg-slate-800 text-white',
-  draft: 'bg-[#ff9a73]/30 text-[#b32d00]',
-  published: 'bg-blue-600 text-white',
+  available: 'bg-[#16a34a]/10 text-[#15803d]',
+  limited: 'bg-[#ff4500]/10 text-[#c2310a]',
+  requested: 'bg-[#ff4500]/10 text-[#c2310a]',
+  full: 'bg-[#ff4500] text-white',
+  draft: 'bg-[#2563eb]/10 text-[#1d4ed8]',
+  published: 'bg-[#16a34a]/10 text-[#15803d]',
   none: 'bg-black/5 text-black/60',
 };
 const Badge = ({ s, children }) => (
   <span className={`inline-block rounded-[4px] px-2 py-0.5 text-[11px] font-semibold capitalize ${BADGE[s] || 'bg-black/5 text-black/60'}`}>{children || s}</span>
 );
 const AttBadge = ({ att }) => <Badge s={att || 'none'}>{att || 'Not marked'}</Badge>;
+// Small tag showing who a lab time is for.
+const ForTag = ({ s }) => (forLabel(s) ? <span className="rounded-[4px] bg-[#ff4500]/10 px-2 py-0.5 text-[11px] font-semibold text-[#c2310a]">For {forLabel(s)}</span> : null);
 
 const Field = ({ l, hint, children }) => (
   <label className="block text-xs font-medium">
@@ -217,18 +219,19 @@ const Field = ({ l, hint, children }) => (
 const Empty = ({ children }) => <p className="py-6 text-center text-sm text-black/50">{children}</p>;
 
 const Logo = ({ light }) => (
-  <div className={`inline-flex items-center gap-3 text-base font-extrabold tracking-tight ${light ? 'text-white' : 'text-[#b32d00]'}`}>
-    <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[6px] bg-white">
+  <div className="inline-flex items-center gap-3 text-base font-extrabold tracking-tight">
+    <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[6px] border border-black/10 bg-white">
       <img src={logo} alt="Logo" className="h-9 w-9 object-contain" />
     </span>
-    <span className="text-base font-extrabold leading-none sm:text-lg">Asyv_lms</span>
+    <span className={`text-base sm:text-lg ${light ? 'text-white' : 'text-[#111827]'}`}>
+      Asyv<span className="text-[#ff4500]">_</span><span className={light ? 'text-white' : 'text-[#16a34a]'}>lms</span>
+    </span>
   </div>
 );
 
 const initials = (name) => String(name || '?').split(' ').filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 const gravatar = (gid) => (gid ? `https://www.gravatar.com/avatar/${gid}?s=96&d=404` : '');
 
-// Photo order: Google picture, then Gravatar, then initials.
 const Avatar = ({ name, picture, gid, className = 'h-10 w-10 text-xs' }) => {
   const srcs = [picture, gravatar(gid)].filter(Boolean);
   const [i, setI] = useState(0);
@@ -236,7 +239,7 @@ const Avatar = ({ name, picture, gid, className = 'h-10 w-10 text-xs' }) => {
   if (i < srcs.length) {
     return <img src={srcs[i]} alt="" referrerPolicy="no-referrer" onError={() => setI((n) => n + 1)} className={`shrink-0 rounded-full bg-black/10 object-cover ${className}`} />;
   }
-  return <span className={`grid shrink-0 place-items-center rounded-full bg-[#ff4500] font-bold text-white ${className}`}>{initials(name)}</span>;
+  return <span className={`grid shrink-0 place-items-center rounded-full bg-[#16a34a] font-bold text-white ${className}`}>{initials(name)}</span>;
 };
 
 const Person = ({ p, sub, className = 'h-9 w-9 text-xs' }) => (
@@ -268,12 +271,11 @@ const SearchBox = ({ value, onChange, placeholder = 'Search by name or email' })
   </div>
 );
 
-// items: [value, label, count?]
 const Pills = ({ value, onChange, items }) => (
   <div className="flex flex-wrap gap-2">
     {items.map(([v, t, n]) => (
       <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}
-        className={`rounded-[6px] border px-3 py-1.5 text-xs font-semibold ${value === v ? 'border-[#ff4500] bg-[#ff4500] text-white' : 'border-[#ff4500]/30 bg-white text-[#b32d00] hover:bg-[#ff4500]/5'}`}>
+        className={`rounded-[6px] border px-3 py-1.5 text-xs font-semibold ${value === v ? 'border-[#16a34a] bg-[#16a34a] text-white' : 'border-black/15 bg-white text-black/70 hover:bg-black/5'}`}>
         {t}{n != null && <span className="ml-1.5 opacity-70">{n}</span>}
       </button>
     ))}
@@ -298,17 +300,17 @@ const Row = ({ children }) => (
   <div className="flex flex-wrap justify-between items-center border-t border-black/10 py-3.5 gap-3">{children}</div>
 );
 
+// tone: gr = green, or = orangered
 const Stat = ({ v, t, tone }) => {
-  const color = { or: 'text-[#ff4500]', dk: 'text-[#b32d00]' }[tone] || 'text-[#2b0f06]';
+  const color = { gr: 'text-[#16a34a]', or: 'text-[#ff4500]' }[tone] || 'text-[#111827]';
   return (
-    <div className="rounded-[6px] border border-[#ff4500]/15 bg-white p-4">
+    <div className="rounded-[6px] border border-black/10 bg-white p-4">
       <div className={`text-2xl font-bold ${color}`}>{v}</div>
       <div className="mt-1 text-xs font-medium text-black/60">{t}</div>
     </div>
   );
 };
 
-// Bookings grouped by lab time, then by class.
 function groupApps(rows, desc = false) {
   const sessions = new Map();
   rows.forEach((a) => {
@@ -334,14 +336,14 @@ function Grouped({ rows, desc, empty, meta, classActions, row }) {
   const groups = groupApps(rows, desc);
   if (!groups.length) return <Card><Empty>{empty}</Empty></Card>;
   return groups.map((g) => (
-    <section key={g.sid} className="mb-5 overflow-hidden rounded-[6px] border border-[#ff4500]/15 bg-white">
-      <header className="flex flex-wrap items-center justify-between gap-3 bg-[#ff4500] px-4 py-3 text-white">
-        <div className="text-xs"><b className="text-sm">{g.lab}</b><span className="ml-2 text-white/80">{g.date} · {g.from}–{g.to}</span></div>
-        <div className="text-xs text-white/90">{meta ? meta(g) : `${g.rows.length} students`}</div>
+    <section key={g.sid} className="mb-5 overflow-hidden rounded-[6px] border border-black/10 border-l-4 border-l-[#16a34a] bg-white">
+      <header className="flex flex-wrap items-center justify-between gap-3 bg-[#f0fdf4] px-4 py-3">
+        <div className="text-xs"><b className="text-sm">{g.lab}</b><span className="ml-2 text-black/55">{g.date} · {g.from}–{g.to}</span></div>
+        <div className="text-xs text-black/60">{meta ? meta(g) : `${g.rows.length} students`}</div>
       </header>
       {g.classes.map(([c, list]) => (
         <div key={c}>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-black/10 bg-[#ff4500]/5 px-4 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-black/10 bg-black/[0.03] px-4 py-2">
             <b className="text-xs">{c} <span className="font-normal text-black/50">· {list.length} {list.length === 1 ? 'student' : 'students'}</span></b>
             {classActions?.(list, g, c)}
           </div>
@@ -374,11 +376,11 @@ const Heading = ({ title, className = '' }) => (
 
 function Header({ onLogin }) {
   return (
-    <header className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b border-[#ff4500]/15">
+    <header className="sticky top-0 z-20 border-b border-black/10 bg-white/95 backdrop-blur">
       <div className={`${WRAP} h-16 flex items-center justify-between`}>
         <Logo />
         <nav className="hidden md:flex gap-2 text-xs font-medium">
-          {NAV.map(([h, t]) => <a key={h} href={`#${h}`} className="px-3 py-2 rounded-[6px] text-[#b32d00] hover:bg-[#ff4500]/10">{t}</a>)}
+          {NAV.map(([h, t]) => <a key={h} href={`#${h}`} className="px-3 py-2 rounded-[6px] text-black/70 hover:bg-black/5">{t}</a>)}
         </nav>
         <Btn onClick={onLogin}>Log in</Btn>
       </div>
@@ -386,7 +388,6 @@ function Header({ onLogin }) {
   );
 }
 
-// Public overview of one day. Refreshes on server signals and every 30 seconds.
 function useOverview(day) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
@@ -426,11 +427,10 @@ const HERO_CSS = `
 @media (prefers-reduced-motion:reduce){.lb-in,.lb-in2,.lb-in3,.lb-ken,.lb-float,.lb-float2,.lb-pulse,.lb-scan,.lb-shift,.lb-grow{animation:none!important}}
 `;
 
-// The picture of the lab. Falls back to an orangered panel when the file is missing.
 const LabImage = ({ className = '', ken }) => {
   const [bad, setBad] = useState(false);
   if (bad) {
-    return <div className={`grid place-items-center bg-gradient-to-br from-[#ff4500] to-[#b32d00] text-white/80 ${className}`}><Icon n="Labs" className="h-10 w-10" /></div>;
+    return <div className={`grid place-items-center bg-[#f0fdf4] text-[#16a34a] ${className}`}><Icon n="Labs" className="h-10 w-10" /></div>;
   }
   return <img src={LAB_IMG} alt="Computer lab" onError={() => setBad(true)} className={`object-cover ${ken ? 'lb-ken' : ''} ${className}`} />;
 };
@@ -441,42 +441,39 @@ function Hero({ onLogin }) {
   const labs = data?.labs || [];
 
   return (
-    <section className="relative overflow-hidden bg-[#fff8f5] text-[#2b0f06]">
+    <section className="relative overflow-hidden bg-white text-[#111827]">
       <div aria-hidden="true" className="pointer-events-none absolute inset-0"
-        style={{ background: 'radial-gradient(circle at 90% 10%, rgba(255,69,0,0.14), transparent 45%), radial-gradient(circle at 5% 95%, rgba(255,69,0,0.10), transparent 45%)' }} />
+        style={{ background: 'radial-gradient(circle at 92% 8%, rgba(22,163,74,0.10), transparent 40%), radial-gradient(circle at 4% 96%, rgba(255,69,0,0.07), transparent 40%)' }} />
       <div className={`${WRAP} relative`}>
         <div className="grid min-h-[calc(100svh-4rem)] items-center gap-12 py-10 lg:grid-cols-[1fr_1.1fr]">
           <div>
-            <span className="lb-in inline-flex items-center gap-2 rounded-[6px] bg-[#ff4500] px-3 py-1.5 text-[11px] font-semibold text-white">
-              <span className="lb-pulse inline-block h-2 w-2 rounded-full bg-white" />Live places, no refresh needed
+            <span className="lb-in inline-flex items-center gap-2 rounded-[6px] border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[11px] font-semibold text-[#15803d]">
+              <span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />Live places, no refresh needed
             </span>
             <h1 className="lb-in2 mt-5 max-w-xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
-            <p className="lb-in3 mt-5 max-w-md text-sm leading-relaxed text-black/65">
-              See the places left in each lab for any day, then log in and apply.
-            </p>
+            <p className="lb-in3 mt-5 max-w-md text-sm leading-relaxed text-black/65">See the places left in each lab for any day, then log in and apply.</p>
             <div className="lb-in3 mt-7 flex flex-wrap items-center gap-3">
-              <a href="#labs" className="inline-flex items-center rounded-[6px] bg-[#ff4500] px-5 py-2.5 text-xs font-semibold text-white hover:opacity-90">See the labs</a>
+              <a href="#labs" className="inline-flex items-center rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white hover:opacity-90">See the labs</a>
               <Btn c="w" onClick={onLogin}>Log in with Google</Btn>
             </div>
           </div>
 
-          {/* the lab picture with live numbers floating on it */}
           <div className="relative mx-auto w-full max-w-xl lb-in2">
-            <div aria-hidden="true" className="lb-shift absolute -bottom-4 -right-4 h-full w-full rounded-[6px] bg-[#ff4500]/20" />
-            <div className="relative aspect-[4/3] overflow-hidden rounded-[6px] shadow-2xl">
+            <div aria-hidden="true" className="lb-shift absolute -bottom-4 -right-4 h-full w-full rounded-[6px] bg-[#16a34a]/15" />
+            <div className="relative aspect-[4/3] overflow-hidden rounded-[6px] border border-black/10 shadow-xl">
               <LabImage ken className="h-full w-full" />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#b32d00]/75 via-[#ff4500]/10 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
               <span aria-hidden="true" className="lb-scan absolute inset-x-0 h-20 bg-gradient-to-b from-transparent via-white/30 to-transparent" />
-              <span className="absolute left-4 top-4 flex items-center gap-2 rounded-[6px] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#b32d00]">
+              <span className="absolute left-4 top-4 flex items-center gap-2 rounded-[6px] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#111827]">
                 <span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#ff4500]" />Today
               </span>
               <div className="lb-float absolute bottom-4 left-4 rounded-[6px] bg-white px-4 py-3 shadow-lg">
-                <div className="text-2xl font-extrabold leading-none text-[#ff4500]">{tot.free ?? '-'}</div>
+                <div className="text-2xl font-extrabold leading-none text-[#16a34a]">{tot.free ?? '-'}</div>
                 <div className="mt-1 text-[11px] font-medium text-black/60">places free today</div>
               </div>
-              <div className="lb-float2 absolute bottom-4 right-4 rounded-[6px] bg-[#b32d00] px-4 py-3 text-white shadow-lg">
-                <div className="text-2xl font-extrabold leading-none">{tot.labs ?? '-'}</div>
-                <div className="mt-1 text-[11px] text-white/80">{tot.labs === 1 ? 'lab' : 'labs'}</div>
+              <div className="lb-float2 absolute bottom-4 right-4 rounded-[6px] bg-white px-4 py-3 shadow-lg">
+                <div className="text-2xl font-extrabold leading-none text-[#ff4500]">{tot.waiting ?? '-'}</div>
+                <div className="mt-1 text-[11px] font-medium text-black/60">waiting for approval</div>
               </div>
             </div>
             {labs.length > 0 && (
@@ -485,8 +482,8 @@ function Hero({ onLogin }) {
                   const p = l.seats ? Math.max(Math.round((l.free / l.seats) * 100), 6) : 6;
                   return (
                     <div key={l.id} className="flex min-w-0 flex-1 flex-col items-center gap-1" title={`${l.name}: ${l.free} free`}>
-                      <div className="flex h-14 w-full items-end overflow-hidden rounded-[3px] bg-[#ff4500]/10">
-                        <div className="lb-grow w-full bg-[#ff4500]" style={{ height: p + '%', animationDelay: `${k * 0.1}s` }} />
+                      <div className="flex h-14 w-full items-end overflow-hidden rounded-[3px] bg-black/5">
+                        <div className="lb-grow w-full bg-[#16a34a]" style={{ height: p + '%', animationDelay: `${k * 0.1}s` }} />
                       </div>
                       <span className="w-full truncate text-center text-[10px] text-black/55">{l.name}</span>
                     </div>
@@ -501,7 +498,7 @@ function Hero({ onLogin }) {
   );
 }
 
-// Every place of a lab time as a small square: free, waiting for approval, taken.
+// Free = green, waiting for approval = orangered, taken = black.
 const PcGrid = ({ s }) => (
   <div className="mt-3">
     <div className="grid grid-cols-[repeat(auto-fill,minmax(52px,1fr))] gap-1.5">
@@ -509,10 +506,10 @@ const PcGrid = ({ s }) => (
         const taken = i < s.taken;
         const waiting = !taken && i < s.taken + s.waiting;
         const look = taken
-          ? 'border-[#b32d00] bg-[#b32d00] text-white'
+          ? 'border-[#111827] bg-[#111827] text-white'
           : waiting
-            ? 'lb-pulse border-[#ff9a73] bg-[#ff9a73]/30 text-[#b32d00]'
-            : 'border-[#ff4500]/40 bg-[#ff4500]/10 text-[#b32d00]';
+            ? 'lb-pulse border-[#ff4500] bg-[#ff4500]/10 text-[#c2310a]'
+            : 'border-[#16a34a]/50 bg-[#16a34a]/10 text-[#15803d]';
         return (
           <div key={i} title={`Place ${i + 1}: ${taken ? 'taken' : waiting ? 'waiting for approval' : 'free'}`}
             className={`rounded-[4px] border px-1 py-1.5 text-center text-[10px] font-semibold ${look}`}>
@@ -521,25 +518,25 @@ const PcGrid = ({ s }) => (
         );
       })}
     </div>
-    {s.over > 0 && <p className="mt-2 text-[11px] font-bold text-[#b32d00]">{s.over} more student{s.over === 1 ? ' is' : 's are'} in the queue.</p>}
+    {s.over > 0 && <p className="mt-2 text-[11px] font-bold text-[#c2310a]">{s.over} more student{s.over === 1 ? ' is' : 's are'} in the queue.</p>}
   </div>
 );
 
 const Legend3 = () => (
   <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] font-medium text-black/60">
-    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#ffe3d8] ring-1 ring-[#ff4500]/40" />Free</span>
-    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#ff9a73]" />Waiting for approval</span>
-    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#b32d00]" />Taken</span>
+    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#16a34a]" />Free</span>
+    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#ff4500]" />Waiting for approval</span>
+    <span className="flex items-center gap-2"><i className="inline-block h-2.5 w-2.5 rounded-[2px] bg-[#111827]" />Taken</span>
   </div>
 );
 
 function LabCard({ lab, past, onLogin }) {
   const [open, setOpen] = useState(null);
   return (
-    <article className="group flex flex-col overflow-hidden rounded-[6px] border border-[#ff4500]/15 bg-white transition-shadow hover:shadow-lg">
+    <article className="group flex flex-col overflow-hidden rounded-[6px] border border-black/10 bg-white transition-shadow hover:shadow-lg">
       <div className="relative h-36 overflow-hidden">
         <LabImage className="h-full w-full transition-transform duration-700 group-hover:scale-110" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#b32d00]/85 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
         <div className="absolute inset-x-4 bottom-3 flex items-end justify-between gap-3 text-white">
           <div className="min-w-0">
             <h3 className="truncate text-base font-bold">{lab.name}</h3>
@@ -551,10 +548,10 @@ function LabCard({ lab, past, onLogin }) {
 
       <div className="flex-1 p-5">
         {lab.sessions.length === 0 ? (
-          <p className="rounded-[6px] bg-[#ff4500]/5 px-3 py-6 text-center text-xs text-black/55">No lab time on this day.</p>
+          <p className="rounded-[6px] bg-black/[0.03] px-3 py-6 text-center text-xs text-black/55">No lab time on this day.</p>
         ) : (
           <>
-            <p className="text-xs font-medium text-black/60"><b className="text-[#ff4500]">{lab.free}</b> places free in {lab.sessions.length} lab time{lab.sessions.length === 1 ? '' : 's'}</p>
+            <p className="text-xs font-medium text-black/60"><b className="text-[#16a34a]">{lab.free}</b> places free in {lab.sessions.length} lab time{lab.sessions.length === 1 ? '' : 's'}</p>
             {lab.sessions.map((s) => {
               const tp = s.seats ? (s.taken / s.seats) * 100 : 100;
               const wp = s.seats ? (s.waiting / s.seats) * 100 : 0;
@@ -568,17 +565,20 @@ function LabCard({ lab, past, onLogin }) {
                 <div key={s.id} className="mt-3 border-t border-black/10 pt-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <b className="text-sm">{s.from}–{s.to}</b>
-                      <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-[3px] bg-[#ffe3d8]">
-                        <div className="h-full bg-[#b32d00] transition-all duration-700" style={{ width: tp + '%' }} />
-                        <div className="h-full bg-[#ff9a73] transition-all duration-700" style={{ width: wp + '%' }} />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <b className="text-sm">{s.from}–{s.to}</b>
+                        {s.for && <span className="rounded-[4px] bg-[#ff4500]/10 px-2 py-0.5 text-[11px] font-semibold text-[#c2310a]">For {s.for}</span>}
                       </div>
-                      <div className={`mt-1 text-xs ${s.left < 1 ? 'font-bold text-[#7a1f00]' : 'font-medium text-[#b32d00]'}`}>{text}</div>
+                      <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-[3px] bg-[#16a34a]/25">
+                        <div className="h-full bg-[#111827] transition-all duration-700" style={{ width: tp + '%' }} />
+                        <div className="h-full bg-[#ff4500] transition-all duration-700" style={{ width: wp + '%' }} />
+                      </div>
+                      <div className={`mt-1 text-xs ${s.left < 1 ? 'font-bold text-[#c2310a]' : requestedFull ? 'font-bold text-[#c2310a]' : 'font-medium text-[#15803d]'}`}>{text}</div>
                     </div>
                     <div className="flex shrink-0 flex-col items-stretch gap-1.5">
                       <Btn disabled={past || s.left < 1} onClick={onLogin}>{past ? 'Past' : s.left < 1 ? 'Full' : requestedFull ? 'Join queue' : 'Apply'}</Btn>
                       <button type="button" aria-expanded={open === s.id} onClick={() => setOpen(open === s.id ? null : s.id)}
-                        className="text-[11px] font-semibold text-[#b32d00] hover:underline">
+                        className="text-[11px] font-semibold text-[#2563eb] hover:underline">
                         {open === s.id ? 'Hide places' : 'Show places'}
                       </button>
                     </div>
@@ -610,7 +610,7 @@ function LabBoard({ onLogin }) {
 
   return (
     <div>
-      <div className="rounded-[6px] border border-[#ff4500]/15 bg-white p-5">
+      <div className="rounded-[6px] border border-black/10 bg-white p-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <h3 className="text-xl font-bold">{niceDay(day)}{day === today() && <span className="ml-2 align-middle"><Badge s="active">Today</Badge></span>}</h3>
           <Legend3 />
@@ -620,7 +620,7 @@ function LabBoard({ onLogin }) {
           <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
             <span className="text-black/50">Other days with lab time:</span>
             {near.map((d) => (
-              <button key={d} type="button" onClick={() => setDay(d)} className="rounded-[6px] border border-[#ff4500]/30 bg-white px-2.5 py-1 font-semibold text-[#b32d00] hover:bg-[#ff4500]/5">{d.slice(5)}</button>
+              <button key={d} type="button" onClick={() => setDay(d)} className="rounded-[6px] border border-black/15 bg-white px-2.5 py-1 font-semibold text-black/70 hover:bg-black/5">{d.slice(5)}</button>
             ))}
           </div>
         )}
@@ -646,7 +646,7 @@ function LabBoard({ onLogin }) {
 
 function Landing({ onLogin, categories }) {
   return (
-    <div className="bg-white text-[#2b0f06] antialiased text-sm">
+    <div className="bg-white text-[#111827] antialiased text-sm">
       <style>{HERO_CSS}</style>
       <Header onLogin={onLogin} />
       <Hero onLogin={onLogin} />
@@ -659,9 +659,9 @@ function Landing({ onLogin, categories }) {
 
       <TrendsSection categories={categories} />
 
-      <footer className="bg-[#b32d00] text-xs text-white/80">
+      <footer className="border-t border-black/10 bg-white text-xs text-black/55">
         <div className={`${WRAP} flex flex-wrap items-center justify-between gap-4 py-8`}>
-          <Logo light />
+          <Logo />
           <span>© 2026 Computer Lab Management System</span>
         </div>
       </footer>
@@ -720,13 +720,14 @@ function Auth({ onDone, onBack }) {
   const hasGoogle = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
   return (
-    <div className="fixed inset-0 grid overflow-hidden bg-white text-[13px] text-[#2b0f06] lg:grid-cols-[2fr_3fr]">
-      <aside className="relative hidden h-full overflow-hidden bg-[#b32d00] lg:block">
+    <div className="fixed inset-0 grid overflow-hidden bg-white text-[13px] text-[#111827] lg:grid-cols-[2fr_3fr]">
+      <aside className="relative hidden h-full overflow-hidden bg-[#111827] lg:block">
         <LabImage ken className="absolute inset-0 h-full w-full" />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#ff4500]/60 to-[#b32d00]/90" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/40 to-black/80" />
         <div className="relative flex h-full flex-col justify-between p-10 text-white">
           <Logo light />
           <div className="max-w-sm space-y-3">
+            <span className="block h-1 w-12 rounded-full bg-[#ff4500]" />
             <h2 className="text-2xl font-bold leading-tight tracking-tight">Your place is waiting.</h2>
             <p className="text-xs leading-relaxed text-white/85">Book a computer and see the places left in real time.</p>
           </div>
@@ -736,7 +737,7 @@ function Auth({ onDone, onBack }) {
       <main className="flex h-full min-h-0 flex-col overflow-y-auto overscroll-contain">
         <div className="mx-auto my-auto w-full max-w-md px-6 py-8">
           <div className="flex items-center justify-between mb-8">
-            <button type="button" onClick={onBack} className="text-xs font-medium text-[#b32d00] hover:underline">← Back to home</button>
+            <button type="button" onClick={onBack} className="text-xs font-medium text-[#2563eb] hover:underline">← Back to home</button>
             <span className="lg:hidden"><Logo /></span>
           </div>
           <h1 className="text-xl font-bold tracking-tight">Welcome back</h1>
@@ -789,8 +790,8 @@ function Student({ opts }) {
       {msg && <Alert ok={ok}>{msg}</Alert>}
 
       <div className="grid grid-cols-3 gap-4 mb-6">
-        <Stat v={n('approved')} t="Approved" tone="or" />
-        <Stat v={n('pending')} t="Waiting" tone="dk" />
+        <Stat v={n('approved')} t="Approved" tone="gr" />
+        <Stat v={n('pending')} t="Waiting" tone="or" />
         <Stat v={apps.filter((a) => a.att === 'present').length} t="Times attended" />
       </div>
 
@@ -801,19 +802,22 @@ function Student({ opts }) {
           <Field l="Reason"><Sel o={opts.reasons} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
           <Pills value={view} onChange={setView} items={[['open', 'With places'], ['all', 'All']]} />
         </div>
-        {labs.length === 0 && <Empty>{sessions.length ? 'No lab time on this day. Try the day before or after.' : 'No lab time is open yet. Check back soon.'}</Empty>}
+        {labs.length === 0 && <Empty>{sessions.length ? 'No lab time on this day. Try the day before or after.' : 'No lab time is open for you yet. Check back soon.'}</Empty>}
         {labs.map((s) => {
           const pct = s.seats ? ((s.seats - s.left) / s.seats) * 100 : 100;
           const m = mine(s.id);
           return (
             <div key={s.id} className="flex justify-between items-center border-t border-black/10 py-4 gap-4">
               <div className="min-w-0 flex-1">
-                <b>{s.lab}</b>
-                <span className="text-black/60"> · {day ? '' : `${s.date} · `}{s.from}–{s.to}</span>
-                <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-[3px] bg-[#ffe3d8]">
-                  <div className="h-full bg-[#ff4500]" style={{ width: pct + '%' }} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <b>{s.lab}</b>
+                  <span className="text-black/60">{day ? '' : `${s.date} · `}{s.from}–{s.to}</span>
+                  <ForTag s={s} />
                 </div>
-                <div className={`mt-1.5 text-xs ${s.left > 0 ? 'text-[#b32d00] font-medium' : 'text-[#7a1f00] font-bold'}`}>
+                <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-[3px] bg-black/10">
+                  <div className={`h-full ${s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#ff4500]'}`} style={{ width: pct + '%' }} />
+                </div>
+                <div className={`mt-1.5 text-xs ${s.left > 0 ? 'text-[#15803d] font-medium' : 'text-[#c2310a] font-bold'}`}>
                   {s.left > 0 ? `${s.left} of ${s.seats} places left` : 'Full'}
                 </div>
               </div>
@@ -838,7 +842,6 @@ function Student({ opts }) {
 
 /* ================================================================== */
 /* 7. TEACHER / PSYCHOSOCIAL DASHBOARD                                 */
-/* A booking can be for a class or for a group the admin created.      */
 /* ================================================================== */
 
 function Teacher({ user, opts }) {
@@ -909,22 +912,22 @@ function Teacher({ user, opts }) {
 
       <div className="grid grid-cols-3 gap-4 mb-6">
         <Stat v={apps.length} t="Bookings sent" />
-        <Stat v={n('approved')} t="Approved" tone="or" />
-        <Stat v={n('pending')} t="Waiting" tone="dk" />
+        <Stat v={n('approved')} t="Approved" tone="gr" />
+        <Stat v={n('pending')} t="Waiting" tone="or" />
       </div>
 
       <Card t="Book lab time">
         <div className="grid md:grid-cols-3 gap-5">
           <Field l="Class or group"><Sel o={srcOpts} value={src} onChange={(e) => setSrc(e.target.value)} /></Field>
           <Field l="Lab time">
-            <Sel o={sessions.map((s) => ({ v: s.id, t: `${s.lab} · ${s.date} ${s.from}` }))} value={sid} onChange={(e) => setSid(e.target.value)} />
+            <Sel o={sessions.map((s) => ({ v: s.id, t: `${s.lab} · ${s.date} ${s.from}${forLabel(s) ? ` · for ${forLabel(s)}` : ''}` }))} value={sid} onChange={(e) => setSid(e.target.value)} />
           </Field>
           <Field l="Reason"><Sel o={opts.reasons} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         </div>
 
         {current && (
-          <p className={`mt-5 font-medium ${current.left ? 'text-[#b32d00]' : 'text-[#7a1f00]'}`}>
-            {current.left} of {current.seats} places left
+          <p className={`mt-5 font-medium ${current.left ? 'text-[#15803d]' : 'text-[#c2310a]'}`}>
+            {current.left} of {current.seats} places left{forLabel(current) ? ` · only for ${forLabel(current)}` : ''}
           </p>
         )}
 
@@ -940,7 +943,7 @@ function Teacher({ user, opts }) {
           {shown.length === 0 && <Empty>{students.length ? 'No student matches your search.' : 'No students here yet.'}</Empty>}
           {shown.map((s) => (
             <label key={s.name} className="flex cursor-pointer items-center gap-3 py-2.5">
-              <input type="checkbox" className="accent-[#ff4500]" checked={picked.includes(s.name)} onChange={() => toggle(s.name)} />
+              <input type="checkbox" className="accent-[#16a34a]" checked={picked.includes(s.name)} onChange={() => toggle(s.name)} />
               <Person p={s} className="h-8 w-8 text-[10px]" />
               <span className="ml-auto text-black/60">{s.className}</span>
             </label>
@@ -972,8 +975,8 @@ const ADMIN_TABS = ['Overview', 'Users', 'Groups', 'Labs', 'Schedule', 'Applicat
 const ROLE_LABEL = { admin: 'Admin', teacher: 'Teacher', psychosocial: 'Psychosocial worker', student: 'Student' };
 const ROLE_CHOICES = ['student', 'teacher', 'psychosocial'];
 
-const TICK = { fontSize: 11, fill: '#8a6a5e' };
-const TIP = { contentStyle: { borderRadius: 6, border: '1px solid #f3e3dc', fontSize: 12 }, cursor: { fill: 'rgba(255,69,0,0.06)' } };
+const TICK = { fontSize: 11, fill: '#6b7280' };
+const TIP = { contentStyle: { borderRadius: 6, border: '1px solid #e5e7eb', fontSize: 12 }, cursor: { fill: 'rgba(0,0,0,0.04)' } };
 
 const ChartCard = ({ t, sub, h = 'h-64', children }) => (
   <Card t={t} sub={sub}>
@@ -988,15 +991,15 @@ function Overview({ stats, opts }) {
   const labData = stats.labs.map((l) => ({ name: l.lab, Used: l.approved, Free: Math.max(l.seatsOffered - l.approved, 0) }));
   const dayData = Object.entries(stats.byDay).sort(([a], [b]) => a.localeCompare(b)).map(([d, v]) => ({ day: d.slice(5), Applications: v }));
   const reasonData = opts.reasons.map((r) => ({ name: r, Bookings: stats.byReason[r] || 0 }));
-  const attData = [{ name: 'Present', value: stats.attendance.present, fill: C.or }, { name: 'Absent', value: stats.attendance.absent, fill: C.pale }];
+  const attData = [{ name: 'Present', value: stats.attendance.present, fill: C.g }, { name: 'Absent', value: stats.attendance.absent, fill: C.or }];
 
   return (
     <div>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <Stat v={t.applications} t="Applications" />
-        <Stat v={t.approved} t="Approved" tone="or" />
-        <Stat v={t.pending} t="Waiting" tone="dk" />
-        <Stat v={rate === null ? '-' : rate + '%'} t="Attendance rate" tone="or" />
+        <Stat v={t.approved} t="Approved" tone="gr" />
+        <Stat v={t.pending} t="Waiting" tone="or" />
+        <Stat v={rate === null ? '-' : rate + '%'} t="Attendance rate" tone="gr" />
         <Stat v={(people.student || 0) + (people.teacher || 0) + (people.psychosocial || 0)} t="Accounts" />
       </div>
 
@@ -1008,8 +1011,8 @@ function Overview({ stats, opts }) {
             <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
             <Tooltip {...TIP} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar dataKey="Used" stackId="s" fill={C.or} />
-            <Bar dataKey="Free" stackId="s" fill={C.pale} />
+            <Bar dataKey="Used" stackId="s" fill={C.g} />
+            <Bar dataKey="Free" stackId="s" fill={C.gray} />
           </BarChart>
         </ChartCard>
 
@@ -1019,7 +1022,7 @@ function Overview({ stats, opts }) {
             <XAxis type="number" tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
             <YAxis type="category" dataKey="name" width={110} tick={TICK} axisLine={false} tickLine={false} />
             <Tooltip {...TIP} />
-            <Bar dataKey="Bookings" fill={C.dark} />
+            <Bar dataKey="Bookings" fill={C.or} />
           </BarChart>
         </ChartCard>
       </div>
@@ -1028,15 +1031,15 @@ function Overview({ stats, opts }) {
         <AreaChart data={dayData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
           <defs>
             <linearGradient id="dayFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={C.or} stopOpacity={0.35} />
-              <stop offset="100%" stopColor={C.or} stopOpacity={0.02} />
+              <stop offset="0%" stopColor={C.g} stopOpacity={0.3} />
+              <stop offset="100%" stopColor={C.g} stopOpacity={0.02} />
             </linearGradient>
           </defs>
           <CartesianGrid stroke={C.grid} vertical={false} />
           <XAxis dataKey="day" tick={TICK} axisLine={false} tickLine={false} />
           <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
           <Tooltip {...TIP} />
-          <Area type="monotone" dataKey="Applications" stroke={C.or} strokeWidth={2} fill="url(#dayFill)" />
+          <Area type="monotone" dataKey="Applications" stroke={C.g} strokeWidth={2} fill="url(#dayFill)" />
         </AreaChart>
       </ChartCard>
 
@@ -1057,8 +1060,8 @@ function Overview({ stats, opts }) {
               </div>
             </div>
             <div className="space-y-2 text-xs font-medium">
-              <p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-[2px] bg-[#ff4500]" />{stats.attendance.present} present</p>
-              <p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-[2px] bg-[#ffd9c9]" />{stats.attendance.absent} absent</p>
+              <p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-[2px] bg-[#16a34a]" />{stats.attendance.present} present</p>
+              <p><span className="mr-2 inline-block h-2.5 w-2.5 rounded-[2px] bg-[#ff4500]" />{stats.attendance.absent} absent</p>
             </div>
           </div>
         )}
@@ -1087,7 +1090,7 @@ function ClassPicker({ value, opts, onChange }) {
       </div>
       {label && (
         <p className="mt-3 text-xs text-black/60">
-          Class: <span className="rounded-[4px] bg-[#ff4500]/10 px-2 py-0.5 font-semibold text-[#b32d00]">{label}</span>
+          Class: <span className="rounded-[4px] bg-[#16a34a]/10 px-2 py-0.5 font-semibold text-[#15803d]">{label}</span>
         </p>
       )}
     </div>
@@ -1158,7 +1161,7 @@ function UsersTab({ users, opts, act }) {
         </div>
         <Btn className="mt-6" disabled={!f.name.trim() || !f.email.trim() || (f.role === 'student' && !f.grade)} onClick={create}>Add account</Btn>
         {created && (
-          <p className="mt-5 rounded-[6px] border border-[#ff4500]/40 bg-[#ff4500]/5 p-4 text-xs text-[#b32d00]">
+          <p className="mt-5 rounded-[6px] border border-[#16a34a]/40 bg-[#16a34a]/5 p-4 text-xs text-[#15803d]">
             <b>{created.name}</b> can now sign in with Google using <b>{created.email}</b>.
           </p>
         )}
@@ -1187,10 +1190,10 @@ function UsersTab({ users, opts, act }) {
           <Row key={u.id}>
             <Person p={u} className="h-10 w-10 text-xs" />
             <span className="flex flex-wrap items-center gap-2">
-              <span className="rounded-[4px] bg-[#ff4500]/10 px-2 py-0.5 text-[11px] font-semibold text-[#b32d00]">
+              <span className="rounded-[4px] bg-black/5 px-2 py-0.5 text-[11px] font-semibold text-black/70">
                 {u.role === 'student' ? (u.className || 'No class') : ROLE_LABEL[u.role]}
               </span>
-              {u.comm && <span className="rounded-[4px] bg-[#ff4500] px-2 py-0.5 text-[11px] font-semibold text-white">Minister of Communication</span>}
+              {u.comm && <span className="rounded-[4px] bg-[#ff4500]/10 px-2 py-0.5 text-[11px] font-semibold text-[#c2310a]">Minister of Communication</span>}
               {!u.comm && <Btn c="w" onClick={() => window.confirm(`Make ${u.name} the Minister of Communication?`) && setMinister(u, true)}>Make minister</Btn>}
               <Btn c="w" onClick={() => openEdit(u)}>Edit</Btn>
               <Btn c="or" onClick={() => window.confirm(`Delete the account of ${u.name}?`) && act(() => api(`/api/users/${u.id}`, 'DELETE'))}>Delete</Btn>
@@ -1225,8 +1228,6 @@ function UsersTab({ users, opts, act }) {
 
 /* ---------- groups: add many students at once, like recipients in an email ---------- */
 
-// Type or paste many names or emails (separated by Enter, comma, semicolon or new line).
-// Pick suggestions, or add a whole class in one click. Unknown names show up marked with "?".
 function PeoplePicker({ students, value, onChange }) {
   const [text, setText] = useState('');
   const [cls, setCls] = useState('');
@@ -1250,12 +1251,12 @@ function PeoplePicker({ students, value, onChange }) {
 
   return (
     <div>
-      <div className="flex min-h-[44px] flex-wrap items-center gap-1.5 rounded-[6px] border border-[#ff4500]/30 bg-white p-2 focus-within:border-[#ff4500] focus-within:ring-2 focus-within:ring-[#ff4500]/15">
+      <div className="flex min-h-[44px] flex-wrap items-center gap-1.5 rounded-[6px] border border-black/20 bg-white p-2 focus-within:border-[#16a34a] focus-within:ring-2 focus-within:ring-[#16a34a]/20">
         {value.map((v) => {
           const s = find(v);
           return (
             <span key={v} title={s ? s.email : 'No student found with this name or email'}
-              className={`inline-flex items-center gap-1.5 rounded-full py-1 pl-1 pr-2 text-xs font-medium ${s ? 'bg-[#ff4500]/10 text-[#b32d00]' : 'border border-dashed border-[#b32d00] bg-white text-[#7a1f00]'}`}>
+              className={`inline-flex items-center gap-1.5 rounded-full py-1 pl-1 pr-2 text-xs font-medium ${s ? 'bg-[#16a34a]/10 text-[#15803d]' : 'border border-dashed border-[#ff4500] bg-white text-[#c2310a]'}`}>
               {s ? <Avatar name={s.name} picture={s.picture} gid={s.gid} className="h-5 w-5 text-[9px]" /> : <span className="pl-1.5">?</span>}
               {s ? s.name : v}
               <button type="button" aria-label={`Remove ${v}`} onClick={() => onChange(value.filter((x) => x !== v))} className="leading-none text-[#ff4500]">×</button>
@@ -1276,11 +1277,11 @@ function PeoplePicker({ students, value, onChange }) {
       </div>
 
       {sugg.length > 0 && (
-        <ul className="mt-1 overflow-hidden rounded-[6px] border border-[#ff4500]/20 bg-white shadow-md">
+        <ul className="mt-1 overflow-hidden rounded-[6px] border border-black/10 bg-white shadow-md">
           {sugg.map((s) => (
             <li key={s.id}>
               <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { add([s.email || s.name]); setText(''); }}
-                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs hover:bg-[#ff4500]/5">
+                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs hover:bg-[#16a34a]/5">
                 <Person p={s} className="h-7 w-7 text-[10px]" />
                 <span className="text-black/50">{s.className}</span>
               </button>
@@ -1296,7 +1297,7 @@ function PeoplePicker({ students, value, onChange }) {
         </div>
         <span className="text-xs text-black/55">{value.length - unknown.length} student{value.length - unknown.length === 1 ? '' : 's'}</span>
         {unknown.length > 0 && (
-          <button type="button" onClick={() => onChange(value.filter((v) => find(v)))} className="text-xs font-semibold text-[#b32d00] hover:underline">
+          <button type="button" onClick={() => onChange(value.filter((v) => find(v)))} className="text-xs font-semibold text-[#c2310a] hover:underline">
             Remove {unknown.length} not found
           </button>
         )}
@@ -1310,7 +1311,7 @@ function GroupsTab({ groups, users, act }) {
   const blank = { name: '', description: '', members: [] };
   const [f, setF] = useState(blank);
   const [q, setQ] = useState('');
-  const [addTo, setAddTo] = useState(null); // { group, members }
+  const [addTo, setAddTo] = useState(null);
   const [msg, setMsg] = useState('');
 
   const note = (r, name) => setMsg(`${name}: ${r.added} student${r.added === 1 ? '' : 's'} added.${r.notFound?.length ? ` Not found: ${r.notFound.join(', ')}.` : ''}`);
@@ -1347,7 +1348,7 @@ function GroupsTab({ groups, users, act }) {
         <Btn className="mt-5" disabled={!f.name.trim()} onClick={create}>Create group</Btn>
       </Card>
 
-      <Card t="Groups" sub="Teachers can book lab time for a whole group." action={<div className="w-56"><SearchBox value={q} onChange={setQ} placeholder="Search groups" /></div>}>
+      <Card t="Groups" sub="Teachers can book lab time for a whole group, and you can assign a lab time to a group." action={<div className="w-56"><SearchBox value={q} onChange={setQ} placeholder="Search groups" /></div>}>
         {shown.length === 0 && <Empty>{groups.length ? 'No group matches.' : 'No groups yet. Create the first one above.'}</Empty>}
         {shown.map((g) => (
           <div key={g.id} className="border-t border-black/10 py-4">
@@ -1365,7 +1366,7 @@ function GroupsTab({ groups, users, act }) {
             <div className="mt-3 flex flex-wrap gap-1.5">
               {g.members.length === 0 && <span className="text-xs text-black/50">No students yet.</span>}
               {g.members.map((m) => (
-                <span key={m.id} title={`${m.email} · ${m.className}`} className="inline-flex items-center gap-1.5 rounded-full bg-[#ff4500]/10 py-1 pl-1 pr-2 text-xs font-medium text-[#b32d00]">
+                <span key={m.id} title={`${m.email} · ${m.className}`} className="inline-flex items-center gap-1.5 rounded-full bg-[#16a34a]/10 py-1 pl-1 pr-2 text-xs font-medium text-[#15803d]">
                   <Avatar name={m.name} picture={m.picture} gid={m.gid} className="h-5 w-5 text-[9px]" />{m.name}
                   <button type="button" aria-label={`Remove ${m.name}`} onClick={() => act(() => api(`/api/groups/${g.id}/members/${m.id}`, 'DELETE'))} className="leading-none text-[#ff4500]">×</button>
                 </span>
@@ -1415,19 +1416,28 @@ function LabsTab({ labs, act }) {
   );
 }
 
-/* ---------- schedule: prepare as a draft, publish when ready, choose the open places ---------- */
+/* ---------- schedule: draft or publish, assign to a class or group, choose open places ---------- */
 
-function ScheduleTab({ labs, sessions, act }) {
-  const [sch, setSch] = useState({ date: today(), from: '14:00', to: '16:00', labId: 'all', places: '' });
+function ScheduleTab({ labs, sessions, users, groups, act }) {
+  const [sch, setSch] = useState({ date: today(), from: '14:00', to: '16:00', labId: 'all', places: '', aud: '' });
   const [q, setQ] = useState('');
   const [view, setView] = useState('all');
+  const students = users.filter((u) => u.role === 'student');
+  const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
+  const audOpts = [
+    { v: '', t: 'Everyone' },
+    ...classes.map((c) => ({ v: `c:${c}`, t: `Class ${c}` })),
+    ...groups.map((g) => ({ v: `g:${g.id}`, t: `Group ${g.name}` })),
+  ];
   const drafts = sessions.filter((s) => !s.published);
-  const shown = sessions.filter((s) => (view === 'all' || (view === 'draft' ? !s.published : s.published)) && match(q, s.lab, s.date, s.from, s.to));
+  const shown = sessions.filter((s) => (view === 'all' || (view === 'draft' ? !s.published : s.published)) && match(q, s.lab, s.date, s.from, s.to, forLabel(s)));
   const pcsOf = (id) => labs.find((l) => l.id === +id)?.pcs;
   const maxPlaces = sch.labId === 'all' ? null : pcsOf(sch.labId);
+  // How many students the class or group has, so you can compare it with the places.
+  const audCount = (s) => (s.forClass ? students.filter((u) => u.className === s.forClass).length : s.forGroup ? groups.find((g) => g.id === s.forGroup)?.members.length ?? 0 : null);
 
   const create = (published) => act(() => api('/api/sessions', 'POST', {
-    date: sch.date, from: sch.from, to: sch.to, published,
+    date: sch.date, from: sch.from, to: sch.to, published, audience: sch.aud,
     labIds: sch.labId === 'all' ? undefined : [+sch.labId],
     places: sch.places === '' ? undefined : +sch.places,
   }));
@@ -1435,14 +1445,17 @@ function ScheduleTab({ labs, sessions, act }) {
 
   return (
     <div>
-      <Card t="Prepare a schedule" sub="A draft is only visible to you. Students, teachers and visitors see a lab time after you publish it.">
-        <div className="grid md:grid-cols-5 gap-4">
+      <Card t="Prepare a schedule" sub="Save it as a draft (only you see it) or publish it. You can publish at any time, whether the class is full or not.">
+        <div className="grid md:grid-cols-3 gap-4">
           <Field l="Day"><Inp type="date" value={sch.date} onChange={(e) => setSch({ ...sch, date: e.target.value })} /></Field>
           <Field l="From"><Inp type="time" value={sch.from} onChange={(e) => setSch({ ...sch, from: e.target.value })} /></Field>
           <Field l="To"><Inp type="time" value={sch.to} onChange={(e) => setSch({ ...sch, to: e.target.value })} /></Field>
           <Field l="Lab"><Sel o={[{ v: 'all', t: 'All labs' }, ...labs.map((l) => ({ v: l.id, t: l.name }))]} value={sch.labId} onChange={(e) => setSch({ ...sch, labId: e.target.value })} /></Field>
           <Field l="Places open" hint={maxPlaces ? `Up to ${maxPlaces}` : 'Empty = every computer'}>
             <Inp type="number" min="1" max={maxPlaces || undefined} placeholder="All" value={sch.places} onChange={(e) => setSch({ ...sch, places: e.target.value })} />
+          </Field>
+          <Field l="For" hint="Only this class or group can see and book it.">
+            <Sel o={audOpts} value={sch.aud} onChange={(e) => setSch({ ...sch, aud: e.target.value })} />
           </Field>
         </div>
         <div className="mt-5 flex flex-wrap gap-3">
@@ -1454,30 +1467,41 @@ function ScheduleTab({ labs, sessions, act }) {
       <Card t="Lab times"
         action={<Btn disabled={!drafts.length} onClick={() => act(() => api('/api/sessions/publish-all', 'POST'))}>Publish all drafts ({drafts.length})</Btn>}>
         <div className="mb-4 grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
-          <SearchBox value={q} onChange={setQ} placeholder="Search lab, date or time" />
+          <SearchBox value={q} onChange={setQ} placeholder="Search lab, day, time, class or group" />
           <Pills value={view} onChange={setView} items={[['all', 'All', sessions.length], ['draft', 'Drafts', drafts.length], ['live', 'Published', sessions.length - drafts.length]]} />
         </div>
         {shown.length === 0 && <Empty>{sessions.length ? 'No lab time matches.' : 'Nothing prepared yet.'}</Empty>}
-        {shown.map((s) => (
-          <Row key={s.id}>
-            <span className="flex flex-wrap items-center gap-2">
-              <Badge s={s.published ? 'published' : 'draft'} />
-              <span>{fmt(s)} · <b>{s.left}/{s.seats} places left</b></span>
-            </span>
-            <span className="flex flex-wrap items-center gap-2">
-              <Inp type="time" className="!w-28" defaultValue={s.from}
-                onBlur={(e) => e.target.value !== s.from && act(() => api(`/api/sessions/${s.id}`, 'PUT', { from: e.target.value }))} />
-              <Inp type="time" className="!w-28" defaultValue={s.to}
-                onBlur={(e) => e.target.value !== s.to && act(() => api(`/api/sessions/${s.id}`, 'PUT', { to: e.target.value }))} />
-              <Inp type="number" min="1" max={pcsOf(s.labId) || undefined} title="Places open" aria-label="Places open" className="!w-20" defaultValue={s.seats}
-                onBlur={(e) => e.target.value && +e.target.value !== s.seats && act(() => api(`/api/sessions/${s.id}`, 'PUT', { places: +e.target.value }))} />
-              {s.published
-                ? <Btn c="w" onClick={() => setPub(s, false)}>Unpublish</Btn>
-                : <Btn onClick={() => setPub(s, true)}>Publish</Btn>}
-              <Btn c="or" onClick={() => window.confirm('Remove this lab time?') && act(() => api(`/api/sessions/${s.id}`, 'DELETE'))}>Remove</Btn>
-            </span>
-          </Row>
-        ))}
+        {shown.map((s) => {
+          const cnt = audCount(s);
+          return (
+            <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 border-t border-black/10 py-3.5">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge s={s.published ? 'published' : 'draft'} />
+                  <b>{fmt(s)}</b>
+                </div>
+                <p className="mt-1 text-xs text-black/55">
+                  <b className="text-[#111827]">{s.left}/{s.seats}</b> places left ·{' '}
+                  {forLabel(s) ? <span className="font-semibold text-[#c2310a]">For {forLabel(s)}{cnt != null ? ` (${cnt} student${cnt === 1 ? '' : 's'})` : ''}</span> : 'Open to everyone'}
+                </p>
+              </div>
+              <span className="flex flex-wrap items-center gap-2">
+                <Inp type="time" className="!w-28" defaultValue={s.from}
+                  onBlur={(e) => e.target.value !== s.from && act(() => api(`/api/sessions/${s.id}`, 'PUT', { from: e.target.value }))} />
+                <Inp type="time" className="!w-28" defaultValue={s.to}
+                  onBlur={(e) => e.target.value !== s.to && act(() => api(`/api/sessions/${s.id}`, 'PUT', { to: e.target.value }))} />
+                <Inp type="number" min="1" max={pcsOf(s.labId) || undefined} title="Places open" aria-label="Places open" className="!w-20" defaultValue={s.seats}
+                  onBlur={(e) => e.target.value && +e.target.value !== s.seats && act(() => api(`/api/sessions/${s.id}`, 'PUT', { places: +e.target.value }))} />
+                <Sel o={audOpts} value={audOf(s)} aria-label="Assigned to" className="!w-40"
+                  onChange={(e) => act(() => api(`/api/sessions/${s.id}`, 'PUT', { audience: e.target.value }))} />
+                {s.published
+                  ? <Btn c="w" onClick={() => setPub(s, false)}>Unpublish</Btn>
+                  : <Btn onClick={() => setPub(s, true)}>Publish</Btn>}
+                <Btn c="or" onClick={() => window.confirm('Remove this lab time?') && act(() => api(`/api/sessions/${s.id}`, 'DELETE'))}>Remove</Btn>
+              </span>
+            </div>
+          );
+        })}
       </Card>
     </div>
   );
@@ -1530,21 +1554,21 @@ function ApplicationsTab({ apps, sessions, black, act, bulk }) {
             <span className="flex flex-wrap items-center gap-2">
               {a.status !== 'approved' && <Btn onClick={() => bulk([a.id], 'approved')}>Approve</Btn>}
               {a.status !== 'rejected' && <Btn c="or" onClick={() => bulk([a.id], 'rejected')}>Reject</Btn>}
-              <select aria-label={`Move ${a.name}`} className="rounded-[6px] border border-[#ff4500]/30 bg-white px-2.5 py-2 text-xs" value=""
+              <select aria-label={`Move ${a.name}`} className="rounded-[6px] border border-black/20 bg-white px-2.5 py-2 text-xs" value=""
                 onChange={(e) => e.target.value && act(() => api(`/api/apps/${a.id}/move`, 'PATCH', { sessionId: +e.target.value }))}>
                 <option value="">Move to…</option>
                 {sessions.filter((s) => s.id !== a.sid).map((s) => <option key={s.id} value={s.id}>{fmt(s)} ({s.left} left)</option>)}
               </select>
-              <Btn c="w" onClick={() => window.confirm(`Blacklist ${a.name}?`) && act(() => api('/api/blacklist', 'POST', { name: a.name }))}>Blacklist</Btn>
+              <Btn c="dk" onClick={() => window.confirm(`Blacklist ${a.name}?`) && act(() => api('/api/blacklist', 'POST', { name: a.name }))}>Blacklist</Btn>
             </span>
           </>
         )} />
 
       <Card t="Blacklisted students">
         {black.length === 0 ? <p className="text-black/60">Nobody is blacklisted.</p> : black.map((n) => (
-          <span key={n} className="mb-2 mr-3 inline-flex items-center gap-2 rounded-[6px] border border-[#ff4500] px-3 py-1.5 font-medium text-[#b32d00]">
+          <span key={n} className="mb-2 mr-3 inline-flex items-center gap-2 rounded-[6px] border border-[#111827] px-3 py-1.5 font-medium text-[#111827]">
             {n}
-            <button type="button" aria-label={'Unblock ' + n} onClick={() => act(() => api(`/api/blacklist/${encodeURIComponent(n)}`, 'DELETE'))}>×</button>
+            <button type="button" aria-label={'Unblock ' + n} className="text-[#ff4500]" onClick={() => act(() => api(`/api/blacklist/${encodeURIComponent(n)}`, 'DELETE'))}>×</button>
           </span>
         ))}
       </Card>
@@ -1588,8 +1612,8 @@ function AttendanceTab({ apps, labs, users, absent, act }) {
           <Pills value={f.att} onChange={(v) => set('att', v)}
             items={[['all', 'All', shown.length], ['none', 'Not marked'], ['present', 'Present'], ['absent', 'Absent']]} />
           <div className="flex items-center gap-3 text-xs text-black/60">
-            <span><b className="text-[#ff4500]">{c.present}</b> present</span>
-            <span><b className="text-[#7a1f00]">{c.absent}</b> absent</span>
+            <span><b className="text-[#16a34a]">{c.present}</b> present</span>
+            <span><b className="text-[#ff4500]">{c.absent}</b> absent</span>
             <span><b>{c.none}</b> not marked</span>
             {f.date && <Btn c="w" onClick={() => set('date', '')}>All days</Btn>}
           </div>
@@ -1625,8 +1649,8 @@ function AttendanceTab({ apps, labs, users, absent, act }) {
                     <td className="py-2.5"><Person p={{ name: n, email: um[n]?.email, picture: um[n]?.picture, gid: um[n]?.gid }} className="h-8 w-8 text-[10px]" /></td>
                     <td>{um[n]?.className}</td>
                     <td>{r.applied}</td>
-                    <td className="text-[#ff4500]">{r.attended}</td>
-                    <td className={r.absent ? 'font-bold text-[#b32d00]' : ''}>{r.absent}</td>
+                    <td className="text-[#16a34a]">{r.attended}</td>
+                    <td className={r.absent ? 'font-bold text-[#ff4500]' : ''}>{r.absent}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1689,15 +1713,15 @@ function HistoryTab({ apps: rows, labs }) {
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
         <Stat v={shown.length} t="Students listed" />
-        <Stat v={c.present} t="Attended" tone="or" />
-        <Stat v={c.absent} t="Absent" tone="dk" />
+        <Stat v={c.present} t="Attended" tone="gr" />
+        <Stat v={c.absent} t="Absent" tone="or" />
         <Stat v={c.none} t="Not marked" />
-        <Stat v={marked ? Math.round((c.present / marked) * 100) + '%' : '-'} t="Attendance rate" tone="or" />
+        <Stat v={marked ? Math.round((c.present / marked) * 100) + '%' : '-'} t="Attendance rate" tone="gr" />
       </div>
 
       <Grouped rows={shown} desc empty="Nothing matches. Try another day, lab or status."
         meta={(g) => { const k = attCounts(g.rows); return `${g.rows.length} students · ${k.present} attended · ${k.absent} absent`; }}
-        classActions={(list) => { const k = attCounts(list); return <span className="text-[11px] text-black/60"><b className="text-[#ff4500]">{k.present}</b> attended · <b className="text-[#7a1f00]">{k.absent}</b> absent · {k.none} not marked</span>; }}
+        classActions={(list) => { const k = attCounts(list); return <span className="text-[11px] text-black/60"><b className="text-[#16a34a]">{k.present}</b> attended · <b className="text-[#ff4500]">{k.absent}</b> absent · {k.none} not marked</span>; }}
         row={(a) => (<><Person p={a} /><span className="flex items-center gap-2"><span className="text-black/60">{a.reason}</span><Badge s={a.status} /><AttBadge att={a.att} /></span></>)} />
     </div>
   );
@@ -1706,7 +1730,7 @@ function HistoryTab({ apps: rows, labs }) {
 /* ---------- settings ---------- */
 
 const Chip = ({ children, onRemove, onEdit, label }) => (
-  <span className="inline-flex items-center gap-2 rounded-[6px] border border-[#ff4500]/25 bg-white py-1.5 pl-3 pr-2 text-xs font-medium">
+  <span className="inline-flex items-center gap-2 rounded-[6px] border border-black/15 bg-white py-1.5 pl-3 pr-2 text-xs font-medium">
     {children}
     {onEdit && <button type="button" aria-label={`Rename ${label}`} onClick={onEdit} className="text-black/40 hover:text-black">✎</button>}
     <button type="button" aria-label={`Remove ${label}`} onClick={onRemove}
@@ -1747,7 +1771,7 @@ function ClassSetup({ opts, save, rename }) {
   const removeCombo = (g, c) => save(grades, { ...full, [g]: full[g].filter((x) => x !== c) });
 
   return (
-    <Card t="Grades and combinations" sub="A class is a grade plus a combination. Renaming updates every student in it.">
+    <Card t="Grades and combinations" sub="A class is a grade plus a combination. Renaming updates every student and lab time assigned to it.">
       <div className="mb-6 flex max-w-md gap-3">
         <Inp placeholder="New grade, for example S3" value={newGrade}
           onChange={(e) => setNewGrade(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addGrade()} />
@@ -1756,12 +1780,12 @@ function ClassSetup({ opts, save, rename }) {
       {grades.length === 0 && <Empty>No grades yet. Add your first grade above.</Empty>}
       <div className="grid gap-4 md:grid-cols-2">
         {grades.map((g) => (
-          <div key={g} className="rounded-[6px] border border-[#ff4500]/15 bg-[#fff8f5] p-4">
+          <div key={g} className="rounded-[6px] border border-black/10 bg-black/[0.02] p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <span className="inline-flex min-w-[2.75rem] items-center justify-center rounded-[6px] bg-[#ff4500] px-3 py-2 text-sm font-bold leading-none text-white">{g}</span>
-              <span className="flex gap-3 text-[11px] font-semibold text-[#b32d00]">
-                <button type="button" onClick={() => renameGrade(g)} className="hover:underline">Rename</button>
-                <button type="button" onClick={() => removeGrade(g)} className="hover:underline">Remove</button>
+              <span className="inline-flex min-w-[2.75rem] items-center justify-center rounded-[6px] bg-[#16a34a] px-3 py-2 text-sm font-bold leading-none text-white">{g}</span>
+              <span className="flex gap-3 text-[11px] font-semibold">
+                <button type="button" onClick={() => renameGrade(g)} className="text-[#2563eb] hover:underline">Rename</button>
+                <button type="button" onClick={() => removeGrade(g)} className="text-[#ff4500] hover:underline">Remove</button>
               </span>
             </div>
             <div className="mb-3 flex min-h-[32px] flex-wrap gap-2">
@@ -1876,7 +1900,7 @@ function Admin({ opts: initial, tab }) {
       {tab === 'Users' && <UsersTab users={users} opts={opts} act={act} />}
       {tab === 'Groups' && <GroupsTab groups={groups} users={users} act={act} />}
       {tab === 'Labs' && <LabsTab labs={labs} act={act} />}
-      {tab === 'Schedule' && <ScheduleTab labs={labs} sessions={sessions} act={act} />}
+      {tab === 'Schedule' && <ScheduleTab labs={labs} sessions={sessions} users={users} groups={groups} act={act} />}
       {tab === 'Applications' && <ApplicationsTab apps={apps} sessions={live} black={black} act={act} bulk={bulk} />}
       {tab === 'Attendance' && <AttendanceTab apps={apps} labs={labs} users={users} absent={absent} act={act} />}
       {tab === 'History' && <HistoryTab apps={apps} labs={labs} />}
@@ -1948,7 +1972,7 @@ const Cover = ({ item, className = '' }) => {
   const [bad, setBad] = useState(false);
   if (!src || bad) {
     return (
-      <div role="img" aria-label={item.title} className={`grid place-items-center bg-[#ff4500]/10 text-[#ff4500]/50 ${className}`}>
+      <div role="img" aria-label={item.title} className={`grid place-items-center bg-black/[0.05] text-black/30 ${className}`}>
         <Icon n="Tag" className="h-8 w-8" />
       </div>
     );
@@ -1957,7 +1981,7 @@ const Cover = ({ item, className = '' }) => {
 };
 
 const LinkBtn = ({ c = 'w', className = '', ...p }) => {
-  const look = { ink: 'bg-[#ff4500] text-white', gr: 'bg-[#ff7a45] text-white', or: 'bg-[#b32d00] text-white', w: 'bg-white text-[#b32d00] border border-[#ff4500]/40' }[c];
+  const look = { ink: 'bg-[#16a34a] text-white', bl: 'bg-[#2563eb] text-white', or: 'bg-[#ff4500] text-white', w: 'bg-white text-[#111827] border border-black/20' }[c];
   return <a target="_blank" rel="noreferrer" className={`inline-block px-4 py-2 text-xs font-semibold rounded-[6px] hover:opacity-90 ${look} ${className}`} {...p} />;
 };
 
@@ -1972,7 +1996,7 @@ function TrendDetail({ item, onClose }) {
   return (
     <Modal title={item.title} onClose={onClose} wide>
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="rounded-[4px] bg-[#ff4500] px-2 py-1 font-semibold text-white">{item.category}</span>
+        <span className="rounded-[4px] bg-[#16a34a]/10 px-2 py-1 font-semibold text-[#15803d]">{item.category}</span>
         <span className="text-black/55">Posted {ago(item.postedAt)}</span>
         {item.foundAt && <span className="text-black/55">· Found at {item.foundAt}</span>}
       </div>
@@ -1986,7 +2010,7 @@ function TrendDetail({ item, onClose }) {
             <div className="mt-2 flex gap-2 overflow-x-auto">
               {images.map((im, i) => (
                 <button key={im + i} type="button" aria-label={`Photo ${i + 1}`} onClick={() => setK(i)}
-                  className={`h-14 w-16 shrink-0 overflow-hidden rounded-[6px] border-2 ${i === k ? 'border-[#ff4500]' : 'border-transparent'}`}>
+                  className={`h-14 w-16 shrink-0 overflow-hidden rounded-[6px] border-2 ${i === k ? 'border-[#16a34a]' : 'border-transparent'}`}>
                   <img src={im} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover" />
                 </button>
               ))}
@@ -2010,14 +2034,14 @@ function TrendDetail({ item, onClose }) {
         </div>
       )}
 
-      <div className="mt-6 rounded-[6px] border border-[#ff4500]/40 bg-[#ff4500]/5 p-4">
-        <h4 className="text-xs font-bold text-[#b32d00]">Is this yours?</h4>
+      <div className="mt-6 rounded-[6px] border border-[#16a34a]/40 bg-[#16a34a]/5 p-4">
+        <h4 className="text-xs font-bold text-[#15803d]">Is this yours?</h4>
         <p className="mt-1 text-xs leading-relaxed text-black/65">
           Contact the Minister of Communication, describe something only the owner knows, and come to collect it.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {item.phone && <LinkBtn c="ink" href={`tel:${item.phone}`}>Call {item.phone}</LinkBtn>}
-          {digits && <LinkBtn c="gr" href={`https://wa.me/${digits}?text=${subject}`}>WhatsApp</LinkBtn>}
+          {digits && <LinkBtn c="bl" href={`https://wa.me/${digits}?text=${subject}`}>WhatsApp</LinkBtn>}
           {item.email && <LinkBtn c="or" href={`mailto:${item.email}?subject=${subject}`}>Email</LinkBtn>}
           {!item.phone && !item.email && <span className="text-xs text-black/60">Ask {item.postedBy || 'the Minister of Communication'} at school.</span>}
         </div>
@@ -2043,7 +2067,7 @@ function TrendsSection({ categories }) {
   const visible = more ? shown : shown.slice(0, 9);
 
   return (
-    <section id="trends" className="scroll-mt-16 bg-[#fff8f5]">
+    <section id="trends" className="scroll-mt-16 border-t border-black/10 bg-[#f7f8f7]">
       <div className={`${WRAP} py-16`}>
         <Heading title="Lost something? Look here first." className="max-w-xl" />
         <p className="mt-3 max-w-xl text-xs leading-relaxed text-black/60">
@@ -2060,8 +2084,8 @@ function TrendsSection({ categories }) {
         <div className="mt-8">
           {items === null && <Empty>Loading the board…</Empty>}
           {items !== null && list.length === 0 && (
-            <div className="rounded-[6px] border border-dashed border-[#ff4500]/40 bg-white px-6 py-14 text-center">
-              <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-[6px] bg-[#ff4500] text-white"><Icon n="Tag" /></div>
+            <div className="rounded-[6px] border border-dashed border-black/20 bg-white px-6 py-14 text-center">
+              <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-[6px] bg-[#16a34a] text-white"><Icon n="Tag" /></div>
               <p className="text-sm font-semibold">Nothing is waiting for an owner right now.</p>
             </div>
           )}
@@ -2069,18 +2093,18 @@ function TrendsSection({ categories }) {
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {visible.map((t) => (
               <button key={t.id} type="button" onClick={() => setOpen(t)}
-                className="group flex h-full flex-col overflow-hidden rounded-[6px] border border-[#ff4500]/15 bg-white text-left transition-shadow hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ff4500]">
+                className="group flex h-full flex-col overflow-hidden rounded-[6px] border border-black/10 bg-white text-left transition-shadow hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#16a34a]">
                 <div className="relative aspect-[4/3] overflow-hidden bg-black/5">
                   <Cover item={t} className="h-full w-full transition-transform duration-500 group-hover:scale-105" />
-                  <span className="absolute left-3 top-3 rounded-[4px] bg-[#ff4500] px-2 py-1 text-[11px] font-semibold text-white">{t.category}</span>
-                  {t.media.length > 1 && <span className="absolute right-3 top-3 rounded-[4px] bg-white/90 px-2 py-1 text-[11px] font-semibold text-[#b32d00]">{t.media.length} items</span>}
+                  <span className="absolute left-3 top-3 rounded-[4px] bg-white px-2 py-1 text-[11px] font-semibold text-[#15803d]">{t.category}</span>
+                  {t.media.length > 1 && <span className="absolute right-3 top-3 rounded-[4px] bg-white px-2 py-1 text-[11px] font-semibold text-black/70">{t.media.length} items</span>}
                 </div>
                 <div className="flex flex-1 flex-col p-4">
                   <h3 className="text-sm font-semibold">{t.title}</h3>
                   {t.description && <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-black/60">{t.description}</p>}
                   <div className="mt-auto flex items-center justify-between pt-4 text-[11px] text-black/50">
                     <span>{t.foundAt ? `Found at ${t.foundAt}` : `Posted ${ago(t.postedAt)}`}</span>
-                    <span className="font-semibold text-[#b32d00]">View and contact</span>
+                    <span className="font-semibold text-[#ff4500]">View and contact</span>
                   </div>
                 </div>
               </button>
@@ -2153,10 +2177,10 @@ function TrendForm({ initial, cats, user, onSubmit, onCancel }) {
       </div>
 
       {!editing && (
-        <div className="mt-6 rounded-[6px] border border-[#ff4500]/15 bg-[#fff8f5] p-4">
+        <div className="mt-6 rounded-[6px] border border-black/10 bg-black/[0.02] p-4">
           <h4 className="text-xs font-bold">Photos, videos and files</h4>
           <p className="mt-1 text-xs text-black/55">Up to {MAX_ATTACH} files of 12 MB. For long videos paste a link.</p>
-          <label className="mt-3 inline-block cursor-pointer rounded-[6px] border border-[#ff4500]/40 bg-white px-4 py-2 text-xs font-semibold text-[#b32d00] hover:bg-[#ff4500]/5">
+          <label className="mt-3 inline-block cursor-pointer rounded-[6px] border border-black/20 bg-white px-4 py-2 text-xs font-semibold hover:bg-black/5">
             Choose files
             <input type="file" multiple className="sr-only" onChange={pick} disabled={busy}
               accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" />
@@ -2167,7 +2191,7 @@ function TrendForm({ initial, cats, user, onSubmit, onCancel }) {
                 <li key={x.name + i} className="flex items-center gap-3 rounded-[6px] border border-black/10 bg-white p-2 text-xs">
                   {x.mime.startsWith('image/')
                     ? <img src={`data:${x.mime};base64,${x.data}`} alt="" className="h-10 w-10 shrink-0 rounded-[4px] object-cover" />
-                    : <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[4px] bg-[#ff4500]/10 text-[10px] font-bold uppercase text-[#b32d00]">{x.mime.startsWith('video/') ? 'Video' : 'File'}</span>}
+                    : <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[4px] bg-black/5 text-[10px] font-bold uppercase text-black/60">{x.mime.startsWith('video/') ? 'Video' : 'File'}</span>}
                   <span className="min-w-0 flex-1"><b className="block truncate">{x.name}</b><span className="text-black/50">{niceSize(x.size)}</span></span>
                   <button type="button" aria-label={`Remove ${x.name}`} onClick={() => setFiles((p) => p.filter((_, j) => j !== i))} className="px-1 text-lg leading-none text-[#ff4500]">×</button>
                 </li>
@@ -2241,8 +2265,8 @@ function TrendsManager({ user, opts }) {
       {msg && <Alert ok={ok}>{msg}</Alert>}
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <Stat v={n('active')} t="On the board" tone="or" />
-        <Stat v={list.filter((t) => t.status === 'active' && t.daysLeft === 0).length} t="Ready to remove" tone="dk" />
+        <Stat v={n('active')} t="On the board" tone="gr" />
+        <Stat v={list.filter((t) => t.status === 'active' && t.daysLeft === 0).length} t="Ready to remove" tone="or" />
         <Stat v={n('returned')} t="Returned to owners" />
         <Stat v={n('removed')} t="Removed" />
       </div>
@@ -2270,13 +2294,13 @@ function TrendsManager({ user, opts }) {
               <div className="flex flex-wrap items-center gap-2">
                 <b className="truncate">{t.title}</b>
                 <Badge s={t.status} />
-                <span className="rounded-[4px] bg-[#ff4500]/10 px-2 py-0.5 text-[11px] font-semibold text-[#b32d00]">{t.category}</span>
+                <span className="rounded-[4px] bg-black/5 px-2 py-0.5 text-[11px] font-semibold text-black/70">{t.category}</span>
               </div>
               <p className="mt-1 text-xs text-black/55">
                 Posted {ago(t.postedAt)}{t.reposts ? ` · reposted ${t.reposts} time${t.reposts === 1 ? '' : 's'}` : ''}
               </p>
               {t.status === 'active' && (
-                <p className="mt-1 text-xs font-medium text-[#b32d00]">
+                <p className={`mt-1 text-xs font-medium ${t.daysLeft ? 'text-[#c2310a]' : 'text-[#15803d]'}`}>
                   {t.daysLeft ? `Can be removed in ${t.daysLeft} day${t.daysLeft === 1 ? '' : 's'}` : 'Ready to remove or repost'}
                 </p>
               )}
@@ -2286,7 +2310,7 @@ function TrendsManager({ user, opts }) {
               <Btn c="w" onClick={() => setEdit(t)}>Edit</Btn>
               {t.status === 'active' ? (
                 <>
-                  <Btn c="gr" onClick={() => window.confirm('Mark this item as returned to its owner?') && act(() => api(`/api/trends/${t.id}/returned`, 'PATCH'), 'Marked as returned.')}>Returned</Btn>
+                  <Btn c="bl" onClick={() => window.confirm('Mark this item as returned to its owner?') && act(() => api(`/api/trends/${t.id}/returned`, 'PATCH'), 'Marked as returned.')}>Returned</Btn>
                   <Btn c="or" disabled={t.daysLeft > 0} title={t.daysLeft > 0 ? `Available in ${t.daysLeft} day(s)` : ''}
                     onClick={() => window.confirm('Take this post off the board?') && act(() => api(`/api/trends/${t.id}/remove`, 'PATCH'), 'Removed. You can repost it any time.')}>Remove</Btn>
                 </>
@@ -2343,7 +2367,7 @@ function Profile() {
         <div className="flex flex-col items-center text-center">
           <Avatar name={p.name} picture={p.picture} className="h-20 w-20 text-xl" />
           <h2 className="mt-4 text-base font-bold">{p.name}</h2>
-          <span className="mt-2 rounded-[4px] bg-[#ff4500]/10 px-3 py-1 text-[11px] font-semibold text-[#b32d00]">{ROLE_LABEL[p.role] || p.role}</span>
+          <span className="mt-2 rounded-[4px] bg-[#16a34a]/10 px-3 py-1 text-[11px] font-semibold text-[#15803d]">{ROLE_LABEL[p.role] || p.role}</span>
         </div>
         <dl className="mt-6 divide-y divide-black/10 text-xs">
           {details.map(([k, v]) => (
@@ -2359,9 +2383,9 @@ function Profile() {
         {s && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <Stat v={s.total} t={p.role === 'student' ? 'Applications' : 'Bookings made'} />
-            <Stat v={s.approved} t="Approved" tone="or" />
-            <Stat v={s.pending} t="Waiting" tone="dk" />
-            <Stat v={s.present} t="Attended" tone="or" />
+            <Stat v={s.approved} t="Approved" tone="gr" />
+            <Stat v={s.pending} t="Waiting" tone="or" />
+            <Stat v={s.present} t="Attended" tone="gr" />
           </div>
         )}
       </div>
@@ -2373,10 +2397,10 @@ function Profile() {
 /* 11. DASHBOARD SHELL                                                 */
 /* ================================================================== */
 
-function NavItem({ name, active, onClick, dark }) {
+function NavItem({ name, active, onClick, side }) {
   const look = active
-    ? dark ? 'bg-white text-[#b32d00]' : 'bg-[#ff4500] text-white'
-    : dark ? 'text-white/80 hover:bg-white/15 hover:text-white' : 'text-[#b32d00] bg-white border border-[#ff4500]/25';
+    ? 'bg-[#16a34a] text-white'
+    : side ? 'text-black/70 hover:bg-black/5' : 'text-black/70 bg-white border border-black/10';
   return (
     <button type="button" onClick={onClick} aria-current={active ? 'page' : undefined}
       className={`flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-xs font-semibold whitespace-nowrap ${look}`}>
@@ -2395,29 +2419,29 @@ function Dashboard({ user, opts, onLogout, onRefreshMe }) {
   useLive({ 'me:update': onRefreshMe });
 
   return (
-    <div className="min-h-screen bg-[#fff8f5] text-[#2b0f06] text-[13px] lg:flex">
-      <aside className="hidden lg:flex lg:w-64 lg:shrink-0 lg:sticky lg:top-0 lg:h-screen flex-col bg-[#b32d00] p-5">
-        <Logo light />
+    <div className="min-h-screen bg-[#f7f8f7] text-[#111827] text-[13px] lg:flex">
+      <aside className="hidden lg:flex lg:w-64 lg:shrink-0 lg:sticky lg:top-0 lg:h-screen flex-col border-r border-black/10 bg-white p-5">
+        <Logo />
         <nav className="mt-8 flex-1 space-y-1 overflow-y-auto" aria-label="Main">
-          {items.map((x) => <NavItem key={x} name={x} dark active={page === x} onClick={() => setPage(x)} />)}
+          {items.map((x) => <NavItem key={x} name={x} side active={page === x} onClick={() => setPage(x)} />)}
         </nav>
-        <div className="mt-4 rounded-[6px] bg-white/10 p-3">
+        <div className="mt-4 rounded-[6px] bg-black/[0.04] p-3">
           <div className="flex items-center gap-3">
             <Avatar name={user.name} picture={user.picture} className="h-9 w-9 text-xs" />
             <div className="min-w-0">
-              <div className="truncate text-xs font-semibold text-white">{user.name}</div>
-              <div className="text-[11px] text-white/70">{user.comm && user.role !== 'admin' ? 'Minister of Communication' : ROLE_LABEL[user.role] || user.role}</div>
+              <div className="truncate text-xs font-semibold">{user.name}</div>
+              <div className="text-[11px] text-black/55">{user.comm && user.role !== 'admin' ? 'Minister of Communication' : ROLE_LABEL[user.role] || user.role}</div>
             </div>
           </div>
           <button type="button" onClick={onLogout}
-            className="mt-3 flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-xs font-semibold text-white/80 hover:bg-white/15 hover:text-white">
+            className="mt-3 flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-xs font-semibold text-[#ff4500] hover:bg-[#ff4500]/10">
             <Icon n="Logout" />Log out
           </button>
         </div>
       </aside>
 
       <div className="flex-1 min-w-0">
-        <header className="lg:hidden bg-white border-b border-[#ff4500]/15">
+        <header className="lg:hidden bg-white border-b border-black/10">
           <div className="px-4 h-14 flex items-center justify-between">
             <Logo />
             <Btn c="w" onClick={onLogout}>Log out</Btn>
