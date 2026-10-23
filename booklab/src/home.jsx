@@ -2168,7 +2168,7 @@ function Profile() {
         </dl>
       </Card>
       <div className="space-y-6">
-        {p.role !== 'admin' && <ProfileForm p={p} onSaved={load} />}
+        <ProfileForm p={p} onSaved={load} />
         {s && (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <Stat v={s.total} t={p.role === 'student' ? 'Applications' : 'Bookings made'} />
