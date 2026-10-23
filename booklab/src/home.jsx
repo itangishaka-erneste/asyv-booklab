@@ -56,8 +56,8 @@ function usePublicLive(handlers) {
   }, []);
 }
 
-// One orangered palette for the whole app.
-const C = { or: '#ff4500', dark: '#b32d00', soft: '#ff9a73', pale: '#ffd9c9', grid: '#f3e3dc', ink: '#2b0f06' };
+// Shared palette: orange for primary actions, with green, blue, and ink accents.
+const C = { or: '#ff4500', dark: '#b32d00', soft: '#ff9a73', pale: '#ffd9c9', grid: '#e2e8f0', ink: '#111827', green: '#15803d', blue: '#2563eb' };
 
 /* ================================================================== */
 /* 2. SCHOOL RULES                                                     */
@@ -126,13 +126,15 @@ const Icon = ({ n, className = 'h-4 w-4' }) => (
   </svg>
 );
 
-// ink = main orangered, or = dark orangered (also for delete), gr = soft orangered, w = white
+// Shared button variants combine the primary orange with blue, green, and neutral ink.
 const Btn = ({ c = 'ink', className = '', ...p }) => {
   const look = {
     ink: 'bg-[#ff4500] text-white',
     or: 'bg-[#b32d00] text-white',
-    gr: 'bg-[#ff7a45] text-white',
-    w: 'bg-white text-[#b32d00] border border-[#ff4500]/40',
+    gr: 'bg-[#15803d] text-white',
+    blue: 'bg-[#2563eb] text-white',
+    black: 'bg-[#111827] text-white',
+    w: 'bg-white text-[#111827] border border-slate-300',
   }[c];
   return (
     <button
@@ -143,7 +145,7 @@ const Btn = ({ c = 'ink', className = '', ...p }) => {
   );
 };
 
-const FIELD = 'w-full px-3 py-2 text-xs rounded-[6px] border border-[#ff4500]/30 bg-white focus:outline-none focus:border-[#ff4500] focus:ring-2 focus:ring-[#ff4500]/15 disabled:bg-black/5';
+const FIELD = 'w-full px-3 py-2 text-xs rounded-[6px] border border-slate-300 bg-white focus:outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#2563eb]/15 disabled:bg-black/5';
 const Inp = ({ className = '', ...p }) => <input className={`${FIELD} ${className}`} {...p} />;
 const Txt = ({ className = '', ...p }) => <textarea rows={4} className={`${FIELD} ${className}`} {...p} />;
 const Sel = ({ o = [], className = '', ...p }) => (
@@ -157,7 +159,7 @@ const Sel = ({ o = [], className = '', ...p }) => (
 );
 
 const Card = ({ t, sub, action, children }) => (
-  <section className="rounded-[6px] border border-[#ff4500]/15 bg-white p-5 mb-6">
+  <section className="rounded-[6px] border border-slate-200 bg-white p-5 mb-6 shadow-sm">
     {(t || action) && (
       <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
         <div>
@@ -175,7 +177,7 @@ const Alert = ({ ok, children }) => (
   <p
     role={ok ? 'status' : 'alert'}
     className={`rounded-[6px] border px-4 py-3 mb-5 text-xs font-medium ${
-      ok ? 'border-[#ff4500]/40 bg-[#ff4500]/5 text-[#b32d00]' : 'border-[#b32d00]/50 bg-[#b32d00]/10 text-[#7a1f00]'
+      ok ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-800'
     }`}
   >
     {children}
@@ -183,20 +185,20 @@ const Alert = ({ ok, children }) => (
 );
 
 const BADGE = {
-  approved: 'bg-[#ff4500] text-white',
+  approved: 'bg-green-700 text-white',
   pending: 'bg-[#ff4500]/15 text-[#b32d00]',
   rejected: 'bg-black/10 text-black/55',
-  present: 'bg-[#ff4500] text-white',
-  absent: 'bg-[#b32d00]/15 text-[#7a1f00]',
-  active: 'bg-[#ff4500] text-white',
+  present: 'bg-green-700 text-white',
+  absent: 'bg-red-100 text-red-800',
+  active: 'bg-blue-600 text-white',
   returned: 'bg-[#ff9a73]/30 text-[#b32d00]',
   removed: 'bg-black/10 text-black/55',
-  available: 'bg-[#ff4500]/10 text-[#b32d00]',
+  available: 'bg-green-100 text-green-800',
   limited: 'bg-[#ff9a73]/30 text-[#b32d00]',
   requested: 'bg-[#ff9a73]/30 text-[#b32d00]',
-  full: 'bg-[#b32d00] text-white',
+  full: 'bg-slate-800 text-white',
   draft: 'bg-[#ff9a73]/30 text-[#b32d00]',
-  published: 'bg-[#ff4500] text-white',
+  published: 'bg-blue-600 text-white',
   none: 'bg-black/5 text-black/60',
 };
 const Badge = ({ s, children }) => (
