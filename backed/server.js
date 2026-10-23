@@ -40,6 +40,7 @@ const auth = (...roles) => (req, res, next) => {
 };
 // Minister of Communication: checked in the database on every request.
 const comm = [auth(), wrap(async (req, _res, next) => {
+  if (req.user.role === 'admin') return next();
   const ok = req.user.id && await one("SELECT 1 AS ok FROM users WHERE id = $1 AND profile->>'comm' = 'true'", [req.user.id]);
   if (!ok) fail(403, 'Only the Minister of Communication can do this.');
   next();
