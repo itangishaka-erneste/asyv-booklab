@@ -10,6 +10,13 @@ const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 // Hosted computer-lab photo fallback; deployments may provide their own
 // Agahozo-Shalom Youth Village image via VITE_LAB_IMAGE.
 const LAB_IMG = import.meta.env.VITE_LAB_IMAGE || 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1400&q=85';
+const LANDING_IMG = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSYWAQcI51JY25j0Etbw5yZ34CZ4tVFV6llwLZnbjmU1PiLKzrGFlf4_UDc&s=10';
+const LAB_IMAGES = [
+  LAB_IMG,
+  'https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1497366811353-6870744d04b2?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1000&q=80',
+];
 
 let token = localStorage.getItem('lms_token') || '';
 const getToken = () => token;
@@ -681,10 +688,10 @@ const GLOBAL_CSS = `
 @media (prefers-reduced-motion:reduce){.lb-in,.lb-in2,.lb-in3,.lb-ken,.lb-float,.lb-float2,.lb-pulse,.lb-scan,.lb-shift,.lb-grow,.lb-bounce{animation:none!important}}
 `;
 
-const LabImage = ({ className = '', ken }) => {
+const LabImage = ({ className = '', ken, src = LAB_IMG }) => {
   const [bad, setBad] = useState(false);
   if (bad) return <div className={`grid place-items-center bg-[#f0fdf4] text-[#16a34a] ${className}`}><Icon n="Labs" className="h-10 w-10" /></div>;
-  return <img src={LAB_IMG} alt="Computers in a learning lab at Agahozo-Shalom Youth Village" loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} className={`object-cover ${ken ? 'lb-ken' : ''} ${className}`} />;
+  return <img src={src} alt="Computers in a learning lab at Agahozo-Shalom Youth Village" loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} className={`object-cover ${ken ? 'lb-ken' : ''} ${className}`} />;
 };
 
 /* ================================================================== */
@@ -751,7 +758,7 @@ function Hero({ onLogin }) {
           <div className="relative mx-auto w-full max-w-xl lb-in2">
             <div aria-hidden="true" className="lb-shift absolute -bottom-4 -right-4 h-full w-full rounded-[8px] bg-[#16a34a]/15" />
             <div className="relative aspect-[4/3] overflow-hidden rounded-[8px] border border-black/10 shadow-xl">
-              <LabImage ken className="h-full w-full" />
+              <LabImage src={LANDING_IMG} ken className="h-full w-full" />
               <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
               <span aria-hidden="true" className="lb-scan absolute inset-x-0 h-20 bg-gradient-to-b from-transparent via-white/30 to-transparent" />
               <span className="absolute left-4 top-4 flex items-center gap-2 rounded-[6px] bg-white px-3 py-1.5 text-[11px] font-semibold">
@@ -815,12 +822,12 @@ const Legend3 = () => (
   </div>
 );
 
-function LabCard({ lab, day, past, onLogin }) {
+function LabCard({ lab, day, past, onLogin, imageIndex = 0 }) {
   const [open, setOpen] = useState(null);
   return (
     <article className="group flex flex-col overflow-hidden rounded-[8px] border border-black/10 bg-white transition-shadow hover:shadow-lg">
       <div className="relative h-36 overflow-hidden">
-        <LabImage className="h-full w-full transition-transform duration-700 group-hover:scale-110" />
+        <LabImage src={LAB_IMAGES[imageIndex % LAB_IMAGES.length]} className="h-full w-full transition-transform duration-700 group-hover:scale-110" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
         <div className="absolute inset-x-4 bottom-3 flex items-end justify-between gap-3 text-white">
           <div className="min-w-0">
@@ -906,7 +913,7 @@ function LabBoard({ onLogin }) {
         {!loading && data.labs.length === 0 && <Empty>No labs have been added yet.</Empty>}
         {!loading && data.labs.length > 0 && labs.length === 0 && <Empty>No lab matches these filters.</Empty>}
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {!loading && labs.map((l) => <LabCard key={l.id} lab={l} day={day} past={day < today()} onLogin={onLogin} />)}
+          {!loading && labs.map((l, i) => <LabCard key={l.id} lab={l} day={day} past={day < today()} onLogin={onLogin} imageIndex={i} />)}
         </div>
       </div>
     </div>
