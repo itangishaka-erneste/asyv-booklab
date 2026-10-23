@@ -1,12 +1,5 @@
-// server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js connects, Neon hosts it).
-// Accounts are created by seed.sql or by the admin. EVERYONE logs in with Google only.
-// New in this version:
-//  - A lab time (even a draft) can be assigned to a class, a group, or chosen people.
-//      * exclusive = true  -> only those people can join that lab time.
-//      * exclusive = false -> those people get their places automatically, the remaining places stay open to everyone.
-//  - Assigned people are booked automatically (approved while places remain, then queued as pending).
-//  - Students only receive lab times they are allowed to book. Drafts stay hidden from everyone but the admin.
-//  - "publish-all" can publish only the lab times you send (for example the ones shown for one week).
+// server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js).
+// Accounts are created by seed.sql or by the admin. EVERYONE signs in with Google only.
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -41,7 +34,7 @@ const fail = (code, msg) => { const e = new Error(msg); e.code = code; throw e; 
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const auth = (...roles) => (req, res, next) => {
   try { req.user = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), SECRET); }
-  catch { return res.status(401).json({ error: 'Please log in again.' }); }
+  catch { return res.status(401).json({ error: 'Please sign in again.' }); }
   if (roles.length && !roles.includes(req.user.role)) return res.status(403).json({ error: 'You do not have access to this.' });
   next();
 };
@@ -53,22 +46,19 @@ const comm = [auth(), wrap(async (req, _res, next) => {
 })];
 
 // ---------- Data helpers ----------
-// session_places is a view created at start-up (see ensureTables).
-//   seats = places the admin opened (never more than the lab's computers), left = seats - approved, published = visible to others.
-//   forClass / forGroup / forGroupName / forPeople / people / exclusive describe who the lab time is assigned to.
+// session_places is a view (see ensureTables). seats = places open, left = seats - approved, published = visible to others.
 const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
 const HM = t => String(t || '').slice(0, 5);
-const ASSIGNED = 'Assigned by admin'; // booked_by value of automatic bookings
+const ASSIGNED = 'Assigned by admin';
 const forText = s => s.forGroupName || s.forClass || (s.forPeople ? `${s.forPeople} chosen student${s.forPeople === 1 ? '' : 's'}` : '');
 
 const withPeople = async rows => {
-  const m = new Map((await query(`SELECT username, email, profile->>'picture' AS picture, md5(lower(email)) AS gid FROM users`)).map(r => [r.username, r]));
+  const m = new Map((await query('SELECT username, email, profile->>\'picture\' AS picture, md5(lower(email)) AS gid FROM users')).map(r => [r.username, r]));
   return rows.map(a => { const p = m.get(a.name); return { ...a, email: p?.email || '', picture: p?.picture || '', gid: p?.gid || '' }; });
 };
 
 const SESSION_ORDER = 'ORDER BY date, "from", lab';
-// all = true (admin): every lab time, drafts included, with the list of assigned people.
-// A student only gets published lab times they may book. Everyone else gets published lab times (without the people list).
+// Admin: every lab time (drafts too). Students: published lab times they may book. Others: published lab times.
 const listSessions = async (all = false, user = null) => {
   if (all) return query(`SELECT * FROM session_places ${SESSION_ORDER}`);
   let rows;
@@ -86,7 +76,7 @@ const listSessions = async (all = false, user = null) => {
 const listApps = async (where = '', params = []) =>
   withPeople(await query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params));
 const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_places WHERE id = $1', [sid]))[0]?.left ?? 0;
-const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Application not found.');
+const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Booking not found.');
 const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
 const saveOption = (q, k, value) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(value)]);
 
@@ -102,13 +92,13 @@ const studentProfile = async (grade, combo, section) => {
   const opts = await getOptions();
   const grades = opts.grades?.length ? opts.grades : DEFAULTS.grades;
   grade = String(grade || '').trim();
-  if (!grades.includes(grade)) fail(400, 'Choose a valid grade.');
+  if (!grades.includes(grade)) fail(400, 'Choose a valid class.');
   const combos = combosFor(opts, grade);
   combo = String(combo || '').trim();
-  if (combos.length && !combos.includes(combo)) fail(400, `Choose a combination for ${grade}: ${combos.join(', ')}.`);
+  if (combos.length && !combos.includes(combo)) fail(400, `Choose a valid combination for ${grade}.`);
   if (!combos.length) combo = '';
   section = String(section || '').trim().toUpperCase();
-  if (section && !SECTION_RE.test(section)) fail(400, 'The section must be a letter (A to Z) or a number (1 to 99), or empty.');
+  if (section && !SECTION_RE.test(section)) fail(400, 'The section must be a letter (A to Z) or a number (1 to 12), or empty.');
   return { grade, combo, section, cls: [grade, combo, section].filter(Boolean).join(' ') };
 };
 
@@ -124,19 +114,15 @@ io.on('connection', socket => {
   socket.join('auth');
   socket.join(socket.user.role === 'admin' ? 'admins' : `user:${socket.user.name}`);
 });
-// 'seats' is only a signal. Every screen re-reads /api/sessions, so each person gets only the lab times they may see
-// (drafts are hidden, and students do not receive lab times reserved for other people).
-const pushSeats = () => {
-  io.emit('overview:update');
-  io.to('auth').emit('seats');
-};
+// 'seats' is only a signal. Each screen re-reads its own data, so people only see what they may see.
+const pushSeats = () => { io.emit('overview:update'); io.to('auth').emit('seats'); };
 const pushApps = (names = []) => {
   io.to('admins').emit('applications:update');
   [...new Set(names.filter(Boolean))].forEach(n => io.to(`user:${n}`).emit('applications:update'));
   pushSeats();
 };
 
-// ---------- Login: Google only ----------
+// ---------- Sign in: Google only ----------
 app.post('/api/google', wrap(async (req, res) => {
   let p;
   try { p = (await gClient.verifyIdToken({ idToken: req.body.credential, audience: process.env.GOOGLE_CLIENT_ID })).getPayload(); }
@@ -147,34 +133,58 @@ app.post('/api/google', wrap(async (req, res) => {
     return res.json({ token: sign({ id: 0, role: 'admin', name: cleanName(p.name || email.split('@')[0]), email, picture }) });
   const u = await one('SELECT id, username, role FROM users WHERE lower(email) = $1', [email]);
   if (!u) fail(403, 'There is no account for this Google email. Ask your admin to add it.');
-  if (picture) await query("UPDATE users SET profile = profile || jsonb_build_object('picture', $1::text) WHERE id = $2", [picture, u.id]);
+  // A photo the person uploaded (link) is kept. Google's photo is used only when no custom photo is set.
+  if (picture) await query("UPDATE users SET profile = profile || jsonb_build_object('picture', $1::text) WHERE id = $2 AND COALESCE(profile->>'pictureCustom', '') <> 'true'", [picture, u.id]);
   res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email, picture }) });
 }));
+
 app.get('/api/me', auth(), wrap(async (req, res) => {
-  let isComm = false;
-  if (req.user.id) isComm = !!(await one("SELECT 1 AS ok FROM users WHERE id = $1 AND profile->>'comm' = 'true'", [req.user.id]));
-  res.json({ ...req.user, comm: isComm });
+  let isComm = false, picture = req.user.picture || '';
+  if (req.user.id) {
+    const row = await one("SELECT profile->>'picture' AS picture, (profile->>'comm' = 'true') AS comm FROM users WHERE id = $1", [req.user.id]);
+    isComm = !!row?.comm;
+    picture = row?.picture || picture;
+  }
+  res.json({ ...req.user, picture, comm: isComm });
 }));
 
-// ---------- Profile ----------
+// Own photo and phone. Name and email come from the school.
+app.put('/api/me/profile', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
+  const picture = directUrl(String(req.body.picture || '').trim());
+  const phone = String(req.body.phone || '').trim().slice(0, 40);
+  if (picture && !/^https?:\/\/\S+$/i.test(picture)) fail(400, 'The photo must be a link that starts with http:// or https://');
+  if (picture) await query("UPDATE users SET profile = profile || jsonb_build_object('picture', $1::text, 'pictureCustom', 'true', 'phone', $2::text) WHERE id = $3", [picture, phone, req.user.id]);
+  else await query("UPDATE users SET profile = (profile - 'pictureCustom' - 'picture') || jsonb_build_object('phone', $1::text) WHERE id = $2", [phone, req.user.id]);
+  io.to(`user:${req.user.name}`).emit('me:update');
+  res.json({ ok: true });
+}));
+
 app.get('/api/profile', auth(), wrap(async (req, res) => {
   const me = req.user;
-  let info = { name: me.name, email: me.email || '', role: me.role, picture: me.picture || '', cls: '', combo: '', section: '', comm: false };
+  let info = { name: me.name, email: me.email || '', role: me.role, picture: me.picture || '', cls: '', combo: '', section: '', phone: '', comm: false };
   if (me.id) {
-    const u = await one(`SELECT username, email, role, profile->>'picture' AS picture, ${CLASS_SQL} AS cls, profile->>'combo' AS combo, profile->>'section' AS section, (profile->>'comm' = 'true') AS comm FROM users WHERE id = $1`, [me.id]) || fail(404, 'Account not found.');
-    info = { name: u.username, email: u.email, role: u.role, picture: u.picture || me.picture || '', cls: u.cls, combo: u.combo || '', section: u.section || '', comm: !!u.comm };
+    const u = await one(`SELECT username, email, role, profile->>'picture' AS picture, ${CLASS_SQL} AS cls, profile->>'combo' AS combo, profile->>'section' AS section, profile->>'phone' AS phone, (profile->>'comm' = 'true') AS comm FROM users WHERE id = $1`, [me.id]) || fail(404, 'Account not found.');
+    info = { name: u.username, email: u.email, role: u.role, picture: u.picture || me.picture || '', cls: u.cls, combo: u.combo || '', section: u.section || '', phone: u.phone || '', comm: !!u.comm };
   }
   let stats = null;
   if (me.role !== 'admin') {
     const rows = await listApps(me.role === 'student' ? 'name = $1' : '"bookedBy" = $1', [me.name]);
     const n = k => rows.filter(a => a.status === k).length;
-    stats = { total: rows.length, approved: n('approved'), pending: n('pending'), rejected: n('rejected'),
-      present: rows.filter(a => a.att === 'present').length, absent: rows.filter(a => a.att === 'absent').length };
+    stats = { total: rows.length, approved: n('approved'), pending: n('pending'), rejected: n('rejected'), present: rows.filter(a => a.att === 'present').length, absent: rows.filter(a => a.att === 'absent').length };
   }
   res.json({ ...info, stats });
 }));
 
-// ---------- User accounts (admin only) ----------
+// Student or teacher: the class and groups the admin added them to.
+app.get('/api/me/memberships', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
+  const me = req.user.id ? await one(`SELECT ${CLASS_SQL} AS cls FROM users WHERE id = $1`, [req.user.id]) : null;
+  const groups = req.user.id
+    ? await query('SELECT g.id, g.name, g.description FROM student_groups g JOIN student_group_members m ON m.group_id = g.id WHERE m.user_id = $1 ORDER BY g.name', [req.user.id])
+    : [];
+  res.json({ cls: me?.cls || '', groups });
+}));
+
+// ---------- Accounts (admin) ----------
 app.get('/api/users', auth('admin'), wrap(async (_, res) =>
   res.json(await query(`SELECT id, username AS name, email, role, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'grade' AS grade, profile->>'combo' AS combo, profile->>'section' AS section, (profile->>'comm' = 'true') AS comm FROM users ORDER BY role, username`))));
 
@@ -238,6 +248,16 @@ app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Move many selected students to one class at once.
+app.patch('/api/students/class', auth('admin'), wrap(async (req, res) => {
+  const ids = (Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(Number.isInteger);
+  if (!ids.length) fail(400, 'Choose at least one student.');
+  const p = await studentProfile(req.body.grade, req.body.combo, req.body.section);
+  await query("UPDATE users SET profile = profile || $2::jsonb WHERE role = 'student' AND id = ANY($1::int[])", [ids, JSON.stringify(p)]);
+  pushSeats();
+  res.json({ updated: ids.length });
+}));
+
 app.patch('/api/users/:id/communication', auth('admin'), wrap(async (req, res) => {
   const u = await one('SELECT id, username FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
   if (req.body.on) await query(`UPDATE users SET profile = profile || '{"comm":"true"}'::jsonb WHERE id = $1`, [u.id]);
@@ -246,9 +266,9 @@ app.patch('/api/users/:id/communication', auth('admin'), wrap(async (req, res) =
   res.json({ ok: true });
 }));
 
-app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM users WHERE id = $1', [req.params.id]); res.sendStatus(204); }));
+app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM users WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
-// ---------- Options ----------
+// ---------- Options (reasons, grades, combinations) ----------
 app.get('/api/options', wrap(async (_, res) => res.json(await getOptions())));
 app.put('/api/options', auth('admin'), wrap(async (req, res) => {
   await tx(async q => {
@@ -258,41 +278,16 @@ app.put('/api/options', auth('admin'), wrap(async (req, res) => {
         await saveOption(q, k, Object.fromEntries(Object.entries(v).map(([g, list]) => [String(g).trim(), Array.isArray(list) ? cleanList(list) : []])));
     }
   });
-  res.json(await getOptions());
-}));
-
-app.post('/api/options/rename', auth('admin'), wrap(async (req, res) => {
-  const f = cleanCode(req.body.from), t = cleanCode(req.body.to), g = cleanCode(req.body.grade);
-  if (!f || !t) fail(400, 'Enter the new name.');
-  await tx(async q => {
-    const o = Object.fromEntries((await q('SELECT key, value FROM options')).map(r => [r.key, r.value]));
-    const grades = [...(o.grades?.length ? o.grades : DEFAULTS.grades)];
-    const gc = Object.fromEntries(grades.map(x => [x, [...(o.gradeCombos?.[x] ?? DEFAULT_GRADE_COMBOS[x] ?? [])]]));
-    if (g) {
-      if (!gc[g]?.includes(f)) fail(404, 'That combination does not exist.');
-      if (gc[g].includes(t)) fail(409, `${g} already has a combination called ${t}.`);
-      gc[g] = gc[g].map(c => (c === f ? t : c));
-      await q(`UPDATE users SET profile = profile || jsonb_build_object('combo', $3::text, 'cls', concat_ws(' ', NULLIF(profile->>'grade',''), $3::text, NULLIF(profile->>'section','')))
-               WHERE role = 'student' AND profile->>'grade' = $1 AND profile->>'combo' = $2`, [g, f, t]);
-    } else {
-      if (!grades.includes(f)) fail(404, 'That grade does not exist.');
-      if (grades.includes(t)) fail(409, `The grade ${t} already exists.`);
-      grades[grades.indexOf(f)] = t; gc[t] = gc[f]; delete gc[f];
-      await q(`UPDATE users SET profile = profile || jsonb_build_object('grade', $2::text, 'cls', concat_ws(' ', $2::text, NULLIF(profile->>'combo',''), NULLIF(profile->>'section','')))
-               WHERE role = 'student' AND profile->>'grade' = $1`, [f, t]);
-    }
-    await saveOption(q, 'grades', grades);
-    await saveOption(q, 'gradeCombos', gc);
-  });
+  pushSeats();
   res.json(await getOptions());
 }));
 
 app.get('/api/classes', auth('teacher', 'psychosocial', 'admin'), wrap(async (_, res) =>
   res.json((await query(`SELECT DISTINCT ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND ${CLASS_SQL} <> '' ORDER BY cls`)).map(r => r.cls))));
 
-// Students of a class, of a group (?group=ID), or all students for psychosocial workers.
+// Students of a class, of a group (?group=ID), or all students (?class= empty, psychosocial only).
 app.get('/api/students', auth('teacher', 'psychosocial', 'admin'), wrap(async (req, res) => {
-  const cols = `username AS name, email, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'family' AS family, profile->>'combo' AS combo`;
+  const cols = `username AS name, email, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'combo' AS combo`;
   const gid = Number(req.query.group) || 0;
   if (gid) return res.json(await query(`SELECT ${cols} FROM users WHERE role = 'student' AND id IN (SELECT user_id FROM student_group_members WHERE group_id = $1) ORDER BY username`, [gid]));
   const cls = req.query.class || '';
@@ -301,8 +296,6 @@ app.get('/api/students', auth('teacher', 'psychosocial', 'admin'), wrap(async (r
 }));
 
 // ---------- Student groups ----------
-// The admin names a group (for example "Isomo circle") and adds many students at once: a list of names or emails
-// separated by commas, semicolons or new lines. Names are matched like accounts (same words, any order).
 const splitTokens = v => [...new Set((Array.isArray(v) ? v : String(v || '').split(/[\n,;]+/)).map(x => String(x).trim()).filter(Boolean))];
 const resolveStudents = async tokens => {
   const studs = await query("SELECT id, username, lower(email) AS email FROM users WHERE role = 'student'");
@@ -323,7 +316,6 @@ const groupName = async (name, exceptId = 0) => {
   return name;
 };
 
-// Everyone who books gets the groups with their size. Only the admin also gets the members.
 app.get('/api/groups', auth('admin', 'teacher', 'psychosocial'), wrap(async (req, res) => {
   const groups = await query('SELECT id, name, description FROM student_groups ORDER BY name');
   const m = await query(`SELECT gm.group_id, id, username AS name, email, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className"
@@ -341,6 +333,7 @@ app.post('/api/groups', auth('admin'), wrap(async (req, res) => {
     const g = (await q('INSERT INTO student_groups(name, description) VALUES($1,$2) RETURNING id', [name, String(req.body.description || '').trim().slice(0, 300)]))[0];
     return { id: g.id, added: await addMembers(q, g.id, ids) };
   });
+  pushSeats();
   res.json({ ...out, notFound });
 }));
 
@@ -356,12 +349,14 @@ app.post('/api/groups/:id/members', auth('admin'), wrap(async (req, res) => {
   const g = await getGroup(req.params.id);
   const { ids, notFound } = await resolveStudents(splitTokens(req.body.members));
   const added = await tx(q => addMembers(q, g.id, ids));
+  pushSeats();
   res.json({ added, notFound });
 }));
 
 app.delete('/api/groups/:id/members/:userId', auth('admin'), wrap(async (req, res) => {
   const g = await getGroup(req.params.id);
   await query('DELETE FROM student_group_members WHERE group_id = $1 AND user_id = $2', [g.id, +req.params.userId]);
+  pushSeats();
   res.sendStatus(204);
 }));
 
@@ -376,7 +371,7 @@ app.delete('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
 app.get('/api/labs', auth(), wrap(async (_, res) => res.json(await query('SELECT id, name, pcs FROM labs ORDER BY name'))));
 app.post('/api/labs', auth('admin'), wrap(async (req, res) => {
   const { name, pcs } = req.body;
-  if (!name?.trim() || !(+pcs >= 0)) fail(400, 'Enter a lab name and number of computers.');
+  if (!name?.trim() || !(+pcs >= 1)) fail(400, 'Enter a lab name and at least one computer.');
   try { res.json(await one('INSERT INTO labs(name, pcs) VALUES($1,$2) RETURNING id', [name.trim(), +pcs])); }
   catch (e) { fail(e.code === '23505' ? 409 : 500, e.code === '23505' ? 'A lab with this name already exists.' : e.message); }
 }));
@@ -393,8 +388,6 @@ app.delete('/api/labs/:id', auth('admin'), wrap(async (req, res) => { await quer
 
 // ---------- Who a lab time is for ----------
 // audience = { kind: '' | 'class' | 'group' | 'people', value, people: [names or emails], exclusive }
-//   kind ''      -> everyone (no assignment)
-//   exclusive    -> only the assigned people can join. Otherwise they get places first and the rest stay open.
 const parseAudience = async (a = {}) => {
   const kind = ['class', 'group', 'people'].includes(a?.kind) ? a.kind : '';
   const none = { kind: '', forClass: '', forGroup: null, ids: [], notFound: [], exclusive: false };
@@ -417,15 +410,13 @@ const setPeople = async (q, sid, ids) => {
   await q('DELETE FROM session_people WHERE session_id = $1', [sid]);
   if (ids.length) await q('INSERT INTO session_people(session_id, user_id) SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING', [sid, ids]);
 };
-// Every student a lab time is assigned to (class + group + chosen people).
 const membersOf = (q, s) => q(`SELECT u.id, u.username, ${CLASS_SQL} AS cls FROM users u WHERE u.role = 'student' AND (
     ($1::text <> '' AND ${CLASS_SQL} = $1::text)
     OR ($2::int IS NOT NULL AND u.id IN (SELECT user_id FROM student_group_members WHERE group_id = $2::int))
     OR u.id IN (SELECT user_id FROM session_people WHERE session_id = $3::int)
   ) ORDER BY u.username`, [s.for_class || '', s.for_group || null, s.id]);
 
-// Books the assigned students automatically: approved while places remain, then pending (queue).
-// Earlier automatic bookings of people who are no longer assigned are removed. Returns the names touched.
+// Books the assigned students: approved while places remain, then pending. Removes automatic bookings of people no longer assigned.
 const syncAssigned = async (q, sid) => {
   await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sid]);
   const s = (await q(`SELECT id, to_char(date, 'YYYY-MM-DD') AS d, to_char(starts_at, 'HH24:MI') AS "from", to_char(ends_at, 'HH24:MI') AS "to", for_class, for_group FROM sessions WHERE id = $1`, [sid]))[0];
@@ -451,16 +442,13 @@ const syncAssigned = async (q, sid) => {
   return touched;
 };
 
-// ---------- Schedule: drafts, publishing, open places, assignment ----------
-// Everyone except the admin only sees published lab times. Students only see the ones they may book.
+// ---------- Lab times ----------
 app.get('/api/sessions', auth(), wrap(async (req, res) => res.json(await listSessions(req.user.role === 'admin', req.user))));
 
-// published: false saves a draft, true publishes now. places: how many places are open (empty = every computer of the lab).
-// audience: see parseAudience. Assigning people, a class or a group needs one lab.
 app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
   const { date = new Date().toISOString().slice(0, 10), from, to, labIds } = req.body;
   const published = req.body.published === true;
-  if (!from || !to || from >= to) fail(400, 'Choose a start time that is before the end time.');
+  if (!from || !to || from >= to) fail(400, 'The start time must be before the end time.');
   const wanted = req.body.places === undefined || req.body.places === null || req.body.places === '' ? null : Math.floor(+req.body.places);
   if (wanted !== null && !(wanted >= 1)) fail(400, 'Places open must be 1 or more.');
   const labs = (await query('SELECT id, pcs FROM labs')).filter(l => !labIds?.length || labIds.includes(l.id));
@@ -477,7 +465,8 @@ app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
       if (aud.kind) touched.push(...await syncAssigned(q, row.id));
     }
   });
-  pushApps(touched); res.json({ created: labs.length, published, assigned: touched.length, notFound: aud.notFound });
+  pushApps(touched);
+  res.json({ created: labs.length, published, assigned: touched.length, notFound: aud.notFound });
 }));
 
 app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
@@ -502,16 +491,15 @@ app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
       touched.push(...await syncAssigned(q, s.id));
     }
   });
-  pushApps(touched); res.json({ ok: true, assigned: touched.length, notFound: aud?.notFound || [] });
+  pushApps(touched);
+  res.json({ ok: true, assigned: touched.length, notFound: aud?.notFound || [] });
 }));
 
-// Publish or hide one lab time. A lab time with bookings can still be hidden, the bookings stay.
 app.patch('/api/sessions/:id/publish', auth('admin'), wrap(async (req, res) => {
   const r = await query('UPDATE sessions SET published = $1 WHERE id = $2 RETURNING id', [req.body.published === true, req.params.id]);
   if (!r.length) fail(404, 'That lab time does not exist.');
   pushApps(); res.json({ ok: true });
 }));
-// Publish every draft, or only the drafts whose ids are sent (for example the ones shown for one week).
 app.post('/api/sessions/publish-all', auth('admin'), wrap(async (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : null;
   const r = await query('UPDATE sessions SET published = true WHERE published = false AND ($1::int[] IS NULL OR id = ANY($1::int[])) RETURNING id', [ids]);
@@ -519,10 +507,7 @@ app.post('/api/sessions/publish-all', auth('admin'), wrap(async (req, res) => {
 }));
 app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM sessions WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
-// ---------- Public lab overview (no login) ----------
-// Only published lab times, only counts, never names.
-//   taken = approved, waiting = pending (up to the places left), over = pending beyond the places (queue), open = places really free.
-//   for = who the lab time is assigned to, exclusive = only those people can join.
+// ---------- Public lab overview (no login, counts only, never names) ----------
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 app.get('/api/overview', wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : new Date().toISOString().slice(0, 10);
@@ -559,9 +544,8 @@ app.get('/api/overview', wrap(async (req, res) => {
   });
 }));
 
-// ---------- Applications ----------
-// A person never holds two live bookings for the same lab time, or for two lab times that overlap on the same day.
-// Draft lab times cannot be booked. If a lab time is exclusive, only the people it is assigned to can book it.
+// ---------- Bookings ----------
+// One live booking per person per lab time, and no overlaps on the same day. Exclusive lab times are only for the assigned people.
 app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
   const { reason, students } = req.body, sessionId = +req.body.sessionId;
   const asked = req.user.role === 'student' ? [req.user.name] : (Array.isArray(students) ? students : []);
@@ -572,7 +556,7 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
 
   const banned = await query('SELECT name FROM blacklist');
   const blocked = banned.filter(b => byKey.has(nameKey(b.name)));
-  if (blocked.length) fail(403, `Blacklisted students cannot apply: ${blocked.map(b => b.name).join(', ')}`);
+  if (blocked.length) fail(403, `Blocked students cannot book: ${blocked.map(b => b.name).join(', ')}`);
 
   const rows = await query(`SELECT username, ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND username = ANY($1)`, [names]);
   const classes = Object.fromEntries(rows.map(r => [r.username, r.cls]));
@@ -601,8 +585,10 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
         [sessionId, n, classes[n] || '', reason || 'Other', req.user.name])).length;
     }
   });
-  pushApps([...names, req.user.name]); res.json({ created, skipped });
+  pushApps([...names, req.user.name]);
+  res.json({ created, skipped });
 }));
+
 // People who are not the admin never see bookings of lab times that are still drafts.
 app.get('/api/apps', auth(), wrap(async (req, res) => res.json(req.user.role === 'admin'
   ? await listApps()
@@ -614,23 +600,13 @@ app.patch('/api/apps/:id/status', auth('admin'), wrap(async (req, res) => {
   const a = await tx(async q => {
     const a = await getApp(q, req.params.id);
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [a.session_id]);
-    if (status === 'approved' && a.status !== 'approved' && await seatsLeft(q, a.session_id) < 1) fail(409, 'No places left. Move or swap a student first.');
+    if (status === 'approved' && a.status !== 'approved' && await seatsLeft(q, a.session_id) < 1) fail(409, 'No places left in this lab time.');
     await q('UPDATE applications SET status = $1 WHERE id = $2', [status, a.id]);
     return a;
   });
   pushApps([a.student, a.booked_by]); res.json({ ok: true });
 }));
 
-app.post('/api/apps/approve-all', auth('admin'), wrap(async (_, res) => {
-  const approved = await tx(async q => {
-    await q('SELECT id FROM sessions FOR UPDATE');
-    let n = 0;
-    for (const a of await q("SELECT id, session_id FROM applications WHERE status = 'pending' ORDER BY created_at, id"))
-      if (await seatsLeft(q, a.session_id) > 0) { await q("UPDATE applications SET status = 'approved' WHERE id = $1", [a.id]); n++; }
-    return n;
-  });
-  const all = await listApps(); pushApps(all.flatMap(a => [a.name, a.bookedBy])); res.json({ approved });
-}));
 app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => {
   const to = +req.body.sessionId;
   const a = await tx(async q => {
@@ -640,21 +616,13 @@ app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => {
       const twice = await q("SELECT 1 FROM applications WHERE session_id = $1 AND lower(student) = lower($2) AND status <> 'rejected' AND id <> $3", [to, a.student, a.id]);
       if (twice.length) fail(409, 'This student already has a booking in that lab time.');
     }
-    if (a.status === 'approved' && a.session_id !== to && await seatsLeft(q, to) < 1) fail(409, 'The other lab time is full. Swap two students instead.');
+    if (a.status === 'approved' && a.session_id !== to && await seatsLeft(q, to) < 1) fail(409, 'The other lab time is full.');
     await q('UPDATE applications SET session_id = $1 WHERE id = $2', [to, a.id]);
     return a;
   });
   pushApps([a.student, a.booked_by]); res.json({ ok: true });
 }));
-app.post('/api/apps/swap', auth('admin'), wrap(async (req, res) => {
-  const [a, b] = await tx(async q => {
-    const a = await getApp(q, req.body.a), b = await getApp(q, req.body.b);
-    await q('UPDATE applications SET session_id = $1 WHERE id = $2', [b.session_id, a.id]);
-    await q('UPDATE applications SET session_id = $1 WHERE id = $2', [a.session_id, b.id]);
-    return [a, b];
-  });
-  pushApps([a.student, b.student, a.booked_by, b.booked_by]); res.json({ ok: true });
-}));
+
 app.patch('/api/apps/:id/attendance', auth('admin'), wrap(async (req, res) => {
   const att = req.body.att ?? null;
   if (![null, 'present', 'absent'].includes(att)) fail(400, 'Use present or absent.');
@@ -663,7 +631,7 @@ app.patch('/api/apps/:id/attendance', auth('admin'), wrap(async (req, res) => {
   pushApps([a.student]); res.json({ ok: true });
 }));
 
-// ---------- Blacklist, statistics, history ----------
+// ---------- Blocked students and statistics ----------
 app.get('/api/blacklist', auth('admin'), wrap(async (_, res) => res.json((await query('SELECT name FROM blacklist ORDER BY name')).map(r => r.name))));
 app.post('/api/blacklist', auth('admin'), wrap(async (req, res) => {
   const name = cleanName(req.body.name); if (!name) fail(400, 'Enter a student name.');
@@ -673,48 +641,32 @@ app.post('/api/blacklist', auth('admin'), wrap(async (req, res) => {
   });
   pushApps([name]); res.json({ ok: true });
 }));
-app.delete('/api/blacklist/:name', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM blacklist WHERE name = $1', [req.params.name]); res.sendStatus(204); }));
+app.delete('/api/blacklist/:name', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM blacklist WHERE name = $1', [req.params.name]); pushApps(); res.sendStatus(204); }));
 
 app.get('/api/stats/overview', auth('admin'), wrap(async (_, res) => {
-  const [apps, sessions, labRows, people] = await Promise.all([listApps(), listSessions(true), query('SELECT id, name, pcs FROM labs ORDER BY name'), query('SELECT role, COUNT(*)::int AS n FROM users GROUP BY role')]);
+  const [apps, labRows] = await Promise.all([listApps(), query('SELECT id, name, pcs FROM labs ORDER BY name')]);
   const by = k => apps.filter(a => a.status === k).length;
-  const labs = labRows.map(l => {
-    const mine = sessions.filter(s => s.labId === l.id && s.published), ids = mine.map(s => s.id), as = apps.filter(a => ids.includes(a.sid));
-    const cap = mine.reduce((n, s) => n + s.seats, 0), approved = as.filter(a => a.status === 'approved').length;
-    return { lab: l.name, applied: as.length, approved, pending: as.filter(a => a.status === 'pending').length, rejected: as.filter(a => a.status === 'rejected').length, seatsOffered: cap, usagePct: cap ? Math.round(approved / cap * 100) : 0 };
-  });
-  const count = f => apps.reduce((m, a) => { const v = f(a); if (v) m[v] = (m[v] || 0) + 1; return m; }, {});
   const marked = apps.filter(a => a.att), present = marked.filter(a => a.att === 'present').length;
-  res.json({ totals: { applications: apps.length, approved: by('approved'), pending: by('pending'), rejected: by('rejected') }, labs,
-    people: Object.fromEntries(people.map(r => [r.role, r.n])),
-    mostRequested: [...labs].sort((a, b) => b.applied - a.applied)[0]?.lab || null, byReason: count(a => a.reason), byDay: count(a => a.date), byClass: count(a => a.cls),
-    attendance: { present, absent: marked.length - present, rate: marked.length ? Math.round(present / marked.length * 100) : null } });
-}));
-app.get('/api/stats/absenteeism', auth('admin'), wrap(async (_, res) => {
-  const out = {};
-  (await listApps('att IS NOT NULL')).forEach(a => { const r = out[a.name] ||= { applied: 0, attended: 0, absent: 0 }; r.applied++; a.att === 'present' ? r.attended++ : r.absent++; });
-  res.json(out);
-}));
-app.get('/api/history', auth('admin'), wrap(async (req, res) => {
-  const w = [], p = [];
-  if (req.query.date) { p.push(req.query.date); w.push(`date = $${p.length}`); }
-  if (req.query.labId) { p.push(+req.query.labId); w.push(`"labId" = $${p.length}`); }
-  res.json(await listApps(w.join(' AND '), p));
+  res.json({
+    totals: { applications: apps.length, approved: by('approved'), pending: by('pending'), rejected: by('rejected') },
+    labs: labRows.length,
+    attendance: { present, absent: marked.length - present, rate: marked.length ? Math.round(present / marked.length * 100) : null },
+  });
 }));
 
-// ---------- Lost & Found ("Trends") ----------
+// ---------- Lost & Found ----------
 const DAY = 864e5, HOLD_DAYS = 7, MAX_FILES = 6, MAX_FILE = 12 * 1024 * 1024, MAX_TOTAL = 24 * 1024 * 1024;
 const FILE_OK = /^(image\/(png|jpe?g|gif|webp|avif)|video\/(mp4|webm|ogg|quicktime)|text\/plain|application\/(pdf|msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)))$/i;
 const fileKind = mime => (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : 'file');
 const IMG_EXT = /\.(png|jpe?g|gif|webp|avif)(\?|#|$)/i;
 const VID_EXT = /\.(mp4|webm|ogg|mov)(\?|#|$)/i;
-const directUrl = u => {
+function directUrl(u) {
   let m = u.match(/drive\.google\.com\/file\/d\/([\w-]+)/) || u.match(/drive\.google\.com\/(?:open|uc)\?(?:[^#]*&)?id=([\w-]+)/);
   if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1600`;
   if (/^https?:\/\/(www\.)?dropbox\.com\//i.test(u)) { try { const x = new URL(u); x.searchParams.delete('dl'); x.searchParams.set('raw', '1'); return x.toString(); } catch { return u; } }
   m = u.match(/^https?:\/\/(?:www\.)?imgur\.com\/([A-Za-z0-9]{5,8})\/?$/);
   return m ? `https://i.imgur.com/${m[1]}.jpg` : u;
-};
+}
 const PRIVATE_HOST = /^(localhost|127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1)/i;
 const resolveLink = async raw => {
   const url = directUrl(raw);
@@ -728,7 +680,7 @@ const resolveLink = async raw => {
     const type = r.headers.get('content-type') || '';
     if (/^image\//i.test(type)) return { kind: 'image', url };
     if (/^video\//i.test(type)) return { kind: 'video', url };
-  } catch { /* not reachable: keep it as a plain link */ }
+  } catch { /* not reachable: keep as a plain link */ }
   return { kind: 'link', url };
 };
 
@@ -770,7 +722,7 @@ app.get('/api/trends/files/:id', wrap(async (req, res) => {
   });
   const r = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
   if (r && (r[1] || r[2])) {
-    let start = r[1] ? +r[1] : Math.max(size - +r[2], 0), end = r[1] && r[2] ? Math.min(+r[2], size - 1) : size - 1;
+    const start = r[1] ? +r[1] : Math.max(size - +r[2], 0), end = r[1] && r[2] ? Math.min(+r[2], size - 1) : size - 1;
     if (start > end || start >= size) return res.status(416).set('Content-Range', `bytes */${size}`).end();
     return res.status(206).set({ 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 }).end(f.data.subarray(start, end + 1));
   }
@@ -806,6 +758,7 @@ app.put('/api/trends/categories', comm, wrap(async (req, res) => {
   const list = cleanList(Array.isArray(req.body.list) ? req.body.list : []).slice(0, 40);
   if (!list.length) fail(400, 'Keep at least one category.');
   await saveOption(query, 'trendCategories', list);
+  io.emit('trends:update');
   res.json({ list });
 }));
 
@@ -846,10 +799,11 @@ app.delete('/api/trends/:id', comm, wrap(async (req, res) => {
   io.emit('trends:update'); res.sendStatus(204);
 }));
 
-app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.code >= 400 && err.code < 600 ? err.code : (err.type === 'entity.too.large' ? 413 : 500)).json({ error: err.type === 'entity.too.large' ? 'The files are too big. Use smaller photos or paste a link for videos.' : err.message || 'Something went wrong.' }));
+app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.code >= 400 && err.code < 600 ? err.code : (err.type === 'entity.too.large' ? 413 : 500)).json({
+  error: err.type === 'entity.too.large' ? 'The files are too big. Use smaller photos or paste a link for videos.' : err.message || 'Something went wrong.',
+}));
 
 // ---------- Database set-up (safe to run on every start) ----------
-// Creates the Lost & Found tables, the group tables, the draft/places/assignment columns and the session_places view.
 const ensureTables = async () => {
   await query(`CREATE TABLE IF NOT EXISTS trends (
     id serial PRIMARY KEY, title text NOT NULL, description text NOT NULL DEFAULT '', category text NOT NULL DEFAULT 'Other',
@@ -863,7 +817,6 @@ const ensureTables = async () => {
   await query('CREATE INDEX IF NOT EXISTS trends_status_posted_idx ON trends (status, posted_at DESC)');
   await query('CREATE INDEX IF NOT EXISTS trend_media_trend_idx ON trend_media (trend_id)');
 
-  // Student groups
   await query(`CREATE TABLE IF NOT EXISTS student_groups (
     id serial PRIMARY KEY, name text NOT NULL, description text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now())`);
   await query('CREATE UNIQUE INDEX IF NOT EXISTS student_groups_name_idx ON student_groups (lower(name))');
@@ -873,7 +826,6 @@ const ensureTables = async () => {
     PRIMARY KEY (group_id, user_id))`);
   await query('CREATE INDEX IF NOT EXISTS student_group_members_user_idx ON student_group_members (user_id)');
 
-  // Draft schedules, open places and who a lab time is assigned to. Existing lab times stay published, open to everyone.
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS published boolean NOT NULL DEFAULT true');
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS places integer CHECK (places IS NULL OR places >= 1)');
   await query("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_class text NOT NULL DEFAULT ''");
@@ -884,7 +836,6 @@ const ensureTables = async () => {
     user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (session_id, user_id))`);
   await query('CREATE INDEX IF NOT EXISTS session_people_user_idx ON session_people (user_id)');
-  // The first columns keep their old order, the new ones are added at the end.
   await query(`CREATE OR REPLACE VIEW session_places AS
     SELECT s.id, s.lab_id AS "labId", l.name AS lab,
       to_char(s.date, 'YYYY-MM-DD') AS date,
@@ -900,6 +851,7 @@ const ensureTables = async () => {
     LEFT JOIN student_groups g ON g.id = s.for_group
     LEFT JOIN (SELECT session_id, COUNT(*)::int AS n FROM applications WHERE status = 'approved' GROUP BY session_id) a ON a.session_id = s.id`);
 };
+
 const port = process.env.PORT || 4000;
 query('SELECT 1').then(ensureTables).then(seedOptions).then(() => server.listen(port, () => console.log('LMS API and Socket.io running on port ' + port)))
   .catch(e => { console.error('Cannot start. Check the DB_* values in .env and that the database is set up.\n', e.message); process.exit(1); });
