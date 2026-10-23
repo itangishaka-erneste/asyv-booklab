@@ -24,6 +24,7 @@ const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
 const cleanList = list => [...new Set(list.map(x => String(x).trim()).filter(Boolean))];
 const cleanCode = s => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
 const validEmail = e => /^\S+@\S+\.\S+$/.test(e);
+const toIds = v => (Array.isArray(v) ? v : []).map(Number).filter(Number.isInteger);
 
 const app = express(), server = http.createServer(app);
 const io = new Server(server, { cors: { origin: CLIENT } });
@@ -38,7 +39,7 @@ const auth = (...roles) => (req, res, next) => {
   if (roles.length && !roles.includes(req.user.role)) return res.status(403).json({ error: 'You do not have access to this.' });
   next();
 };
-// Minister of Communication: checked in the database on every request.
+// Minister of Communication: checked in the database on every request. The admin can always do it too.
 const comm = [auth(), wrap(async (req, _res, next) => {
   if (req.user.role === 'admin') return next();
   const ok = req.user.id && await one("SELECT 1 AS ok FROM users WHERE id = $1 AND profile->>'comm' = 'true'", [req.user.id]);
@@ -145,15 +146,23 @@ app.get('/api/me', auth(), wrap(async (req, res) => {
     const row = await one("SELECT profile->>'picture' AS picture, (profile->>'comm' = 'true') AS comm FROM users WHERE id = $1", [req.user.id]);
     isComm = !!row?.comm;
     picture = row?.picture || picture;
+  } else if (req.user.role === 'admin') {
+    const row = await one('SELECT picture FROM admin_profiles WHERE email = $1', [req.user.email]);
+    picture = row?.picture || picture;
   }
   res.json({ ...req.user, picture, comm: isComm });
 }));
 
-// Own photo and phone. Name and email come from the school.
-app.put('/api/me/profile', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
+// Own photo and phone. Everyone can change them, the admin too. Name and email come from the school (or Google for the admin).
+app.put('/api/me/profile', auth(), wrap(async (req, res) => {
   const picture = directUrl(String(req.body.picture || '').trim());
   const phone = String(req.body.phone || '').trim().slice(0, 40);
   if (picture && !/^https?:\/\/\S+$/i.test(picture)) fail(400, 'The photo must be a link that starts with http:// or https://');
+  if (req.user.role === 'admin') {
+    await query('INSERT INTO admin_profiles(email, picture, phone) VALUES($1,$2,$3) ON CONFLICT (email) DO UPDATE SET picture = EXCLUDED.picture, phone = EXCLUDED.phone', [req.user.email, picture, phone]);
+    io.to('admins').emit('me:update');
+    return res.json({ ok: true });
+  }
   if (picture) await query("UPDATE users SET profile = profile || jsonb_build_object('picture', $1::text, 'pictureCustom', 'true', 'phone', $2::text) WHERE id = $3", [picture, phone, req.user.id]);
   else await query("UPDATE users SET profile = (profile - 'pictureCustom' - 'picture') || jsonb_build_object('phone', $1::text) WHERE id = $2", [phone, req.user.id]);
   io.to(`user:${req.user.name}`).emit('me:update');
@@ -166,6 +175,10 @@ app.get('/api/profile', auth(), wrap(async (req, res) => {
   if (me.id) {
     const u = await one(`SELECT username, email, role, profile->>'picture' AS picture, ${CLASS_SQL} AS cls, profile->>'combo' AS combo, profile->>'section' AS section, profile->>'phone' AS phone, (profile->>'comm' = 'true') AS comm FROM users WHERE id = $1`, [me.id]) || fail(404, 'Account not found.');
     info = { name: u.username, email: u.email, role: u.role, picture: u.picture || me.picture || '', cls: u.cls, combo: u.combo || '', section: u.section || '', phone: u.phone || '', comm: !!u.comm };
+  } else if (me.role === 'admin') {
+    const a = await one('SELECT picture, phone FROM admin_profiles WHERE email = $1', [me.email]);
+    info.picture = a?.picture || info.picture;
+    info.phone = a?.phone || '';
   }
   let stats = null;
   if (me.role !== 'admin') {
@@ -187,7 +200,7 @@ app.get('/api/me/memberships', auth('student', 'teacher', 'psychosocial'), wrap(
 
 // ---------- Accounts (admin) ----------
 app.get('/api/users', auth('admin'), wrap(async (_, res) =>
-  res.json(await query(`SELECT id, username AS name, email, role, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'grade' AS grade, profile->>'combo' AS combo, profile->>'section' AS section, (profile->>'comm' = 'true') AS comm FROM users ORDER BY role, username`))));
+  res.json(await query(`SELECT id, username AS name, email, role, profile->>'picture' AS picture, profile->>'phone' AS phone, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'grade' AS grade, profile->>'combo' AS combo, profile->>'section' AS section, (profile->>'comm' = 'true') AS comm FROM users ORDER BY role, username`))));
 
 const nameTaken = async (name, exceptId = 0) =>
   (await query('SELECT id, username FROM users')).some(r => r.id !== exceptId && nameKey(r.username) === nameKey(name));
@@ -200,6 +213,8 @@ app.post('/api/users', auth('admin'), wrap(async (req, res) => {
   if (!validEmail(email)) fail(400, 'Enter a valid Google email address.');
   if (!ROLES.includes(role)) fail(400, 'Choose a role.');
   const profile = role === 'student' ? await studentProfile(grade, combo, section) : {};
+  if (req.body.phone) profile.phone = String(req.body.phone).trim().slice(0, 40);
+  if (req.body.comm === true && role !== 'student') profile.comm = 'true';
   if (await nameTaken(name)) fail(409, 'Someone with this name already has an account. Add a middle name or number to tell them apart.');
   try {
     try {
@@ -211,27 +226,45 @@ app.post('/api/users', auth('admin'), wrap(async (req, res) => {
   } catch (e) { uniqueFail(e); }
 }));
 
+// Edit everything about one account: name, email, role, class, phone, photo.
 app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
-  const u = await one('SELECT id, username, role FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
-  const { grade, combo, section } = req.body, sets = [], p = [];
+  const u = await one('SELECT id, username, email, role FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
+  const b = req.body, sets = [], p = [];
   const add = (col, val) => { p.push(val); sets.push(`${col} = $${p.length}`); };
+  let expr = 'profile';
+  const merge = obj => { p.push(JSON.stringify(obj)); expr = `(${expr} || $${p.length}::jsonb)`; };
+  const drop = k => { expr = `(${expr} - '${k}')`; };
+
+  const role = b.role || u.role;
+  if (!ROLES.includes(role)) fail(400, 'Choose a role.');
   let newName = null, emailChanged = false;
-  if (req.body.name != null && cleanName(req.body.name) !== u.username) {
-    newName = cleanName(req.body.name);
+  if (b.name != null && cleanName(b.name) !== u.username) {
+    newName = cleanName(b.name);
     if (!newName) fail(400, 'The name cannot be empty.');
     if (await nameTaken(newName, u.id)) fail(409, 'Someone with this name already has an account.');
     add('username', newName);
   }
-  if (req.body.email) {
-    const email = String(req.body.email).trim().toLowerCase();
+  if (b.email) {
+    const email = String(b.email).trim().toLowerCase();
     if (!validEmail(email)) fail(400, 'Enter a valid Google email address.');
-    add('email', email);
-    emailChanged = true;
+    if (email !== String(u.email || '').toLowerCase()) { add('email', email); emailChanged = true; }
   }
-  if (u.role === 'student' && grade) {
-    p.push(JSON.stringify(await studentProfile(grade, combo, section)));
-    sets.push(`profile = ${emailChanged ? "(profile - 'picture')" : 'profile'} || $${p.length}::jsonb`);
-  } else if (emailChanged) sets.push("profile = profile - 'picture'");
+  if (role !== u.role) add('role', role);
+  if (role === 'student') {
+    if (b.grade || role !== u.role) merge(await studentProfile(b.grade, b.combo, b.section));
+  } else if (u.role === 'student') {
+    ['grade', 'combo', 'section', 'cls'].forEach(drop);
+  }
+  if (emailChanged && b.picture === undefined) { drop('picture'); drop('pictureCustom'); }
+  if (b.picture !== undefined) {
+    const pic = directUrl(String(b.picture || '').trim());
+    if (pic && !/^https?:\/\/\S+$/i.test(pic)) fail(400, 'The photo must be a link that starts with http:// or https://');
+    if (pic) merge({ picture: pic, pictureCustom: 'true' });
+    else { drop('picture'); drop('pictureCustom'); }
+  }
+  if (b.phone !== undefined) merge({ phone: String(b.phone || '').trim().slice(0, 40) });
+  if (role === 'student') drop('comm');
+  if (expr !== 'profile') sets.push(`profile = ${expr}`);
   if (!sets.length) return res.json({ ok: true });
   p.push(u.id);
   try {
@@ -245,13 +278,15 @@ app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
       }
     });
   } catch (e) { uniqueFail(e); }
+  io.to(`user:${u.username}`).emit('me:update');
+  if (newName) io.to(`user:${newName}`).emit('me:update');
   pushApps(newName ? [u.username, newName] : [u.username]);
   res.json({ ok: true });
 }));
 
 // Move many selected students to one class at once.
 app.patch('/api/students/class', auth('admin'), wrap(async (req, res) => {
-  const ids = (Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(Number.isInteger);
+  const ids = toIds(req.body.ids);
   if (!ids.length) fail(400, 'Choose at least one student.');
   const p = await studentProfile(req.body.grade, req.body.combo, req.body.section);
   await query("UPDATE users SET profile = profile || $2::jsonb WHERE role = 'student' AND id = ANY($1::int[])", [ids, JSON.stringify(p)]);
@@ -259,6 +294,7 @@ app.patch('/api/students/class', auth('admin'), wrap(async (req, res) => {
   res.json({ updated: ids.length });
 }));
 
+// Appoint or remove the Minister of Communication (any teacher, psychosocial worker or student).
 app.patch('/api/users/:id/communication', auth('admin'), wrap(async (req, res) => {
   const u = await one('SELECT id, username FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
   if (req.body.on) await query(`UPDATE users SET profile = profile || '{"comm":"true"}'::jsonb WHERE id = $1`, [u.id]);
@@ -267,7 +303,24 @@ app.patch('/api/users/:id/communication', auth('admin'), wrap(async (req, res) =
   res.json({ ok: true });
 }));
 
-app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM users WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
+// Deleting an account also removes its own bookings so no ghost names stay in the lab lists.
+const deleteUsers = async ids => {
+  if (!ids.length) return 0;
+  const names = await tx(async q => {
+    const list = (await q('SELECT username FROM users WHERE id = ANY($1::int[])', [ids])).map(r => r.username);
+    await q('DELETE FROM applications WHERE student = ANY($1::text[])', [list]);
+    await q('DELETE FROM users WHERE id = ANY($1::int[])', [ids]);
+    return list;
+  });
+  pushApps(names);
+  return names.length;
+};
+app.post('/api/users/bulk-delete', auth('admin'), wrap(async (req, res) => {
+  const ids = toIds(req.body.ids);
+  if (!ids.length) fail(400, 'Choose at least one account.');
+  res.json({ deleted: await deleteUsers(ids) });
+}));
+app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await deleteUsers(toIds([req.params.id])); res.sendStatus(204); }));
 
 // ---------- Options (reasons, grades, combinations) ----------
 app.get('/api/options', wrap(async (_, res) => res.json(await getOptions())));
@@ -377,12 +430,17 @@ app.post('/api/labs', auth('admin'), wrap(async (req, res) => {
   catch (e) { fail(e.code === '23505' ? 409 : 500, e.code === '23505' ? 'A lab with this name already exists.' : e.message); }
 }));
 app.put('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
-  const { name, pcs } = req.body;
+  const { pcs } = req.body;
+  const name = req.body.name == null ? null : String(req.body.name).trim();
+  if (name !== null && !name) fail(400, 'The lab name cannot be empty.');
+  if (pcs != null && !(+pcs >= 1)) fail(400, 'A lab needs at least one computer.');
   if (pcs != null && (await listSessions(true)).some(s => s.labId == req.params.id && s.seats - s.left > +pcs)) fail(409, 'More students are approved than this many computers.');
-  await tx(async q => {
-    await q('UPDATE labs SET name = COALESCE($1, name), pcs = COALESCE($2, pcs) WHERE id = $3', [name ?? null, pcs ?? null, req.params.id]);
-    if (pcs != null) await q('UPDATE sessions SET places = LEAST(places, $1::int) WHERE lab_id = $2 AND places IS NOT NULL', [+pcs, req.params.id]);
-  });
+  try {
+    await tx(async q => {
+      await q('UPDATE labs SET name = COALESCE($1, name), pcs = COALESCE($2, pcs) WHERE id = $3', [name, pcs ?? null, req.params.id]);
+      if (pcs != null) await q('UPDATE sessions SET places = LEAST(places, $1::int) WHERE lab_id = $2 AND places IS NOT NULL', [+pcs, req.params.id]);
+    });
+  } catch (e) { if (e.code === '23505') fail(409, 'A lab with this name already exists.'); throw e; }
   pushSeats(); res.json({ ok: true });
 }));
 app.delete('/api/labs/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM labs WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
@@ -470,11 +528,14 @@ app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
   res.json({ created: labs.length, published, assigned: touched.length, notFound: aud.notFound });
 }));
 
+// Edit a lab time: day, times, places open (empty = every computer) and who it is for.
 app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
   const { date, from, to } = req.body;
-  const s = await one('SELECT id, seats, "left", "labId" FROM session_places WHERE id = $1', [req.params.id]) || fail(404, 'That lab time does not exist.');
-  let places = null;
-  if (req.body.places != null && req.body.places !== '') {
+  const s = await one('SELECT id, seats, "left", "labId", "from", "to" FROM session_places WHERE id = $1', [req.params.id]) || fail(404, 'That lab time does not exist.');
+  if ((from || s.from) >= (to || s.to)) fail(400, 'The start time must be before the end time.');
+  let places = null, clearPlaces = false;
+  if (req.body.places === '' || req.body.places === 'all') clearPlaces = true;
+  else if (req.body.places != null) {
     places = Math.floor(+req.body.places);
     const pcs = (await one('SELECT pcs FROM labs WHERE id = $1', [s.labId])).pcs;
     if (!(places >= 1)) fail(400, 'Places open must be 1 or more.');
@@ -484,8 +545,8 @@ app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
   const aud = req.body.audience !== undefined ? await parseAudience(req.body.audience) : null;
   const touched = [];
   await tx(async q => {
-    await q('UPDATE sessions SET date = COALESCE($1::date, date), starts_at = COALESCE($2::time, starts_at), ends_at = COALESCE($3::time, ends_at), places = COALESCE($4::int, places) WHERE id = $5',
-      [date ?? null, from ?? null, to ?? null, places, s.id]);
+    await q('UPDATE sessions SET date = COALESCE($1::date, date), starts_at = COALESCE($2::time, starts_at), ends_at = COALESCE($3::time, ends_at), places = CASE WHEN $6::boolean THEN NULL ELSE COALESCE($4::int, places) END WHERE id = $5',
+      [date ?? null, from ?? null, to ?? null, places, s.id, clearPlaces]);
     if (aud) {
       await q('UPDATE sessions SET for_class = $1, for_group = $2, exclusive = $3 WHERE id = $4', [aud.forClass, aud.forGroup, aud.exclusive, s.id]);
       await setPeople(q, s.id, aud.ids);
@@ -505,6 +566,12 @@ app.post('/api/sessions/publish-all', auth('admin'), wrap(async (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : null;
   const r = await query('UPDATE sessions SET published = true WHERE published = false AND ($1::int[] IS NULL OR id = ANY($1::int[])) RETURNING id', [ids]);
   pushApps(); res.json({ published: r.length });
+}));
+app.post('/api/sessions/bulk-delete', auth('admin'), wrap(async (req, res) => {
+  const ids = toIds(req.body.ids);
+  if (!ids.length) fail(400, 'Choose at least one lab time.');
+  const r = await query('DELETE FROM sessions WHERE id = ANY($1::int[]) RETURNING id', [ids]);
+  pushApps(); res.json({ deleted: r.length });
 }));
 app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM sessions WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
@@ -630,6 +697,38 @@ app.patch('/api/apps/:id/attendance', auth('admin'), wrap(async (req, res) => {
   const a = await getApp(query, req.params.id);
   await query('UPDATE applications SET attendance = $1 WHERE id = $2', [att, a.id]);
   pushApps([a.student]); res.json({ ok: true });
+}));
+
+// Many bookings at once: approve, reject, set back to waiting, mark present / absent / clear the mark, or remove.
+// Used for "all", "selected" and one lab time's whole list.
+app.post('/api/apps/bulk', auth('admin'), wrap(async (req, res) => {
+  const ids = toIds(req.body.ids), action = req.body.action;
+  if (!ids.length) fail(400, 'Choose at least one booking.');
+  if (!['approve', 'reject', 'pending', 'present', 'absent', 'clear', 'delete'].includes(action)) fail(400, 'Unknown action.');
+  let done = 0, skipped = 0, names = [];
+  await tx(async q => {
+    const rows = await q('SELECT id, session_id, status, student, booked_by FROM applications WHERE id = ANY($1::int[]) ORDER BY session_id, id', [ids]);
+    names = rows.flatMap(r => [r.student, r.booked_by]);
+    if (action === 'approve') {
+      const locked = new Set();
+      for (const r of rows) {
+        if (!locked.has(r.session_id)) { await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [r.session_id]); locked.add(r.session_id); }
+        if (r.status === 'approved') continue;
+        if (await seatsLeft(q, r.session_id) < 1) { skipped++; continue; }
+        await q("UPDATE applications SET status = 'approved' WHERE id = $1", [r.id]);
+        done++;
+      }
+    } else if (action === 'reject' || action === 'pending') {
+      done = (await q('UPDATE applications SET status = $2 WHERE id = ANY($1::int[]) RETURNING id', [ids, action === 'reject' ? 'rejected' : 'pending'])).length;
+    } else if (action === 'delete') {
+      done = (await q('DELETE FROM applications WHERE id = ANY($1::int[]) RETURNING id', [ids])).length;
+    } else {
+      const att = action === 'clear' ? null : action;
+      done = (await q("UPDATE applications SET attendance = $2 WHERE id = ANY($1::int[]) AND status = 'approved' RETURNING id", [ids, att])).length;
+    }
+  });
+  pushApps(names);
+  res.json({ done, skipped });
 }));
 
 // ---------- Blocked students and statistics ----------
@@ -806,6 +905,9 @@ app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.
 
 // ---------- Database set-up (safe to run on every start) ----------
 const ensureTables = async () => {
+  await query(`CREATE TABLE IF NOT EXISTS admin_profiles (
+    email text PRIMARY KEY, picture text NOT NULL DEFAULT '', phone text NOT NULL DEFAULT '')`);
+
   await query(`CREATE TABLE IF NOT EXISTS trends (
     id serial PRIMARY KEY, title text NOT NULL, description text NOT NULL DEFAULT '', category text NOT NULL DEFAULT 'Other',
     found_at text NOT NULL DEFAULT '', contact_phone text NOT NULL DEFAULT '', contact_email text NOT NULL DEFAULT '',
