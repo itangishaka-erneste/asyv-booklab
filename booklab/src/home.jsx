@@ -7,7 +7,9 @@ import logo from './assets/as.png';
 /* ================================================================== */
 
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-const LAB_IMG = import.meta.env.VITE_LAB_IMAGE || '/lab.jpg';
+// Hosted computer-lab photo fallback; deployments may provide their own
+// Agahozo-Shalom Youth Village image via VITE_LAB_IMAGE.
+const LAB_IMG = import.meta.env.VITE_LAB_IMAGE || 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1400&q=85';
 
 let token = localStorage.getItem('lms_token') || '';
 const getToken = () => token;
@@ -682,7 +684,7 @@ const GLOBAL_CSS = `
 const LabImage = ({ className = '', ken }) => {
   const [bad, setBad] = useState(false);
   if (bad) return <div className={`grid place-items-center bg-[#f0fdf4] text-[#16a34a] ${className}`}><Icon n="Labs" className="h-10 w-10" /></div>;
-  return <img src={LAB_IMG} alt="Computer lab" onError={() => setBad(true)} className={`object-cover ${ken ? 'lb-ken' : ''} ${className}`} />;
+  return <img src={LAB_IMG} alt="Computers in a learning lab at Agahozo-Shalom Youth Village" loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} className={`object-cover ${ken ? 'lb-ken' : ''} ${className}`} />;
 };
 
 /* ================================================================== */
