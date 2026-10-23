@@ -1,8 +1,9 @@
 // server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js connects, Neon hosts it).
-// Accounts are created by seed.sql or by the admin. EVERYONE logs in with Google only, so nobody can
-// type someone else's email and pretend to be them. Admin emails (ADMIN_EMAILS) are admins after Google login.
-// The admin can also name a "Minister of Communication" (any account). That person can post lost items
-// (photos, videos, files or links) which everybody sees on the public home page under "Trends".
+// Accounts are created by seed.sql or by the admin. EVERYONE logs in with Google only.
+// New in this version:
+//  - Student groups (for example "Programming" or "Isomo circle"): the admin adds many students at once.
+//  - Schedules can be prepared as drafts and published later. Only published lab times are visible to others.
+//  - The admin chooses how many places are open in a lab time (never more than the lab's computers).
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -16,14 +17,12 @@ const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families',
 const ROLES = ['student', 'teacher', 'psychosocial'];
 const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// A class is a grade + a combination + an optional section (letter or number), for example "S6 IJABO", "S6 IJABO A" or "S6 IJABO 3".
 const DEFAULT_GRADE_COMBOS = { S4: ['INGABE'], S5: ['INGABO'], S6: ['IJABO'] };
 const DEFAULT_TREND_CATEGORIES = ['Clothes', 'Shoes', 'Keys', 'Bags', 'Phones and electronics', 'Books and stationery', 'Documents and IDs', 'Water bottles and lunch boxes', 'Jewelry and watches', 'Other'];
 const DEFAULTS = { grades: ['S4', 'S5', 'S6'], gradeCombos: DEFAULT_GRADE_COMBOS, trendCategories: DEFAULT_TREND_CATEGORIES };
-const SECTION_RE = /^[A-Z0-9]{1,2}$/; // a letter (A-Z) or a number (1, 2, ... 12)
+const SECTION_RE = /^[A-Z0-9]{1,2}$/;
 const combosFor = (opts, grade) => opts.gradeCombos?.[grade] ?? DEFAULT_GRADE_COMBOS[grade] ?? [];
 
-// Two names are the same person when they have the same words, in any order, ignoring case and accents.
 const nameKey = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
 const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
 const cleanList = list => [...new Set(list.map(x => String(x).trim()).filter(Boolean))];
@@ -32,7 +31,6 @@ const validEmail = e => /^\S+@\S+\.\S+$/.test(e);
 
 const app = express(), server = http.createServer(app);
 const io = new Server(server, { cors: { origin: CLIENT } });
-// The big JSON limit is for Lost & Found uploads (photos and files are sent as base64).
 app.use(cors({ origin: CLIENT }), express.json({ limit: '30mb' }));
 
 const sign = p => jwt.sign(p, SECRET, { expiresIn: '7d' });
@@ -44,32 +42,32 @@ const auth = (...roles) => (req, res, next) => {
   if (roles.length && !roles.includes(req.user.role)) return res.status(403).json({ error: 'You do not have access to this.' });
   next();
 };
-// Minister of Communication (or an admin). The flag is checked in the database on every request,
-// so removing the minister takes effect straight away without waiting for the token to expire.
-// Only the person the admin assigned can use it (the admin just assigns, the minister does the work).
+// Minister of Communication: checked in the database on every request.
 const comm = [auth(), wrap(async (req, _res, next) => {
   const ok = req.user.id && await one("SELECT 1 AS ok FROM users WHERE id = $1 AND profile->>'comm' = 'true'", [req.user.id]);
   if (!ok) fail(403, 'Only the Minister of Communication can do this.');
   next();
 })];
 
-// ---------- Data helpers (views session_seats and application_details are defined in the database) ----------
-// Every application row also carries the student's email, Google picture (kept in users.profile, so no new column) and a Gravatar id,
-// so the screens can search by email and show a photo without changing the database views.
+// ---------- Data helpers ----------
+// session_places is a view created at start-up (see ensureTables). It replaces session_seats:
+//   seats = places the admin opened (never more than the lab's computers), left = seats - approved, published = visible to others.
+// Every application row also carries the student's email, Google picture and a Gravatar id.
 const withPeople = async rows => {
   const m = new Map((await query(`SELECT username, email, profile->>'picture' AS picture, md5(lower(email)) AS gid FROM users`)).map(r => [r.username, r]));
   return rows.map(a => { const p = m.get(a.name); return { ...a, email: p?.email || '', picture: p?.picture || '', gid: p?.gid || '' }; });
 };
-const listSessions = () => query('SELECT * FROM session_seats ORDER BY date, "from", lab');
+// Drafts are only returned when all = true (admin screens).
+const listSessions = (all = false) => query(`SELECT * FROM session_places ${all ? '' : 'WHERE published'} ORDER BY date, "from", lab`);
 const listApps = async (where = '', params = []) =>
   withPeople(await query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params));
-const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_seats WHERE id = $1', [sid]))[0]?.left ?? 0;
+const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_places WHERE id = $1', [sid]))[0]?.left ?? 0;
 const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Application not found.');
 const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
 const saveOption = (q, k, value) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(value)]);
 const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
+const HM = t => String(t || '').slice(0, 5);
 
-// Fills grades, combinations and Lost & Found categories the first time, without touching anything the admin already set.
 const seedOptions = async () => {
   const cur = await getOptions();
   for (const [k, v] of Object.entries(DEFAULTS)) {
@@ -78,7 +76,6 @@ const seedOptions = async () => {
   }
 };
 
-// Checks a student's grade, combination and optional section. Returns the profile to store.
 const studentProfile = async (grade, combo, section) => {
   const opts = await getOptions();
   const grades = opts.grades?.length ? opts.grades : DEFAULTS.grades;
@@ -94,10 +91,6 @@ const studentProfile = async (grade, combo, section) => {
 };
 
 // ---------- Socket.io ----------
-// Two kinds of visitors:
-//  - people who are logged in (token): they join the "auth" room and get the full seat list;
-//  - guests on the public home page (no token): they join the "public" room and only get a tiny
-//    "overview:update" signal, then they re-read /api/overview (which has counts only, never names).
 io.use((socket, next) => {
   const t = socket.handshake.auth?.token;
   if (!t) { socket.user = null; return next(); }
@@ -110,8 +103,9 @@ io.on('connection', socket => {
   socket.join(socket.user.role === 'admin' ? 'admins' : `user:${socket.user.name}`);
   listSessions().then(s => socket.emit('seats', s)).catch(() => {});
 });
+// Logged-in screens get the published list. The admin screen re-reads everything (drafts included) on this signal.
 const pushSeats = () => {
-  io.emit('overview:update'); // the public home page refreshes its seat counts, pending requests included
+  io.emit('overview:update');
   listSessions().then(s => io.to('auth').emit('seats', s)).catch(() => {});
 };
 const pushApps = (names = []) => {
@@ -121,8 +115,6 @@ const pushApps = (names = []) => {
 };
 
 // ---------- Login: Google only ----------
-// Google proves the person owns the email. It never creates an account: the email must already be
-// in the users table (added by the admin) or listed in ADMIN_EMAILS. The Google photo is saved for the screens.
 app.post('/api/google', wrap(async (req, res) => {
   let p;
   try { p = (await gClient.verifyIdToken({ idToken: req.body.credential, audience: process.env.GOOGLE_CLIENT_ID })).getPayload(); }
@@ -136,14 +128,13 @@ app.post('/api/google', wrap(async (req, res) => {
   if (picture) await query("UPDATE users SET profile = profile || jsonb_build_object('picture', $1::text) WHERE id = $2", [picture, u.id]);
   res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email, picture }) });
 }));
-// Besides the token data, /api/me says whether this person is a Minister of Communication right now.
 app.get('/api/me', auth(), wrap(async (req, res) => {
   let isComm = false;
   if (req.user.id) isComm = !!(await one("SELECT 1 AS ok FROM users WHERE id = $1 AND profile->>'comm' = 'true'", [req.user.id]));
   res.json({ ...req.user, comm: isComm });
 }));
 
-// ---------- Profile (any logged-in person) ----------
+// ---------- Profile ----------
 app.get('/api/profile', auth(), wrap(async (req, res) => {
   const me = req.user;
   let info = { name: me.name, email: me.email || '', role: me.role, picture: me.picture || '', cls: '', combo: '', section: '', comm: false };
@@ -181,13 +172,12 @@ app.post('/api/users', auth('admin'), wrap(async (req, res) => {
     try {
       res.json(await one('INSERT INTO users(username, email, role, profile) VALUES($1,$2,$3,$4) RETURNING id, username AS name, email, role', [name, email, role, profile]));
     } catch (e) {
-      if (e.code !== '23502') throw e; // not-null violation: the table still has the old "hash" column
+      if (e.code !== '23502') throw e;
       res.json(await one("INSERT INTO users(username, email, hash, role, profile) VALUES($1,$2,'',$3,$4) RETURNING id, username AS name, email, role", [name, email, role, profile]));
     }
   } catch (e) { uniqueFail(e); }
 }));
 
-// Name, email and class (students) can change. A new name is copied to bookings and the blacklist.
 app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
   const u = await one('SELECT id, username, role FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
   const { grade, combo, section } = req.body, sets = [], p = [];
@@ -226,8 +216,6 @@ app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// The admin names (or un-names) a Minister of Communication. It is a flag on the account, so the
-// person keeps their role and can still book labs. Their screen refreshes straight away.
 app.patch('/api/users/:id/communication', auth('admin'), wrap(async (req, res) => {
   const u = await one('SELECT id, username FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
   if (req.body.on) await query(`UPDATE users SET profile = profile || '{"comm":"true"}'::jsonb WHERE id = $1`, [u.id]);
@@ -238,7 +226,7 @@ app.patch('/api/users/:id/communication', auth('admin'), wrap(async (req, res) =
 
 app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM users WHERE id = $1', [req.params.id]); res.sendStatus(204); }));
 
-// ---------- Options set by the admin (grades, combinations of each grade, reasons...) ----------
+// ---------- Options ----------
 app.get('/api/options', wrap(async (_, res) => res.json(await getOptions())));
 app.put('/api/options', auth('admin'), wrap(async (req, res) => {
   await tx(async q => {
@@ -251,8 +239,6 @@ app.put('/api/options', auth('admin'), wrap(async (req, res) => {
   res.json(await getOptions());
 }));
 
-// Rename a grade ({ from, to }) or a combination of a grade ({ grade, from, to }).
-// Students who already belong to it are updated too, so nobody loses their class.
 app.post('/api/options/rename', auth('admin'), wrap(async (req, res) => {
   const f = cleanCode(req.body.from), t = cleanCode(req.body.to), g = cleanCode(req.body.grade);
   if (!f || !t) fail(400, 'Enter the new name.');
@@ -282,15 +268,87 @@ app.post('/api/options/rename', auth('admin'), wrap(async (req, res) => {
 app.get('/api/classes', auth('teacher', 'psychosocial', 'admin'), wrap(async (_, res) =>
   res.json((await query(`SELECT DISTINCT ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND ${CLASS_SQL} <> '' ORDER BY cls`)).map(r => r.cls))));
 
-// Students of a class (or all students for psychosocial workers). Search by name or email happens on the screen.
+// Students of a class, of a group (?group=ID), or all students for psychosocial workers.
 app.get('/api/students', auth('teacher', 'psychosocial', 'admin'), wrap(async (req, res) => {
+  const cols = `username AS name, email, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'family' AS family, profile->>'combo' AS combo`;
+  const gid = Number(req.query.group) || 0;
+  if (gid) return res.json(await query(`SELECT ${cols} FROM users WHERE role = 'student' AND id IN (SELECT user_id FROM student_group_members WHERE group_id = $1) ORDER BY username`, [gid]));
   const cls = req.query.class || '';
-  if (req.user.role === 'teacher' && !cls) fail(400, 'Choose a class first.');
-  res.json(await query(`SELECT username AS name, email, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'family' AS family, profile->>'combo' AS combo
-    FROM users WHERE role = 'student' AND ($1::text = '' OR ${CLASS_SQL} = $1::text) ORDER BY username`, [cls]));
+  if (req.user.role === 'teacher' && !cls) fail(400, 'Choose a class or a group first.');
+  res.json(await query(`SELECT ${cols} FROM users WHERE role = 'student' AND ($1::text = '' OR ${CLASS_SQL} = $1::text) ORDER BY username`, [cls]));
 }));
 
-// ---------- Labs and schedule ----------
+// ---------- Student groups ----------
+// The admin names a group (for example "Isomo circle") and adds many students at once: a list of names or emails
+// separated by commas, semicolons or new lines. Names are matched like accounts (same words, any order).
+const splitTokens = v => [...new Set((Array.isArray(v) ? v : String(v || '').split(/[\n,;]+/)).map(x => String(x).trim()).filter(Boolean))];
+const resolveStudents = async tokens => {
+  const studs = await query("SELECT id, username, lower(email) AS email FROM users WHERE role = 'student'");
+  const byEmail = new Map(studs.map(s => [s.email, s])), byName = new Map(studs.map(s => [nameKey(s.username), s]));
+  const ids = new Set(), notFound = [];
+  tokens.forEach(t => { const s = t.includes('@') ? byEmail.get(t.toLowerCase()) : byName.get(nameKey(t)); s ? ids.add(s.id) : notFound.push(t); });
+  return { ids: [...ids], notFound };
+};
+const addMembers = async (q, gid, ids) => {
+  if (!ids.length) return 0;
+  return (await q('INSERT INTO student_group_members(group_id, user_id) SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING RETURNING user_id', [gid, ids])).length;
+};
+const getGroup = async id => (Number.isInteger(+id) && await one('SELECT id, name, description FROM student_groups WHERE id = $1', [+id])) || fail(404, 'Group not found.');
+const groupName = async (name, exceptId = 0) => {
+  name = cleanName(name).slice(0, 80);
+  if (!name) fail(400, 'Enter a name for the group.');
+  if ((await query('SELECT id, name FROM student_groups')).some(g => g.id !== exceptId && g.name.toLowerCase() === name.toLowerCase())) fail(409, 'A group with this name already exists.');
+  return name;
+};
+
+// Everyone who books gets the groups with their size. Only the admin also gets the members.
+app.get('/api/groups', auth('admin', 'teacher', 'psychosocial'), wrap(async (req, res) => {
+  const groups = await query('SELECT id, name, description FROM student_groups ORDER BY name');
+  const m = await query(`SELECT gm.group_id, id, username AS name, email, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className"
+    FROM student_group_members gm JOIN users u ON u.id = gm.user_id ORDER BY username`);
+  res.json(groups.map(g => {
+    const members = m.filter(r => r.group_id === g.id).map(({ group_id, ...r }) => r);
+    return req.user.role === 'admin' ? { ...g, count: members.length, members } : { ...g, count: members.length };
+  }));
+}));
+
+app.post('/api/groups', auth('admin'), wrap(async (req, res) => {
+  const name = await groupName(req.body.name);
+  const { ids, notFound } = await resolveStudents(splitTokens(req.body.members));
+  const out = await tx(async q => {
+    const g = (await q('INSERT INTO student_groups(name, description) VALUES($1,$2) RETURNING id', [name, String(req.body.description || '').trim().slice(0, 300)]))[0];
+    return { id: g.id, added: await addMembers(q, g.id, ids) };
+  });
+  res.json({ ...out, notFound });
+}));
+
+app.put('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
+  const g = await getGroup(req.params.id);
+  const name = await groupName(req.body.name ?? g.name, g.id);
+  await query('UPDATE student_groups SET name = $1, description = $2 WHERE id = $3', [name, String(req.body.description ?? g.description ?? '').trim().slice(0, 300), g.id]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/groups/:id/members', auth('admin'), wrap(async (req, res) => {
+  const g = await getGroup(req.params.id);
+  const { ids, notFound } = await resolveStudents(splitTokens(req.body.members));
+  const added = await tx(q => addMembers(q, g.id, ids));
+  res.json({ added, notFound });
+}));
+
+app.delete('/api/groups/:id/members/:userId', auth('admin'), wrap(async (req, res) => {
+  const g = await getGroup(req.params.id);
+  await query('DELETE FROM student_group_members WHERE group_id = $1 AND user_id = $2', [g.id, +req.params.userId]);
+  res.sendStatus(204);
+}));
+
+app.delete('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
+  const g = await getGroup(req.params.id);
+  await query('DELETE FROM student_groups WHERE id = $1', [g.id]);
+  res.sendStatus(204);
+}));
+
+// ---------- Labs ----------
 app.get('/api/labs', auth(), wrap(async (_, res) => res.json(await query('SELECT id, name, pcs FROM labs ORDER BY name'))));
 app.post('/api/labs', auth('admin'), wrap(async (req, res) => {
   const { name, pcs } = req.body;
@@ -300,39 +358,67 @@ app.post('/api/labs', auth('admin'), wrap(async (req, res) => {
 }));
 app.put('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
   const { name, pcs } = req.body;
-  if (pcs != null && (await listSessions()).some(s => s.labId == req.params.id && s.seats - s.left > +pcs)) fail(409, 'More students are approved than this many computers.');
-  await query('UPDATE labs SET name = COALESCE($1, name), pcs = COALESCE($2, pcs) WHERE id = $3', [name ?? null, pcs ?? null, req.params.id]);
+  if (pcs != null && (await listSessions(true)).some(s => s.labId == req.params.id && s.seats - s.left > +pcs)) fail(409, 'More students are approved than this many computers.');
+  await tx(async q => {
+    await q('UPDATE labs SET name = COALESCE($1, name), pcs = COALESCE($2, pcs) WHERE id = $3', [name ?? null, pcs ?? null, req.params.id]);
+    if (pcs != null) await q('UPDATE sessions SET places = LEAST(places, $1::int) WHERE lab_id = $2 AND places IS NOT NULL', [+pcs, req.params.id]);
+  });
   pushSeats(); res.json({ ok: true });
 }));
 app.delete('/api/labs/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM labs WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
-app.get('/api/sessions', auth(), wrap(async (_, res) => res.json(await listSessions())));
+// ---------- Schedule: drafts, publishing and open places ----------
+// Everyone except the admin only sees published lab times.
+app.get('/api/sessions', auth(), wrap(async (req, res) => res.json(await listSessions(req.user.role === 'admin'))));
+
+// published: false saves a draft, true publishes now. places: how many places are open (empty = every computer of the lab).
 app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
   const { date = new Date().toISOString().slice(0, 10), from, to, labIds } = req.body;
+  const published = req.body.published === true;
   if (!from || !to || from >= to) fail(400, 'Choose a start time that is before the end time.');
-  const labs = (await query('SELECT id FROM labs')).filter(l => !labIds?.length || labIds.includes(l.id));
+  const wanted = req.body.places === undefined || req.body.places === null || req.body.places === '' ? null : Math.floor(+req.body.places);
+  if (wanted !== null && !(wanted >= 1)) fail(400, 'Places open must be 1 or more.');
+  const labs = (await query('SELECT id, pcs FROM labs')).filter(l => !labIds?.length || labIds.includes(l.id));
   if (!labs.length) fail(400, 'Add a lab first.');
-  await tx(async q => { for (const l of labs) await q('INSERT INTO sessions(lab_id, date, starts_at, ends_at) VALUES($1,$2,$3,$4)', [l.id, date, from, to]); });
-  pushSeats(); res.json({ created: labs.length });
+  if (wanted !== null && labs.length === 1 && wanted > labs[0].pcs) fail(400, `This lab has only ${labs[0].pcs} computers.`);
+  await tx(async q => {
+    for (const l of labs) await q('INSERT INTO sessions(lab_id, date, starts_at, ends_at, places, published) VALUES($1,$2,$3,$4,$5,$6)',
+      [l.id, date, from, to, wanted === null ? null : Math.min(wanted, l.pcs), published]);
+  });
+  pushSeats(); res.json({ created: labs.length, published });
 }));
+
 app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
   const { date, from, to } = req.body;
-  await query('UPDATE sessions SET date = COALESCE($1::date, date), starts_at = COALESCE($2::time, starts_at), ends_at = COALESCE($3::time, ends_at) WHERE id = $4', [date ?? null, from ?? null, to ?? null, req.params.id]);
+  const s = await one('SELECT id, seats, "left", "labId" FROM session_places WHERE id = $1', [req.params.id]) || fail(404, 'That lab time does not exist.');
+  let places = null;
+  if (req.body.places != null && req.body.places !== '') {
+    places = Math.floor(+req.body.places);
+    const pcs = (await one('SELECT pcs FROM labs WHERE id = $1', [s.labId])).pcs;
+    if (!(places >= 1)) fail(400, 'Places open must be 1 or more.');
+    if (places > pcs) fail(400, `This lab has only ${pcs} computers.`);
+    if (s.seats - s.left > places) fail(409, `${s.seats - s.left} students are already approved. Move some first.`);
+  }
+  await query('UPDATE sessions SET date = COALESCE($1::date, date), starts_at = COALESCE($2::time, starts_at), ends_at = COALESCE($3::time, ends_at), places = COALESCE($4::int, places) WHERE id = $5',
+    [date ?? null, from ?? null, to ?? null, places, req.params.id]);
   pushSeats(); res.json({ ok: true });
+}));
+
+// Publish or hide one lab time. A lab time with bookings can still be hidden, the bookings stay.
+app.patch('/api/sessions/:id/publish', auth('admin'), wrap(async (req, res) => {
+  const r = await query('UPDATE sessions SET published = $1 WHERE id = $2 RETURNING id', [req.body.published === true, req.params.id]);
+  if (!r.length) fail(404, 'That lab time does not exist.');
+  pushSeats(); res.json({ ok: true });
+}));
+app.post('/api/sessions/publish-all', auth('admin'), wrap(async (_, res) => {
+  const r = await query('UPDATE sessions SET published = true WHERE published = false RETURNING id');
+  pushSeats(); res.json({ published: r.length });
 }));
 app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM sessions WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
 // ---------- Public lab overview (no login) ----------
-// The home page shows every lab, its computers and the seats left for one day, so people can look
-// before they sign in. ?date=YYYY-MM-DD picks the day (today when missing). Only counts are shared, never names.
-//
-// Pending requests are counted too. A seat that is waiting for the admin's approval is shown as
-// "waiting" (orange), so when many students have applied the lab already looks full to visitors:
-//   taken   = approved seats
-//   waiting = pending applications (never more than the seats still not approved)
-//   over    = pending applications beyond the seats (a queue)
-//   open    = seats left after the pending ones, what a visitor can really hope to get
-const HM = t => String(t || '').slice(0, 5);
+// Only published lab times, only counts, never names.
+//   taken = approved, waiting = pending (up to the places left), over = pending beyond the places (queue), open = places really free.
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 app.get('/api/overview', wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : new Date().toISOString().slice(0, 10);
@@ -370,7 +456,8 @@ app.get('/api/overview', wrap(async (req, res) => {
 }));
 
 // ---------- Applications ----------
-// A person can never hold two live bookings for the same lab time, or for two lab times that overlap on the same day.
+// A person never holds two live bookings for the same lab time, or for two lab times that overlap on the same day.
+// Draft lab times cannot be booked.
 app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
   const { reason, students } = req.body, sessionId = +req.body.sessionId;
   const asked = req.user.role === 'student' ? [req.user.name] : (Array.isArray(students) ? students : []);
@@ -391,11 +478,12 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
   let created = 0; const skipped = [];
   await tx(async q => {
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sessionId]);
-    const s = (await q('SELECT date, "from", "to" FROM session_seats WHERE id = $1', [sessionId]))[0] || fail(404, 'That lab time no longer exists.');
+    const s = (await q('SELECT date, "from", "to", published FROM session_places WHERE id = $1', [sessionId]))[0];
+    if (!s || !s.published) fail(404, 'That lab time is not open for booking.');
     const live = await q("SELECT name, sid, \"from\", \"to\" FROM application_details WHERE status <> 'rejected' AND date = $1", [s.date]);
     for (const n of names) {
       const k = nameKey(n);
-      const clash = live.some(b => nameKey(b.name) === k && (+b.sid === sessionId || (b.from < s.to && s.from < b.to)));
+      const clash = live.some(b => nameKey(b.name) === k && (+b.sid === sessionId || (HM(b.from) < HM(s.to) && HM(s.from) < HM(b.to))));
       if (clash) { skipped.push(n); continue; }
       created += (await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT (session_id, student) WHERE status <> 'rejected' DO NOTHING RETURNING id",
         [sessionId, n, classes[n] || '', reason || 'Other', req.user.name])).length;
@@ -411,7 +499,7 @@ app.patch('/api/apps/:id/status', auth('admin'), wrap(async (req, res) => {
   const a = await tx(async q => {
     const a = await getApp(q, req.params.id);
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [a.session_id]);
-    if (status === 'approved' && a.status !== 'approved' && await seatsLeft(q, a.session_id) < 1) fail(409, 'This lab is full. Move or swap a student first.');
+    if (status === 'approved' && a.status !== 'approved' && await seatsLeft(q, a.session_id) < 1) fail(409, 'No places left. Move or swap a student first.');
     await q('UPDATE applications SET status = $1 WHERE id = $2', [status, a.id]);
     return a;
   });
@@ -437,7 +525,7 @@ app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => {
       const twice = await q("SELECT 1 FROM applications WHERE session_id = $1 AND lower(student) = lower($2) AND status <> 'rejected' AND id <> $3", [to, a.student, a.id]);
       if (twice.length) fail(409, 'This student already has a booking in that lab time.');
     }
-    if (a.status === 'approved' && a.session_id !== to && await seatsLeft(q, to) < 1) fail(409, 'The other lab is full. Swap two students instead.');
+    if (a.status === 'approved' && a.session_id !== to && await seatsLeft(q, to) < 1) fail(409, 'The other lab time is full. Swap two students instead.');
     await q('UPDATE applications SET session_id = $1 WHERE id = $2', [to, a.id]);
     return a;
   });
@@ -473,11 +561,11 @@ app.post('/api/blacklist', auth('admin'), wrap(async (req, res) => {
 app.delete('/api/blacklist/:name', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM blacklist WHERE name = $1', [req.params.name]); res.sendStatus(204); }));
 
 app.get('/api/stats/overview', auth('admin'), wrap(async (_, res) => {
-  const [apps, sessions, labRows, people] = await Promise.all([listApps(), listSessions(), query('SELECT id, name, pcs FROM labs ORDER BY name'), query('SELECT role, COUNT(*)::int AS n FROM users GROUP BY role')]);
+  const [apps, sessions, labRows, people] = await Promise.all([listApps(), listSessions(true), query('SELECT id, name, pcs FROM labs ORDER BY name'), query('SELECT role, COUNT(*)::int AS n FROM users GROUP BY role')]);
   const by = k => apps.filter(a => a.status === k).length;
   const labs = labRows.map(l => {
-    const ids = sessions.filter(s => s.labId === l.id).map(s => s.id), as = apps.filter(a => ids.includes(a.sid));
-    const cap = l.pcs * ids.length, approved = as.filter(a => a.status === 'approved').length;
+    const mine = sessions.filter(s => s.labId === l.id && s.published), ids = mine.map(s => s.id), as = apps.filter(a => ids.includes(a.sid));
+    const cap = mine.reduce((n, s) => n + s.seats, 0), approved = as.filter(a => a.status === 'approved').length;
     return { lab: l.name, applied: as.length, approved, pending: as.filter(a => a.status === 'pending').length, rejected: as.filter(a => a.status === 'rejected').length, seatsOffered: cap, usagePct: cap ? Math.round(approved / cap * 100) : 0 };
   });
   const count = f => apps.reduce((m, a) => { const v = f(a); if (v) m[v] = (m[v] || 0) + 1; return m; }, {});
@@ -500,16 +588,11 @@ app.get('/api/history', auth('admin'), wrap(async (req, res) => {
 }));
 
 // ---------- Lost & Found ("Trends") ----------
-// The Minister of Communication posts found items with photos, videos, files or links.
-// Everybody can see active posts on the home page and contact the poster. A post can be removed once it is
-// HOLD_DAYS old, then reposted, which starts the timer again.
 const DAY = 864e5, HOLD_DAYS = 7, MAX_FILES = 6, MAX_FILE = 12 * 1024 * 1024, MAX_TOTAL = 24 * 1024 * 1024;
-// Only safe file types are accepted, because the files are served back to visitors.
 const FILE_OK = /^(image\/(png|jpe?g|gif|webp|avif)|video\/(mp4|webm|ogg|quicktime)|text\/plain|application\/(pdf|msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)))$/i;
 const fileKind = mime => (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : 'file');
 const IMG_EXT = /\.(png|jpe?g|gif|webp|avif)(\?|#|$)/i;
 const VID_EXT = /\.(mp4|webm|ogg|mov)(\?|#|$)/i;
-// Turns share links (Google Drive, Dropbox, Imgur page) into a direct picture address.
 const directUrl = u => {
   let m = u.match(/drive\.google\.com\/file\/d\/([\w-]+)/) || u.match(/drive\.google\.com\/(?:open|uc)\?(?:[^#]*&)?id=([\w-]+)/);
   if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1600`;
@@ -518,8 +601,6 @@ const directUrl = u => {
   return m ? `https://i.imgur.com/${m[1]}.jpg` : u;
 };
 const PRIVATE_HOST = /^(localhost|127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1)/i;
-// Decides whether a pasted link is a picture, a video or just a page. When the address does not
-// say so, the server asks the website what the link really is.
 const resolveLink = async raw => {
   const url = directUrl(raw);
   if (IMG_EXT.test(url) || /drive\.google\.com\/thumbnail|i\.imgur\.com/.test(url)) return { kind: 'image', url };
@@ -536,7 +617,6 @@ const resolveLink = async raw => {
   return { kind: 'link', url };
 };
 
-// Posts with their attachments. Uploaded files are served from /api/trends/files/:id, links keep their own address.
 const trendRows = async (where = '', params = []) => {
   const t = await query(`SELECT id, title, description, category, found_at AS "foundAt", contact_phone AS phone, contact_email AS email, status,
     posted_by AS "postedBy", posted_at AS "postedAt", removed_at AS "removedAt", repost_count AS reposts
@@ -563,10 +643,8 @@ const trendFields = b => {
   };
 };
 
-// Public: only active posts.
 app.get('/api/trends', wrap(async (_, res) => res.json(await trendRows("status = 'active'"))));
 
-// Public: an uploaded photo, video or document (supports Range so videos can be skipped through).
 app.get('/api/trends/files/:id', wrap(async (req, res) => {
   const f = (Number.isInteger(+req.params.id) && await one('SELECT name, mime, data FROM trend_media WHERE id = $1 AND data IS NOT NULL', [+req.params.id])) || fail(404, 'File not found.');
   const size = f.data.length;
@@ -584,7 +662,6 @@ app.get('/api/trends/files/:id', wrap(async (req, res) => {
   res.set('Content-Length', size).end(f.data);
 }));
 
-// Minister of Communication and admins: every post, with its status.
 app.get('/api/trends/manage', comm, wrap(async (_, res) => res.json(await trendRows())));
 
 app.post('/api/trends', comm, wrap(async (req, res) => {
@@ -610,7 +687,6 @@ app.post('/api/trends', comm, wrap(async (req, res) => {
   io.emit('trends:update'); res.json({ id });
 }));
 
-// The minister sets up the categories used on the board.
 app.put('/api/trends/categories', comm, wrap(async (req, res) => {
   const list = cleanList(Array.isArray(req.body.list) ? req.body.list : []).slice(0, 40);
   if (!list.length) fail(400, 'Keep at least one category.');
@@ -618,7 +694,6 @@ app.put('/api/trends/categories', comm, wrap(async (req, res) => {
   res.json({ list });
 }));
 
-// Text details can be corrected at any time (attachments stay as they are).
 app.put('/api/trends/:id', comm, wrap(async (req, res) => {
   const cur = await getTrend(req.params.id), t = trendFields(req.body);
   await query('UPDATE trends SET title = $1, description = $2, category = $3, found_at = $4, contact_phone = $5, contact_email = $6 WHERE id = $7',
@@ -626,7 +701,6 @@ app.put('/api/trends/:id', comm, wrap(async (req, res) => {
   io.emit('trends:update'); res.json({ ok: true });
 }));
 
-// The owner came for it.
 app.patch('/api/trends/:id/returned', comm, wrap(async (req, res) => {
   const cur = await getTrend(req.params.id);
   if (cur.status !== 'active') fail(409, 'This post is not active.');
@@ -634,7 +708,6 @@ app.patch('/api/trends/:id/returned', comm, wrap(async (req, res) => {
   io.emit('trends:update'); res.json({ ok: true });
 }));
 
-// Taken down after HOLD_DAYS without an owner (only the Minister of Communication can do it).
 app.patch('/api/trends/:id/remove', comm, wrap(async (req, res) => {
   const cur = await getTrend(req.params.id);
   if (cur.status !== 'active') fail(409, 'This post is already off the board.');
@@ -644,7 +717,6 @@ app.patch('/api/trends/:id/remove', comm, wrap(async (req, res) => {
   io.emit('trends:update'); res.json({ ok: true });
 }));
 
-// Back on the board with a fresh date, so it counts as new and the 7 days start again.
 app.patch('/api/trends/:id/repost', comm, wrap(async (req, res) => {
   const cur = await getTrend(req.params.id);
   if (cur.status === 'active') fail(409, 'This post is already on the board.');
@@ -660,7 +732,10 @@ app.delete('/api/trends/:id', comm, wrap(async (req, res) => {
 }));
 
 app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.code >= 400 && err.code < 600 ? err.code : (err.type === 'entity.too.large' ? 413 : 500)).json({ error: err.type === 'entity.too.large' ? 'The files are too big. Use smaller photos or paste a link for videos.' : err.message || 'Something went wrong.' }));
-// Creates the Lost & Found tables the first time, so no manual SQL is needed.
+
+// ---------- Database set-up (safe to run on every start) ----------
+// Creates the Lost & Found tables, the group tables, the draft/places columns and the session_places view.
+// The same SQL is also in setup.sql if you prefer to run it by hand.
 const ensureTables = async () => {
   await query(`CREATE TABLE IF NOT EXISTS trends (
     id serial PRIMARY KEY, title text NOT NULL, description text NOT NULL DEFAULT '', category text NOT NULL DEFAULT 'Other',
@@ -673,6 +748,30 @@ const ensureTables = async () => {
     mime text NOT NULL DEFAULT '', data bytea, created_at timestamptz NOT NULL DEFAULT now())`);
   await query('CREATE INDEX IF NOT EXISTS trends_status_posted_idx ON trends (status, posted_at DESC)');
   await query('CREATE INDEX IF NOT EXISTS trend_media_trend_idx ON trend_media (trend_id)');
+
+  // Student groups
+  await query(`CREATE TABLE IF NOT EXISTS student_groups (
+    id serial PRIMARY KEY, name text NOT NULL, description text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now())`);
+  await query('CREATE UNIQUE INDEX IF NOT EXISTS student_groups_name_idx ON student_groups (lower(name))');
+  await query(`CREATE TABLE IF NOT EXISTS student_group_members (
+    group_id integer NOT NULL REFERENCES student_groups(id) ON DELETE CASCADE,
+    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (group_id, user_id))`);
+  await query('CREATE INDEX IF NOT EXISTS student_group_members_user_idx ON student_group_members (user_id)');
+
+  // Draft schedules and open places. Existing lab times stay published and open to every computer.
+  await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS published boolean NOT NULL DEFAULT true');
+  await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS places integer CHECK (places IS NULL OR places >= 1)');
+  await query(`CREATE OR REPLACE VIEW session_places AS
+    SELECT s.id, s.lab_id AS "labId", l.name AS lab,
+      to_char(s.date, 'YYYY-MM-DD') AS date,
+      to_char(s.starts_at, 'HH24:MI') AS "from", to_char(s.ends_at, 'HH24:MI') AS "to",
+      LEAST(COALESCE(s.places, l.pcs), l.pcs) AS seats,
+      GREATEST(LEAST(COALESCE(s.places, l.pcs), l.pcs) - COALESCE(a.n, 0), 0) AS "left",
+      s.published
+    FROM sessions s
+    JOIN labs l ON l.id = s.lab_id
+    LEFT JOIN (SELECT session_id, COUNT(*)::int AS n FROM applications WHERE status = 'approved' GROUP BY session_id) a ON a.session_id = s.id`);
 };
 const port = process.env.PORT || 4000;
 query('SELECT 1').then(ensureTables).then(seedOptions).then(() => server.listen(port, () => console.log('LMS API and Socket.io running on port ' + port)))
