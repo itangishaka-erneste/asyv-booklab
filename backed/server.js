@@ -1,9 +1,12 @@
 // server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js connects, Neon hosts it).
 // Accounts are created by seed.sql or by the admin. EVERYONE logs in with Google only.
 // New in this version:
-//  - Student groups (for example "Programming" or "Isomo circle"): the admin adds many students at once.
-//  - Schedules can be prepared as drafts and published later. Only published lab times are visible to others.
-//  - The admin chooses how many places are open in a lab time (never more than the lab's computers).
+//  - A lab time (even a draft) can be assigned to a class, a group, or chosen people.
+//      * exclusive = true  -> only those people can join that lab time.
+//      * exclusive = false -> those people get their places automatically, the remaining places stay open to everyone.
+//  - Assigned people are booked automatically (approved while places remain, then queued as pending).
+//  - Students only receive lab times they are allowed to book. Drafts stay hidden from everyone but the admin.
+//  - "publish-all" can publish only the lab times you send (for example the ones shown for one week).
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -50,23 +53,42 @@ const comm = [auth(), wrap(async (req, _res, next) => {
 })];
 
 // ---------- Data helpers ----------
-// session_places is a view created at start-up (see ensureTables). It replaces session_seats:
+// session_places is a view created at start-up (see ensureTables).
 //   seats = places the admin opened (never more than the lab's computers), left = seats - approved, published = visible to others.
-// Every application row also carries the student's email, Google picture and a Gravatar id.
+//   forClass / forGroup / forGroupName / forPeople / people / exclusive describe who the lab time is assigned to.
+const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
+const HM = t => String(t || '').slice(0, 5);
+const ASSIGNED = 'Assigned by admin'; // booked_by value of automatic bookings
+const forText = s => s.forGroupName || s.forClass || (s.forPeople ? `${s.forPeople} chosen student${s.forPeople === 1 ? '' : 's'}` : '');
+
 const withPeople = async rows => {
   const m = new Map((await query(`SELECT username, email, profile->>'picture' AS picture, md5(lower(email)) AS gid FROM users`)).map(r => [r.username, r]));
   return rows.map(a => { const p = m.get(a.name); return { ...a, email: p?.email || '', picture: p?.picture || '', gid: p?.gid || '' }; });
 };
-// Drafts are only returned when all = true (admin screens).
-const listSessions = (all = false) => query(`SELECT * FROM session_places ${all ? '' : 'WHERE published'} ORDER BY date, "from", lab`);
+
+const SESSION_ORDER = 'ORDER BY date, "from", lab';
+// all = true (admin): every lab time, drafts included, with the list of assigned people.
+// A student only gets published lab times they may book. Everyone else gets published lab times (without the people list).
+const listSessions = async (all = false, user = null) => {
+  if (all) return query(`SELECT * FROM session_places ${SESSION_ORDER}`);
+  let rows;
+  if (user?.role === 'student') {
+    const me = await one(`SELECT id, ${CLASS_SQL} AS cls FROM users WHERE id = $1`, [user.id || 0]);
+    rows = await query(`SELECT * FROM session_places sp WHERE published AND (
+        NOT exclusive
+        OR (sp."forClass" <> '' AND sp."forClass" = $2::text)
+        OR (sp."forGroup" IS NOT NULL AND EXISTS (SELECT 1 FROM student_group_members gm WHERE gm.group_id = sp."forGroup" AND gm.user_id = $1::int))
+        OR EXISTS (SELECT 1 FROM session_people p WHERE p.session_id = sp.id AND p.user_id = $1::int)
+      ) ${SESSION_ORDER}`, [me?.id || 0, me?.cls || '']);
+  } else rows = await query(`SELECT * FROM session_places WHERE published ${SESSION_ORDER}`);
+  return rows.map(({ people, ...r }) => r);
+};
 const listApps = async (where = '', params = []) =>
   withPeople(await query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params));
 const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_places WHERE id = $1', [sid]))[0]?.left ?? 0;
 const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Application not found.');
 const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
 const saveOption = (q, k, value) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(value)]);
-const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
-const HM = t => String(t || '').slice(0, 5);
 
 const seedOptions = async () => {
   const cur = await getOptions();
@@ -101,12 +123,12 @@ io.on('connection', socket => {
   if (!socket.user) { socket.join('public'); return; }
   socket.join('auth');
   socket.join(socket.user.role === 'admin' ? 'admins' : `user:${socket.user.name}`);
-  listSessions().then(s => socket.emit('seats', s)).catch(() => {});
 });
-// Logged-in screens get the published list. The admin screen re-reads everything (drafts included) on this signal.
+// 'seats' is only a signal. Every screen re-reads /api/sessions, so each person gets only the lab times they may see
+// (drafts are hidden, and students do not receive lab times reserved for other people).
 const pushSeats = () => {
   io.emit('overview:update');
-  listSessions().then(s => io.to('auth').emit('seats', s)).catch(() => {});
+  io.to('auth').emit('seats');
 };
 const pushApps = (names = []) => {
   io.to('admins').emit('applications:update');
@@ -326,6 +348,7 @@ app.put('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
   const g = await getGroup(req.params.id);
   const name = await groupName(req.body.name ?? g.name, g.id);
   await query('UPDATE student_groups SET name = $1, description = $2 WHERE id = $3', [name, String(req.body.description ?? g.description ?? '').trim().slice(0, 300), g.id]);
+  pushSeats();
   res.json({ ok: true });
 }));
 
@@ -345,6 +368,7 @@ app.delete('/api/groups/:id/members/:userId', auth('admin'), wrap(async (req, re
 app.delete('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
   const g = await getGroup(req.params.id);
   await query('DELETE FROM student_groups WHERE id = $1', [g.id]);
+  pushSeats();
   res.sendStatus(204);
 }));
 
@@ -367,11 +391,72 @@ app.put('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
 }));
 app.delete('/api/labs/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM labs WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
-// ---------- Schedule: drafts, publishing and open places ----------
-// Everyone except the admin only sees published lab times.
-app.get('/api/sessions', auth(), wrap(async (req, res) => res.json(await listSessions(req.user.role === 'admin'))));
+// ---------- Who a lab time is for ----------
+// audience = { kind: '' | 'class' | 'group' | 'people', value, people: [names or emails], exclusive }
+//   kind ''      -> everyone (no assignment)
+//   exclusive    -> only the assigned people can join. Otherwise they get places first and the rest stay open.
+const parseAudience = async (a = {}) => {
+  const kind = ['class', 'group', 'people'].includes(a?.kind) ? a.kind : '';
+  const none = { kind: '', forClass: '', forGroup: null, ids: [], notFound: [], exclusive: false };
+  if (!kind) return none;
+  const exclusive = a.exclusive !== false;
+  if (kind === 'class') {
+    const c = cleanName(a.value);
+    if (!c || !(await one(`SELECT 1 AS ok FROM users WHERE role = 'student' AND ${CLASS_SQL} = $1 LIMIT 1`, [c]))) fail(400, 'No student is in that class.');
+    return { ...none, kind, forClass: c, exclusive };
+  }
+  if (kind === 'group') {
+    const g = await getGroup(a.value);
+    return { ...none, kind, forGroup: g.id, exclusive };
+  }
+  const { ids, notFound } = await resolveStudents(splitTokens(a.people));
+  if (!ids.length) fail(400, 'Choose at least one student from the list.');
+  return { ...none, kind, ids, notFound, exclusive };
+};
+const setPeople = async (q, sid, ids) => {
+  await q('DELETE FROM session_people WHERE session_id = $1', [sid]);
+  if (ids.length) await q('INSERT INTO session_people(session_id, user_id) SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING', [sid, ids]);
+};
+// Every student a lab time is assigned to (class + group + chosen people).
+const membersOf = (q, s) => q(`SELECT u.id, u.username, ${CLASS_SQL} AS cls FROM users u WHERE u.role = 'student' AND (
+    ($1::text <> '' AND ${CLASS_SQL} = $1::text)
+    OR ($2::int IS NOT NULL AND u.id IN (SELECT user_id FROM student_group_members WHERE group_id = $2::int))
+    OR u.id IN (SELECT user_id FROM session_people WHERE session_id = $3::int)
+  ) ORDER BY u.username`, [s.for_class || '', s.for_group || null, s.id]);
+
+// Books the assigned students automatically: approved while places remain, then pending (queue).
+// Earlier automatic bookings of people who are no longer assigned are removed. Returns the names touched.
+const syncAssigned = async (q, sid) => {
+  await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sid]);
+  const s = (await q(`SELECT id, to_char(date, 'YYYY-MM-DD') AS d, to_char(starts_at, 'HH24:MI') AS "from", to_char(ends_at, 'HH24:MI') AS "to", for_class, for_group FROM sessions WHERE id = $1`, [sid]))[0];
+  if (!s) return [];
+  const members = await membersOf(q, s);
+  const touched = members.map(m => m.username);
+  const stale = await q('DELETE FROM applications WHERE session_id = $1 AND booked_by = $2 AND NOT (student = ANY($3::text[])) RETURNING student', [sid, ASSIGNED, touched]);
+  stale.forEach(r => touched.push(r.student));
+  if (!members.length) return touched;
+  const banned = new Set((await q('SELECT name FROM blacklist')).map(b => nameKey(b.name)));
+  const live = await q("SELECT name, sid, \"from\", \"to\" FROM application_details WHERE status <> 'rejected' AND date = $1", [s.d]);
+  let left = await seatsLeft(q, sid);
+  for (const m of members) {
+    const k = nameKey(m.username);
+    if (banned.has(k)) continue;
+    const clash = live.some(b => nameKey(b.name) === k && (+b.sid === +sid || (HM(b.from) < s.to && s.from < HM(b.to))));
+    if (clash) continue;
+    const status = left > 0 ? 'approved' : 'pending';
+    const made = await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by, status) VALUES($1,$2,$3,'Assigned',$4,$5) ON CONFLICT (session_id, student) WHERE status <> 'rejected' DO NOTHING RETURNING id",
+      [sid, m.username, m.cls || '', ASSIGNED, status]);
+    if (made.length && status === 'approved') left--;
+  }
+  return touched;
+};
+
+// ---------- Schedule: drafts, publishing, open places, assignment ----------
+// Everyone except the admin only sees published lab times. Students only see the ones they may book.
+app.get('/api/sessions', auth(), wrap(async (req, res) => res.json(await listSessions(req.user.role === 'admin', req.user))));
 
 // published: false saves a draft, true publishes now. places: how many places are open (empty = every computer of the lab).
+// audience: see parseAudience. Assigning people, a class or a group needs one lab.
 app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
   const { date = new Date().toISOString().slice(0, 10), from, to, labIds } = req.body;
   const published = req.body.published === true;
@@ -381,11 +466,18 @@ app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
   const labs = (await query('SELECT id, pcs FROM labs')).filter(l => !labIds?.length || labIds.includes(l.id));
   if (!labs.length) fail(400, 'Add a lab first.');
   if (wanted !== null && labs.length === 1 && wanted > labs[0].pcs) fail(400, `This lab has only ${labs[0].pcs} computers.`);
+  const aud = await parseAudience(req.body.audience);
+  if (aud.kind && labs.length > 1) fail(400, 'Choose one lab when you assign a class, a group or people.');
+  const touched = [];
   await tx(async q => {
-    for (const l of labs) await q('INSERT INTO sessions(lab_id, date, starts_at, ends_at, places, published) VALUES($1,$2,$3,$4,$5,$6)',
-      [l.id, date, from, to, wanted === null ? null : Math.min(wanted, l.pcs), published]);
+    for (const l of labs) {
+      const row = (await q('INSERT INTO sessions(lab_id, date, starts_at, ends_at, places, published, for_class, for_group, exclusive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
+        [l.id, date, from, to, wanted === null ? null : Math.min(wanted, l.pcs), published, aud.forClass, aud.forGroup, aud.exclusive]))[0];
+      await setPeople(q, row.id, aud.ids);
+      if (aud.kind) touched.push(...await syncAssigned(q, row.id));
+    }
   });
-  pushSeats(); res.json({ created: labs.length, published });
+  pushApps(touched); res.json({ created: labs.length, published, assigned: touched.length, notFound: aud.notFound });
 }));
 
 app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
@@ -399,26 +491,38 @@ app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
     if (places > pcs) fail(400, `This lab has only ${pcs} computers.`);
     if (s.seats - s.left > places) fail(409, `${s.seats - s.left} students are already approved. Move some first.`);
   }
-  await query('UPDATE sessions SET date = COALESCE($1::date, date), starts_at = COALESCE($2::time, starts_at), ends_at = COALESCE($3::time, ends_at), places = COALESCE($4::int, places) WHERE id = $5',
-    [date ?? null, from ?? null, to ?? null, places, req.params.id]);
-  pushSeats(); res.json({ ok: true });
+  const aud = req.body.audience !== undefined ? await parseAudience(req.body.audience) : null;
+  const touched = [];
+  await tx(async q => {
+    await q('UPDATE sessions SET date = COALESCE($1::date, date), starts_at = COALESCE($2::time, starts_at), ends_at = COALESCE($3::time, ends_at), places = COALESCE($4::int, places) WHERE id = $5',
+      [date ?? null, from ?? null, to ?? null, places, s.id]);
+    if (aud) {
+      await q('UPDATE sessions SET for_class = $1, for_group = $2, exclusive = $3 WHERE id = $4', [aud.forClass, aud.forGroup, aud.exclusive, s.id]);
+      await setPeople(q, s.id, aud.ids);
+      touched.push(...await syncAssigned(q, s.id));
+    }
+  });
+  pushApps(touched); res.json({ ok: true, assigned: touched.length, notFound: aud?.notFound || [] });
 }));
 
 // Publish or hide one lab time. A lab time with bookings can still be hidden, the bookings stay.
 app.patch('/api/sessions/:id/publish', auth('admin'), wrap(async (req, res) => {
   const r = await query('UPDATE sessions SET published = $1 WHERE id = $2 RETURNING id', [req.body.published === true, req.params.id]);
   if (!r.length) fail(404, 'That lab time does not exist.');
-  pushSeats(); res.json({ ok: true });
+  pushApps(); res.json({ ok: true });
 }));
-app.post('/api/sessions/publish-all', auth('admin'), wrap(async (_, res) => {
-  const r = await query('UPDATE sessions SET published = true WHERE published = false RETURNING id');
-  pushSeats(); res.json({ published: r.length });
+// Publish every draft, or only the drafts whose ids are sent (for example the ones shown for one week).
+app.post('/api/sessions/publish-all', auth('admin'), wrap(async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : null;
+  const r = await query('UPDATE sessions SET published = true WHERE published = false AND ($1::int[] IS NULL OR id = ANY($1::int[])) RETURNING id', [ids]);
+  pushApps(); res.json({ published: r.length });
 }));
 app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM sessions WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
 // ---------- Public lab overview (no login) ----------
 // Only published lab times, only counts, never names.
 //   taken = approved, waiting = pending (up to the places left), over = pending beyond the places (queue), open = places really free.
+//   for = who the lab time is assigned to, exclusive = only those people can join.
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 app.get('/api/overview', wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : new Date().toISOString().slice(0, 10);
@@ -435,7 +539,7 @@ app.get('/api/overview', wrap(async (req, res) => {
       .map(s => {
         const taken = Math.max(s.seats - s.left, 0), p = pendBy.get(Number(s.id)) || 0;
         const waiting = Math.min(p, Math.max(s.left, 0));
-        return { id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken, waiting, over: p - waiting, open: Math.max(s.left - waiting, 0) };
+        return { id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken, waiting, over: p - waiting, open: Math.max(s.left - waiting, 0), for: forText(s), exclusive: !!s.exclusive };
       })
       .sort((a, b) => a.from.localeCompare(b.from));
     const sum = k => list.reduce((n, s) => n + s[k], 0);
@@ -457,7 +561,7 @@ app.get('/api/overview', wrap(async (req, res) => {
 
 // ---------- Applications ----------
 // A person never holds two live bookings for the same lab time, or for two lab times that overlap on the same day.
-// Draft lab times cannot be booked.
+// Draft lab times cannot be booked. If a lab time is exclusive, only the people it is assigned to can book it.
 app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
   const { reason, students } = req.body, sessionId = +req.body.sessionId;
   const asked = req.user.role === 'student' ? [req.user.name] : (Array.isArray(students) ? students : []);
@@ -480,6 +584,14 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sessionId]);
     const s = (await q('SELECT date, "from", "to", published FROM session_places WHERE id = $1', [sessionId]))[0];
     if (!s || !s.published) fail(404, 'That lab time is not open for booking.');
+    const raw = (await q('SELECT id, exclusive, for_class, for_group FROM sessions WHERE id = $1', [sessionId]))[0];
+    if (raw?.exclusive) {
+      const allowed = new Set((await membersOf(q, raw)).map(m => nameKey(m.username)));
+      const out = names.filter(n => !allowed.has(nameKey(n)));
+      if (out.length) fail(403, req.user.role === 'student'
+        ? 'This lab time is only for the people the admin chose.'
+        : `This lab time is only for the people the admin chose. Not allowed: ${out.join(', ')}.`);
+    }
     const live = await q("SELECT name, sid, \"from\", \"to\" FROM application_details WHERE status <> 'rejected' AND date = $1", [s.date]);
     for (const n of names) {
       const k = nameKey(n);
@@ -491,7 +603,10 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
   });
   pushApps([...names, req.user.name]); res.json({ created, skipped });
 }));
-app.get('/api/apps', auth(), wrap(async (req, res) => res.json(req.user.role === 'admin' ? await listApps() : await listApps('name = $1 OR "bookedBy" = $1', [req.user.name]))));
+// People who are not the admin never see bookings of lab times that are still drafts.
+app.get('/api/apps', auth(), wrap(async (req, res) => res.json(req.user.role === 'admin'
+  ? await listApps()
+  : await listApps('(name = $1 OR "bookedBy" = $1) AND sid IN (SELECT id FROM session_places WHERE published)', [req.user.name]))));
 
 app.patch('/api/apps/:id/status', auth('admin'), wrap(async (req, res) => {
   const { status } = req.body;
@@ -734,8 +849,7 @@ app.delete('/api/trends/:id', comm, wrap(async (req, res) => {
 app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.code >= 400 && err.code < 600 ? err.code : (err.type === 'entity.too.large' ? 413 : 500)).json({ error: err.type === 'entity.too.large' ? 'The files are too big. Use smaller photos or paste a link for videos.' : err.message || 'Something went wrong.' }));
 
 // ---------- Database set-up (safe to run on every start) ----------
-// Creates the Lost & Found tables, the group tables, the draft/places columns and the session_places view.
-// The same SQL is also in setup.sql if you prefer to run it by hand.
+// Creates the Lost & Found tables, the group tables, the draft/places/assignment columns and the session_places view.
 const ensureTables = async () => {
   await query(`CREATE TABLE IF NOT EXISTS trends (
     id serial PRIMARY KEY, title text NOT NULL, description text NOT NULL DEFAULT '', category text NOT NULL DEFAULT 'Other',
@@ -759,18 +873,31 @@ const ensureTables = async () => {
     PRIMARY KEY (group_id, user_id))`);
   await query('CREATE INDEX IF NOT EXISTS student_group_members_user_idx ON student_group_members (user_id)');
 
-  // Draft schedules and open places. Existing lab times stay published and open to every computer.
+  // Draft schedules, open places and who a lab time is assigned to. Existing lab times stay published, open to everyone.
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS published boolean NOT NULL DEFAULT true');
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS places integer CHECK (places IS NULL OR places >= 1)');
+  await query("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_class text NOT NULL DEFAULT ''");
+  await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_group integer REFERENCES student_groups(id) ON DELETE SET NULL');
+  await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS exclusive boolean NOT NULL DEFAULT false');
+  await query(`CREATE TABLE IF NOT EXISTS session_people (
+    session_id integer NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (session_id, user_id))`);
+  await query('CREATE INDEX IF NOT EXISTS session_people_user_idx ON session_people (user_id)');
+  // The first columns keep their old order, the new ones are added at the end.
   await query(`CREATE OR REPLACE VIEW session_places AS
     SELECT s.id, s.lab_id AS "labId", l.name AS lab,
       to_char(s.date, 'YYYY-MM-DD') AS date,
       to_char(s.starts_at, 'HH24:MI') AS "from", to_char(s.ends_at, 'HH24:MI') AS "to",
       LEAST(COALESCE(s.places, l.pcs), l.pcs) AS seats,
       GREATEST(LEAST(COALESCE(s.places, l.pcs), l.pcs) - COALESCE(a.n, 0), 0) AS "left",
-      s.published
+      s.published,
+      s.for_class AS "forClass", s.for_group AS "forGroup", g.name AS "forGroupName", s.exclusive AS exclusive,
+      (SELECT COUNT(*)::int FROM session_people p WHERE p.session_id = s.id) AS "forPeople",
+      (SELECT COALESCE(array_agg(u.username ORDER BY u.username), ARRAY[]::text[]) FROM session_people p JOIN users u ON u.id = p.user_id WHERE p.session_id = s.id) AS people
     FROM sessions s
     JOIN labs l ON l.id = s.lab_id
+    LEFT JOIN student_groups g ON g.id = s.for_group
     LEFT JOIN (SELECT session_id, COUNT(*)::int AS n FROM applications WHERE status = 'approved' GROUP BY session_id) a ON a.session_id = s.id`);
 };
 const port = process.env.PORT || 4000;
