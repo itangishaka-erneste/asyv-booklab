@@ -120,6 +120,38 @@ const MAX_UPLOAD = 12 * 1024 * 1024;
 const MAX_ATTACH = 6;
 const byTime = (a, b) => `${a.date} ${a.from} ${a.lab}`.localeCompare(`${b.date} ${b.from} ${b.lab}`);
 
+/* ---------- Booking status, attendance and "who usually comes" ---------- */
+
+// Attendance as one word: 'present', 'late', 'absent' or '' (not marked). Late students count as present.
+const attKey = (a) => (a.att === 'present' && a.late ? 'late' : a.att || '');
+const attLabel = (a) => ({ present: 'Present', late: 'Late', absent: 'Absent' }[attKey(a)] || 'Not marked');
+// A waiting booking in a FULL lab time is in the queue. It is approved automatically when a place is free.
+const statusKey = (a, sMap) => (a.released ? 'released' : a.status === 'pending' && (sMap?.get(a.sid)?.left ?? 1) < 1 ? 'queue' : a.status);
+const STATUS_LABEL = { pending: 'Waiting', queue: 'In queue', released: 'Released', approved: 'Approved', rejected: 'Rejected' };
+const statusText = (a, sMap) => STATUS_LABEL[statusKey(a, sMap)] || a.status;
+
+// The record of one person from a list of bookings (all time).
+const recordOf = (list) => {
+  const ok = list.filter((a) => a.status === 'approved');
+  const present = ok.filter((a) => attKey(a) === 'present').length;
+  const late = ok.filter((a) => attKey(a) === 'late').length;
+  const absent = ok.filter((a) => attKey(a) === 'absent').length;
+  const marked = present + late + absent;
+  return {
+    booked: list.filter((a) => a.status !== 'rejected').length,
+    approved: ok.length, present, late, absent, marked, notMarked: ok.length - marked,
+    attended: present + late,
+    rate: marked ? Math.round(((present + late) / marked) * 100) : null,
+  };
+};
+const habitOf = (rate) => (rate == null ? 'none' : rate >= 80 ? 'good' : rate >= 50 ? 'mid' : 'poor');
+const HABIT = {
+  good: ['Usually comes', 'bg-[#16a34a] text-white'],
+  mid: ['Sometimes absent', 'bg-[#f59e0b]/15 text-[#b45309]'],
+  poor: ['Often absent', 'bg-[#ff4500] text-white'],
+  none: ['No record yet', 'bg-black/5 text-black/60'],
+};
+
 /* ---------- Printing ---------- */
 
 const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -174,7 +206,7 @@ function printDay(all, day, labName) {
   printDoc(`Lab schedule · ${niceDay(day)}`, labName || 'All labs', timetableHtml(cols, list, (s) => s.lab, (s) => cellHtml(s, false)));
 }
 function printRoster(s, list) {
-  const rows = list.map((a, i) => [i + 1, a.name, a.cls || '', a.status, a.att === 'present' ? 'Present' : a.att === 'absent' ? 'Absent' : '', '']);
+  const rows = list.map((a, i) => [i + 1, a.name, a.cls || '', statusText(a), attKey(a) ? attLabel(a) : '', '']);
   printDoc(`${s.lab} · ${niceDay(s.date)} · ${s.from}–${s.to}`, `${list.length} student${list.length === 1 ? '' : 's'} · ${audText(s)}`,
     tableHtml(['#', 'Name', 'Class', 'Status', 'Attendance', 'Signature'], rows));
 }
@@ -216,6 +248,7 @@ const ICON_PATHS = {
   People: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /></>,
   Schedule: <><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></>,
   Bookings: <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><path d="M22 4 12 14.01l-3-3" /></>,
+  Attendance: <><rect x="5" y="3" width="14" height="18" rx="2" /><path d="M9 3v2h6V3M9 13l2 2 4-4" /></>,
   Settings: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></>,
   Labs: <><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></>,
   Profile: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
@@ -234,6 +267,7 @@ const BTN = {
   or: 'bg-[#ff4500] text-white',
   bl: 'bg-[#2563eb] text-white',
   dk: 'bg-[#111827] text-white',
+  am: 'bg-[#f59e0b] text-white',
   w: 'bg-white text-[#111827] border border-black/20 hover:bg-black/5',
 };
 const Btn = ({ c = 'ink', className = '', ...p }) => (
@@ -324,15 +358,35 @@ const Alert = ({ ok, children }) => (
 
 const BADGE = {
   approved: 'bg-[#16a34a] text-white', pending: 'bg-[#ff4500]/10 text-[#c2310a]', rejected: 'bg-black/10 text-black/55',
-  present: 'bg-[#16a34a] text-white', absent: 'bg-[#ff4500]/10 text-[#c2310a]', active: 'bg-[#16a34a] text-white',
+  present: 'bg-[#16a34a] text-white', absent: 'bg-[#ff4500]/10 text-[#c2310a]', late: 'bg-[#f59e0b]/15 text-[#b45309]', active: 'bg-[#16a34a] text-white',
   returned: 'bg-[#2563eb]/10 text-[#1d4ed8]', removed: 'bg-black/10 text-black/55', available: 'bg-[#16a34a]/10 text-[#15803d]',
   limited: 'bg-[#ff4500]/10 text-[#c2310a]', requested: 'bg-[#ff4500]/10 text-[#c2310a]', full: 'bg-[#ff4500] text-white',
   draft: 'bg-[#2563eb]/10 text-[#1d4ed8]', published: 'bg-[#16a34a]/10 text-[#15803d]', none: 'bg-black/5 text-black/60',
+  queue: 'bg-[#2563eb]/10 text-[#1d4ed8]', released: 'bg-black/10 text-black/55',
 };
 const Badge = ({ s, children }) => (
   <span className={`inline-block rounded-[4px] px-2 py-0.5 text-[11px] font-semibold capitalize ${BADGE[s] || 'bg-black/5 text-black/60'}`}>{children || s}</span>
 );
-const AttBadge = ({ att }) => <Badge s={att || 'none'}>{att ? (att === 'present' ? 'Present' : 'Absent') : 'Not marked'}</Badge>;
+const AttBadge = ({ a }) => <Badge s={attKey(a) || 'none'}>{attLabel(a)}</Badge>;
+// Booking status: Approved, Waiting (for the admin), In queue (lab time is full) or Released.
+const StatusBadge = ({ a, sMap }) => { const k = statusKey(a, sMap); return <Badge s={k}>{STATUS_LABEL[k] || k}</Badge>; };
+const HabitBadge = ({ rate }) => {
+  const [t, c] = HABIT[habitOf(rate)];
+  return <span className={`inline-block whitespace-nowrap rounded-[4px] px-2 py-0.5 text-[11px] font-semibold ${c}`}>{t}{rate != null && ` · ${rate}%`}</span>;
+};
+
+// Present / Late / Absent for one booking. Click again to clear the mark.
+const AttButtons = ({ a, act }) => {
+  const k = attKey(a);
+  const set = (v) => act('att' + a.id, () => api(`/api/apps/${a.id}/attendance`, 'PATCH', { att: k === v ? null : v }));
+  return (
+    <>
+      <Btn c={k === 'present' ? 'ink' : 'w'} onClick={() => set('present')}>Present</Btn>
+      <Btn c={k === 'late' ? 'am' : 'w'} onClick={() => set('late')}>Late</Btn>
+      <Btn c={k === 'absent' ? 'or' : 'w'} onClick={() => set('absent')}>Absent</Btn>
+    </>
+  );
+};
 
 const Empty = ({ children }) => <p className="py-6 text-center text-sm text-black/50">{children}</p>;
 
@@ -394,7 +448,7 @@ function ConfirmProvider({ children }) {
 const useConfirm = () => useContext(ConfirmCtx);
 
 const Stat = ({ v, t, tone }) => {
-  const color = { gr: 'text-[#16a34a]', or: 'text-[#ff4500]' }[tone] || 'text-[#111827]';
+  const color = { gr: 'text-[#16a34a]', or: 'text-[#ff4500]', am: 'text-[#b45309]' }[tone] || 'text-[#111827]';
   return (
     <div className="rounded-[8px] border border-black/10 bg-white p-4">
       <div className={`text-2xl font-bold ${color}`}>{v}</div>
@@ -475,7 +529,8 @@ function usePeriod() {
   const [week, setWeek] = useState(weekStart(today()));
   const inP = (date) => mode === 'all' || (mode === 'day' ? date === day : inWeek(date, week));
   const refDay = mode === 'day' ? day : mode === 'week' ? week : today();
-  return { mode, setMode, day, setDay, week, setWeek, inP, refDay };
+  const text = mode === 'all' ? 'All days' : mode === 'day' ? niceDay(day) : `Week ${weekText(week)}`;
+  return { mode, setMode, day, setDay, week, setWeek, inP, refDay, text };
 }
 const PeriodBar = ({ p }) => (
   <div className="space-y-3">
@@ -749,7 +804,7 @@ function Hero({ onLogin }) {
               <span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />Live places, updated automatically
             </span>
             <h1 className="lb-in2 mt-5 max-w-xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
-            <p className="lb-in3 mt-5 max-w-md text-sm leading-relaxed text-black/65">See the places left in each lab for any day, then press Apply on the lab time you want. Sign in with Google and your booking is sent.</p>
+            <p className="lb-in3 mt-5 max-w-md text-sm leading-relaxed text-black/65">See the places left in each lab for any day, then press Apply on the lab time you want. Free places are approved at once. When a lab time is full you join the waiting list.</p>
             <div className="lb-in3 mt-7 flex flex-wrap items-center gap-3">
               <a href="#labs" className="inline-flex items-center rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white hover:opacity-90">See the labs</a>
               <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
@@ -847,8 +902,9 @@ function LabCard({ lab, day, past, onLogin, imageIndex = 0 }) {
               const tp = s.seats ? (s.taken / s.seats) * 100 : 100;
               const wp = s.seats ? (s.waiting / s.seats) * 100 : 0;
               const requestedFull = s.left > 0 && s.open < 1;
-              const text = s.left < 1 ? `Full, ${s.seats} of ${s.seats} taken`
-                : requestedFull ? `All requested · ${s.waiting} waiting${s.over ? ` · ${s.over} in the queue` : ''}`
+              const queueNote = s.over ? ` · ${s.over} in the queue` : '';
+              const text = s.left < 1 ? `Full, ${s.seats} of ${s.seats} taken${queueNote}`
+                : requestedFull ? `All requested · ${s.waiting} waiting${queueNote}`
                   : `${s.open} of ${s.seats} free${s.waiting ? ` · ${s.waiting} waiting` : ''}`;
               const intent = { sessionId: s.id, date: day, lab: lab.name, from: s.from, to: s.to };
               return (
@@ -857,6 +913,7 @@ function LabCard({ lab, day, past, onLogin, imageIndex = 0 }) {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <b className="text-sm">{s.from}–{s.to}</b>
+                        {s.auto && !s.exclusive && <span className="rounded-[4px] bg-[#16a34a]/10 px-2 py-0.5 text-[11px] font-semibold text-[#15803d]">Instant</span>}
                         {s.for && <span className="rounded-[4px] bg-[#ff4500]/10 px-2 py-0.5 text-[11px] font-semibold text-[#c2310a]">{s.exclusive ? 'Only ' : 'Reserved: '}{s.for}</span>}
                       </div>
                       <div className="mt-1.5 flex h-2 w-full overflow-hidden rounded-[3px] bg-[#16a34a]/25">
@@ -866,8 +923,8 @@ function LabCard({ lab, day, past, onLogin, imageIndex = 0 }) {
                       <div className={`mt-1 text-xs ${s.left < 1 || requestedFull ? 'font-bold text-[#c2310a]' : 'font-medium text-[#15803d]'}`}>{text}</div>
                     </div>
                     <div className="flex shrink-0 flex-col items-stretch gap-1.5">
-                      <Btn c={s.exclusive ? 'w' : 'ink'} disabled={past || s.left < 1} onClick={() => onLogin(intent)}>
-                        {past ? 'Past' : s.left < 1 ? 'Full' : s.exclusive ? 'Invited only' : requestedFull ? 'Join queue' : 'Apply'}
+                      <Btn c={s.exclusive ? 'w' : 'ink'} disabled={past} onClick={() => onLogin(intent)}>
+                        {past ? 'Past' : s.exclusive ? 'Invited only' : s.left < 1 || requestedFull ? 'Join queue' : 'Apply'}
                       </Btn>
                       <button type="button" aria-expanded={open === s.id} onClick={() => setOpen(open === s.id ? null : s.id)}
                         className="text-[11px] font-semibold text-[#2563eb] hover:underline">
@@ -1236,12 +1293,23 @@ function Booker({ user, opts, intent, onIntentDone }) {
     api(url).then(setStudents).catch((e) => setMsg({ ok: false, text: e.message }));
   }, [src]);
 
+  // The backend approves at once while places are free, otherwise the student joins the waiting list.
   const apply = (id) => run('a' + id, async () => {
     try {
       const r = await api('/api/apply', 'POST', { sessionId: id, reason });
-      setMsg(r.created
-        ? { ok: true, text: 'Sent. Wait for the admin to approve your booking.' }
-        : { ok: false, text: 'You already have a booking at this lab time, or one that overlaps it.' });
+      const s = sessions.find((x) => x.id === id);
+      if (r.created) {
+        setMsg({
+          ok: true,
+          text: r.approved ? 'Approved. Your place is booked. Remember to check in when you arrive.'
+            : s && s.left < 1 ? 'This lab time is full, so you joined the waiting list. You get a place automatically when one is free.'
+              : 'Sent. Wait for the admin to approve your booking.',
+        });
+      } else if (r.tooMany?.length) {
+        setMsg({ ok: false, text: `You cannot book more than ${r.maxConsecutive} day${r.maxConsecutive === 1 ? '' : 's'} in a row, so other students get a turn.` });
+      } else {
+        setMsg({ ok: false, text: 'You already have a booking at this lab time, or one that overlaps it.' });
+      }
       await loadApps();
     } catch (e) { setMsg({ ok: false, text: e.message }); }
   });
@@ -1256,15 +1324,30 @@ function Booker({ user, opts, intent, onIntentDone }) {
   const book = () => run('book', async () => {
     try {
       const r = await api('/api/apply', 'POST', { sessionId: +sid, reason, students: picked });
-      const skipped = r.skipped?.length ? ` Already booked: ${r.skipped.join(', ')}.` : '';
-      setMsg({ ok: r.created > 0, text: `${r.created} booking${r.created === 1 ? '' : 's'} sent for approval.${skipped}` });
+      const parts = [`${r.created} booking${r.created === 1 ? '' : 's'} sent`];
+      if (r.approved) parts.push(`${r.approved} approved at once`);
+      if (r.queued) parts.push(`${r.queued} in the waiting list`);
+      let text = parts.join(', ') + '.';
+      if (r.skipped?.length) text += ` Already booked: ${r.skipped.join(', ')}.`;
+      if (r.tooMany?.length) text += ` Too many days in a row: ${r.tooMany.join(', ')}.`;
+      setMsg({ ok: r.created > 0, text });
       setPicked([]);
+      await loadApps();
+    } catch (e) { setMsg({ ok: false, text: e.message }); }
+  });
+
+  // "I am here": opens 15 minutes before the start. After the grace time it is saved as late.
+  const checkIn = (id) => run('ci' + id, async () => {
+    try {
+      const r = await api(`/api/apps/${id}/checkin`, 'POST');
+      setMsg({ ok: true, text: r.late ? 'You are checked in. You were marked late.' : 'You are checked in. Thank you!' });
       await loadApps();
     } catch (e) { setMsg({ ok: false, text: e.message }); }
   });
 
   if (!ready) return <Loader full label="Loading" />;
 
+  const sMap = new Map(sessions.map((s) => [s.id, s]));
   const labs = sessions.filter((s) => (focus
     ? s.id === focus
     : (!day || dayOf(s) === day) && match(q, s.lab) && (view === 'all' || s.left > 0)));
@@ -1291,14 +1374,14 @@ function Booker({ user, opts, intent, onIntentDone }) {
 
       <div className="grid grid-cols-3 gap-4">
         {isStudent ? (
-          <><Stat v={n('approved')} t="Approved" tone="gr" /><Stat v={n('pending')} t="Waiting" tone="or" /><Stat v={myBookings.filter((a) => a.att === 'present').length} t="Times attended" /></>
+          <><Stat v={n('approved')} t="Approved" tone="gr" /><Stat v={n('pending')} t="Waiting or in queue" tone="or" /><Stat v={myBookings.filter((a) => a.att === 'present').length} t="Times attended" /></>
         ) : (
-          <><Stat v={myBookings.length} t="Bookings sent" /><Stat v={n('approved')} t="Approved" tone="gr" /><Stat v={n('pending')} t="Waiting" tone="or" /></>
+          <><Stat v={myBookings.length} t="Bookings sent" /><Stat v={n('approved')} t="Approved" tone="gr" /><Stat v={n('pending')} t="Waiting or in queue" tone="or" /></>
         )}
       </div>
 
       {isStudent ? (
-        <Card t="Book a lab" sub={focus ? 'The lab time you chose' : niceDay(day || today())}
+        <Card t="Book a lab" sub={focus ? 'The lab time you chose' : `${niceDay(day || today())} · free places are approved at once, full lab times have a waiting list`}
           action={focus ? <Btn c="w" onClick={() => setFocus(0)}>Show all lab times</Btn> : null}>
           {!focus && (
             <>
@@ -1320,17 +1403,18 @@ function Booker({ user, opts, intent, onIntentDone }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <b>{s.lab}</b>
                     <span className="text-black/60">{!day || focus ? `${shortDay(s.date)} · ` : ''}{s.from}–{s.to}</span>
+                    {s.autoApprove !== false && <span className="rounded-[4px] bg-[#16a34a]/10 px-2 py-0.5 text-[11px] font-semibold text-[#15803d]">Approved at once</span>}
                     {forLabel(s) && <span className="rounded-[4px] bg-[#ff4500]/10 px-2 py-0.5 text-[11px] font-semibold text-[#c2310a]">{audText(s)}</span>}
                   </div>
                   <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-[3px] bg-black/10">
                     <div className={`h-full ${s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#ff4500]'}`} style={{ width: pct + '%' }} />
                   </div>
                   <div className={`mt-1.5 text-xs ${s.left > 0 ? 'font-medium text-[#15803d]' : 'font-bold text-[#c2310a]'}`}>
-                    {s.left > 0 ? `${s.left} of ${s.seats} places left` : 'Full'}
+                    {s.left > 0 ? `${s.left} of ${s.seats} places left` : 'Full · you can join the waiting list'}
                   </div>
                 </div>
-                {m ? <Badge s={m.status} /> : (
-                  <ActBtn busy={busy === 'a' + s.id} doing="Sending…" label="Apply" disabled={s.left < 1} onClick={() => apply(s.id)} />
+                {m ? <StatusBadge a={m} sMap={sMap} /> : (
+                  <ActBtn c={s.left < 1 ? 'bl' : 'ink'} busy={busy === 'a' + s.id} doing="Sending…" label={s.left < 1 ? 'Join queue' : 'Apply'} onClick={() => apply(s.id)} />
                 )}
               </div>
             );
@@ -1348,7 +1432,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
           </div>
           {chosenSession && (
             <p className={`mt-4 text-xs font-medium ${chosenSession.left ? 'text-[#15803d]' : 'text-[#c2310a]'}`}>
-              {chosenSession.left} of {chosenSession.seats} places left
+              {chosenSession.left} of {chosenSession.seats} places left{chosenSession.left < 1 ? ' · extra students join the waiting list' : ''}
             </p>
           )}
           <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto]">
@@ -1377,7 +1461,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
             <ActBtn busy={busy === 'book'} doing="Sending…" label={`Book ${picked.length || ''} student${picked.length === 1 ? '' : 's'}`}
               disabled={!picked.length || !sid}
               onClick={async () => {
-                if (await ask({ title: 'Send these bookings?', message: `Send ${picked.length} booking${picked.length === 1 ? '' : 's'} for approval?`, ok: 'Yes, send' })) book();
+                if (await ask({ title: 'Send these bookings?', message: `Book ${picked.length} student${picked.length === 1 ? '' : 's'}? Free places are approved at once.`, ok: 'Yes, send' })) book();
               }} />
           </div>
         </Card>
@@ -1389,8 +1473,19 @@ function Booker({ user, opts, intent, onIntentDone }) {
         {myBookings.length === 0 && <Empty>No booking yet.</Empty>}
         {myBookings.map((a) => (
           <Row key={a.id}>
-            <span className="min-w-0"><b>{a.lab}</b> <span className="text-black/60">· {shortDay(a.date)} {a.from} · {a.reason}</span>{!isStudent && <span className="block text-xs text-black/55">{a.name}</span>}</span>
-            <span className="flex items-center gap-2">{a.att && <AttBadge att={a.att} />}<Badge s={a.status} /></span>
+            <span className="min-w-0">
+              <b>{a.lab}</b> <span className="text-black/60">· {shortDay(a.date)} {a.from}–{a.to} · {a.reason}</span>
+              {!isStudent && <span className="block text-xs text-black/55">{a.name}</span>}
+              {a.released && <span className="block text-xs text-[#c2310a]">Your place was given to the waiting list because you did not arrive in time. Apply again: if a place is free you get it at once.</span>}
+              {statusKey(a, sMap) === 'queue' && <span className="block text-xs text-[#1d4ed8]">You are in the waiting list. You get a place automatically when one is free.</span>}
+            </span>
+            <span className="flex flex-wrap items-center gap-2">
+              {isStudent && a.name === user.name && a.status === 'approved' && !a.att && a.date === today() && (
+                <ActBtn busy={busy === 'ci' + a.id} doing="…" label="I am here" onClick={() => checkIn(a.id)} />
+              )}
+              {a.status === 'approved' && a.att && <AttBadge a={a} />}
+              <StatusBadge a={a} sMap={sMap} />
+            </span>
           </Row>
         ))}
       </Card>
@@ -1399,10 +1494,10 @@ function Booker({ user, opts, intent, onIntentDone }) {
 }
 
 /* ================================================================== */
-/* 7. ADMIN: Overview, People, Schedule, Bookings, Settings            */
+/* 7. ADMIN: Overview, People, Schedule, Bookings, Attendance, Settings */
 /* ================================================================== */
 
-const ADMIN_TABS = ['Overview', 'People', 'Schedule', 'Bookings', 'Settings'];
+const ADMIN_TABS = ['Overview', 'People', 'Schedule', 'Bookings', 'Attendance', 'Settings'];
 const AUD_KINDS = [
   { value: '', label: 'Everyone' },
   { value: 'class', label: 'A class' },
@@ -1420,6 +1515,10 @@ const audFrom = (s) => {
 const audOk = (a) => !a.kind || (a.kind === 'people' ? a.people.length > 0 : !!a.value);
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const bulkText = (verb) => (r) => `${plural(r.done, 'booking')} ${verb}.${r.skipped ? ` ${r.skipped} skipped because the lab time is full.` : ''}`;
+const MODES = [
+  { value: 'true', label: 'Approve students at once (waiting list when full)' },
+  { value: 'false', label: 'The admin approves each student' },
+];
 
 function Admin({ tab }) {
   const [labs, setLabs] = useState([]);
@@ -1478,39 +1577,45 @@ function Admin({ tab }) {
       {tab === 'People' && <People users={users} groups={groups} opts={opts} busy={busy} act={act} sure={sure} />}
       {tab === 'Schedule' && <Schedule labs={labs} sessions={sessions} apps={apps} users={users} groups={groups} busy={busy} act={act} sure={sure} openRoster={setRoster} />}
       {tab === 'Bookings' && <Bookings apps={apps} sessions={sessions} black={black} busy={busy} act={act} sure={sure} openRoster={setRoster} />}
+      {tab === 'Attendance' && <Attendance apps={apps} sessions={sessions} users={users} labs={labs} busy={busy} act={act} sure={sure} openRoster={setRoster} />}
       {tab === 'Settings' && <Settings labs={labs} opts={opts} setOpts={setOpts} busy={busy} act={act} sure={sure} />}
-      {rs && <RosterModal s={rs} apps={apps} busy={busy} act={act} sure={sure} onClose={() => setRoster(0)} />}
+      {rs && <RosterModal s={rs} apps={apps} users={users} busy={busy} act={act} sure={sure} onClose={() => setRoster(0)} />}
     </div>
   );
 }
 
-// The list of people of ONE lab time: approve, mark attendance for one or for all, remove one by one or all.
-function RosterModal({ s, apps, busy, act, sure, onClose }) {
+// The list of people of ONE lab time: approve, mark attendance for one or for all, release no-shows, seat walk-ins, remove.
+function RosterModal({ s, apps, users, busy, act, sure, onClose }) {
   const [sel, setSel] = useState([]);
+  const [walk, setWalk] = useState([]);
+  const sMap = new Map([[s.id, s]]);
   const list = apps.filter((a) => a.sid === s.id).sort((a, b) => a.name.localeCompare(b.name));
-  const live = list.filter((a) => a.status !== 'rejected');
   const approved = list.filter((a) => a.status === 'approved');
   const waiting = list.filter((a) => a.status === 'pending');
   const rejected = list.filter((a) => a.status === 'rejected');
+  const live = list.filter((a) => a.status !== 'rejected');
   const ids = sel.filter((id) => list.some((a) => a.id === id));
   const allSel = list.length > 0 && ids.length === list.length;
-  const present = approved.filter((a) => a.att === 'present').length;
-  const absent = approved.filter((a) => a.att === 'absent').length;
+  const rec = recordOf(list);
   const toggle = (id) => setSel((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const bulk = (key, who, action, done, confirm) => {
     const body = () => api('/api/apps/bulk', 'POST', { ids: who.map((a) => a.id), action });
     return confirm ? sure(confirm, key, body, done) : act(key, body, done);
   };
+  const started = s.date < today() || (s.date === today() && s.from <= new Date().toTimeString().slice(0, 5));
+  const students = users.filter((u) => u.role === 'student' && !live.some((a) => a.name === u.name));
+  const chosen = (list2) => list2.filter((a) => ids.includes(a.id));
 
   return (
     <Modal title={`${s.lab} · ${shortDay(s.date)} · ${s.from}–${s.to}`} onClose={onClose} wide="xl">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <Badge s={s.published ? 'published' : 'draft'} />
+        <Badge s={s.autoApprove !== false ? 'available' : 'draft'}>{s.autoApprove !== false ? 'Instant approval' : 'Admin approves'}</Badge>
         <span className="font-semibold text-[#15803d]">{approved.length} approved</span>
         <span className="font-semibold text-[#c2310a]">{waiting.length} waiting</span>
         <span className="text-black/55">· {s.left} of {s.seats} places left · {audText(s)}</span>
       </div>
-      <p className="mt-1 text-xs text-black/55">Attendance: {present} present · {absent} absent · {approved.length - present - absent} not marked</p>
+      <p className="mt-1 text-xs text-black/55">Attendance: {rec.present} present · {rec.late} late · {rec.absent} absent · {rec.notMarked} not marked</p>
 
       <div className="mt-4 flex flex-wrap gap-2 rounded-[8px] border border-black/10 bg-black/[0.02] p-3">
         <span className="mr-1 self-center text-xs font-bold">For everyone approved:</span>
@@ -1522,15 +1627,36 @@ function RosterModal({ s, apps, busy, act, sure, onClose }) {
         <Btn c="w" disabled={!live.length} onClick={() => printRoster(s, live)}>Print list</Btn>
       </div>
 
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-[8px] border border-[#2563eb]/30 bg-[#2563eb]/5 p-3">
+        <span className="mr-1 text-xs font-bold text-[#1d4ed8]">Late students and the waiting list:</span>
+        <ActBtn c="bl" busy={busy === 'rel'} doing="Releasing…" label="Release no-shows to the queue" disabled={!started || !waiting.length}
+          onClick={() => act('rel', () => api(`/api/sessions/${s.id}/release-noshows`, 'POST'),
+            (r) => `${plural(r.released, 'place')} released, ${plural(r.promoted, 'student')} moved up from the queue.`)} />
+        <span className="text-[11px] text-black/55">
+          {!started ? 'Works after the lab time has started.' : !waiting.length ? 'Nobody is waiting.' : 'Only students not marked present are released, as many as the queue needs.'}
+        </span>
+      </div>
+
+      <div className="mt-3 rounded-[8px] border border-black/10 p-3">
+        <h4 className="mb-2 text-xs font-bold">Walk-in: a student who came without a booking</h4>
+        <PeoplePicker students={students} value={walk} onChange={setWalk} />
+        <ActBtn className="mt-3" busy={busy === 'walk'} doing="Seating…" label="Seat and mark present" disabled={!walk.length}
+          onClick={async () => {
+            if (await act('walk', () => api(`/api/sessions/${s.id}/walkin`, 'POST', { students: walk }),
+              (r) => `${plural(r.added, 'student')} seated.${r.skipped?.length ? ` Skipped: ${r.skipped.join(', ')}.` : ''}${r.notFound?.length ? ` Not found: ${r.notFound.join(', ')}.` : ''}`)) setWalk([]);
+          }} />
+      </div>
+
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <Btn c="w" disabled={!list.length} onClick={() => setSel(allSel ? [] : list.map((a) => a.id))}>{allSel ? 'Unselect all' : 'Select all'}</Btn>
         {ids.length > 0 && (
           <>
             <span className="text-xs font-bold text-[#c2310a]">{ids.length} selected</span>
-            <ActBtn busy={busy === 'rsp'} doing="…" label="Present" onClick={() => bulk('rsp', list.filter((a) => ids.includes(a.id)), 'present', 'Marked present.')} />
-            <ActBtn c="w" busy={busy === 'rsa'} doing="…" label="Absent" onClick={() => bulk('rsa', list.filter((a) => ids.includes(a.id)), 'absent', 'Marked absent.')} />
+            <ActBtn busy={busy === 'rsp'} doing="…" label="Present" onClick={() => bulk('rsp', chosen(list), 'present', 'Marked present.')} />
+            <ActBtn c="am" busy={busy === 'rsl'} doing="…" label="Late" onClick={() => bulk('rsl', chosen(list), 'late', 'Marked late.')} />
+            <ActBtn c="w" busy={busy === 'rsa'} doing="…" label="Absent" onClick={() => bulk('rsa', chosen(list), 'absent', 'Marked absent.')} />
             <ActBtn c="or" busy={busy === 'rsd'} doing="Removing…" label={`Remove selected (${ids.length})`}
-              onClick={() => bulk('rsd', list.filter((a) => ids.includes(a.id)), 'delete', `${plural(ids.length, 'booking')} removed.`,
+              onClick={() => bulk('rsd', chosen(list), 'delete', `${plural(ids.length, 'booking')} removed.`,
                 { message: `Remove ${plural(ids.length, 'student')} from this lab time?`, ok: 'Remove', danger: true })} />
           </>
         )}
@@ -1542,7 +1668,7 @@ function RosterModal({ s, apps, busy, act, sure, onClose }) {
 
       <div className="mt-3">
         {list.length === 0 && <Empty>Nobody has applied to this lab time yet.</Empty>}
-        {[['Approved', approved], ['Waiting', waiting], ['Rejected', rejected]].map(([title, group]) => group.length > 0 && (
+        {[['Approved', approved], ['Waiting and queue', waiting], ['Rejected and released', rejected]].map(([title, group]) => group.length > 0 && (
           <div key={title} className="mt-4">
             <h4 className="mb-1 text-xs font-bold uppercase tracking-wide text-black/50">{title} ({group.length})</h4>
             {group.map((a) => (
@@ -1552,11 +1678,15 @@ function RosterModal({ s, apps, busy, act, sure, onClose }) {
                   <Person p={a} sub={`${a.cls || 'No class'} · ${a.reason || ''}`} className="h-8 w-8 text-[10px]" />
                 </span>
                 <span className="flex flex-wrap items-center gap-2">
+                  <StatusBadge a={a} sMap={sMap} />
                   {a.status === 'approved' && (
                     <>
-                      <AttBadge att={a.att} />
-                      <Btn c={a.att === 'present' ? 'ink' : 'w'} onClick={() => act('att' + a.id, () => api(`/api/apps/${a.id}/attendance`, 'PATCH', { att: a.att === 'present' ? null : 'present' }))}>Present</Btn>
-                      <Btn c={a.att === 'absent' ? 'or' : 'w'} onClick={() => act('att' + a.id, () => api(`/api/apps/${a.id}/attendance`, 'PATCH', { att: a.att === 'absent' ? null : 'absent' }))}>Absent</Btn>
+                      <AttBadge a={a} />
+                      <AttButtons a={a} act={act} />
+                      {!a.att && started && (
+                        <Btn c="w" onClick={() => sure({ message: `Give the place of ${a.name} to the waiting list?`, ok: 'Release', danger: true }, 'rl' + a.id,
+                          () => api(`/api/apps/${a.id}/release`, 'PATCH'), 'Place released.')}>Release</Btn>
+                      )}
                     </>
                   )}
                   {a.status !== 'approved' && (
@@ -1579,15 +1709,16 @@ function RosterModal({ s, apps, busy, act, sure, onClose }) {
 
 function Overview({ stats, labs, sessions, apps, openRoster }) {
   const t = stats?.totals || {};
-  const rate = stats?.attendance?.rate;
+  const att = stats?.attendance || {};
   const todays = sessions.filter((s) => s.date === today() && s.published).sort(byTime);
   const cnt = (sid, st) => apps.filter((a) => a.sid === sid && a.status === st).length;
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         <Stat v={t.approved ?? 0} t="Approved bookings" tone="gr" />
-        <Stat v={t.pending ?? 0} t="Waiting for approval" tone="or" />
-        <Stat v={rate == null ? '-' : `${rate}%`} t="Attendance rate" tone="gr" />
+        <Stat v={t.pending ?? 0} t="Waiting or in queue" tone="or" />
+        <Stat v={att.rate == null ? '-' : `${att.rate}%`} t="Attendance rate" tone="gr" />
+        <Stat v={att.late ?? 0} t="Late arrivals" tone="am" />
         <Stat v={labs.length} t="Labs" />
       </div>
       <Card t="Today" sub={niceDay(today())}
@@ -1818,7 +1949,7 @@ function Schedule({ labs, sessions, apps, users, groups, busy, act, sure, openRo
   const students = users.filter((u) => u.role === 'student');
   const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
   const p = usePeriod();
-  const [f, setF] = useState({ date: today(), from: '14:00', to: '16:00', labId: '', places: '' });
+  const [f, setF] = useState({ date: today(), from: '14:00', to: '16:00', labId: '', places: '', auto: 'true' });
   const [aud, setAud] = useState({ ...BLANK_AUD });
   const [labF, setLabF] = useState('');
   const [view, setView] = useState('all');
@@ -1840,7 +1971,7 @@ function Schedule({ labs, sessions, apps, users, groups, busy, act, sure, openRo
 
   const create = (published) => act(published ? 'pub' : 'draft', async () => {
     const r = await api('/api/sessions', 'POST', {
-      date: f.date, from: f.from, to: f.to, published, audience: aud,
+      date: f.date, from: f.from, to: f.to, published, audience: aud, autoApprove: f.auto === 'true',
       labIds: f.labId ? [+f.labId] : undefined, places: f.places === '' ? undefined : +f.places,
     });
     setAud({ ...BLANK_AUD });
@@ -1861,6 +1992,7 @@ function Schedule({ labs, sessions, apps, users, groups, busy, act, sure, openRo
               options={[{ value: '', label: 'All labs' }, ...labs.map((l) => ({ value: String(l.id), label: l.name }))]} />
           </Lbl>
           <Field l="Places open" hint="Leave empty for every computer."><Inp type="number" min="1" value={f.places} onChange={(e) => setF({ ...f, places: e.target.value })} /></Field>
+          <Lbl l="How students are approved"><Dropdown value={f.auto} onChange={(v) => setF({ ...f, auto: v })} options={MODES} /></Lbl>
         </div>
         <div className="mt-6 rounded-[8px] border border-black/10 bg-black/[0.02] p-4">
           <AudienceEditor value={aud} onChange={setAud} classes={classes} groups={groups} students={students} />
@@ -1910,6 +2042,7 @@ function Schedule({ labs, sessions, apps, users, groups, busy, act, sure, openRo
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge s={s.published ? 'published' : 'draft'} />
+                    <Badge s={s.autoApprove !== false ? 'available' : 'draft'}>{s.autoApprove !== false ? 'Instant' : 'Manual'}</Badge>
                     <b>{s.lab} · {p.mode === 'day' ? '' : `${weekdayOf(s.date).slice(0, 3)} `}{shortDay(s.date)} · {s.from}–{s.to}</b>
                   </div>
                   <p className="mt-1 text-xs text-black/55">
@@ -1919,7 +2052,7 @@ function Schedule({ labs, sessions, apps, users, groups, busy, act, sure, openRo
               </span>
               <span className="flex flex-wrap gap-2">
                 <Btn c="bl" onClick={() => openRoster(s.id)}>People ({cnt(s.id, 'approved') + cnt(s.id, 'pending')})</Btn>
-                <Btn c="w" onClick={() => setEdit({ s, date: s.date, from: s.from, to: s.to, places: String(s.seats), aud: audFrom(s) })}>Edit</Btn>
+                <Btn c="w" onClick={() => setEdit({ s, date: s.date, from: s.from, to: s.to, places: String(s.seats), aud: audFrom(s), auto: String(s.autoApprove !== false) })}>Edit</Btn>
                 <ActBtn c={s.published ? 'w' : 'ink'} busy={busy === 'p' + s.id} doing="…" label={s.published ? 'Hide' : 'Publish'}
                   onClick={() => act('p' + s.id, () => api(`/api/sessions/${s.id}/publish`, 'PATCH', { published: !s.published }),
                     s.published ? 'Hidden from students.' : 'Published. Students can see it now.')} />
@@ -1938,6 +2071,7 @@ function Schedule({ labs, sessions, apps, users, groups, busy, act, sure, openRo
             <Field l="Places open" hint="Empty = every computer."><Inp type="number" min="1" value={edit.places} onChange={(e) => setEdit({ ...edit, places: e.target.value })} /></Field>
             <Field l="From"><Inp type="time" value={edit.from} onChange={(e) => setEdit({ ...edit, from: e.target.value })} /></Field>
             <Field l="To"><Inp type="time" value={edit.to} onChange={(e) => setEdit({ ...edit, to: e.target.value })} /></Field>
+            <div className="md:col-span-2"><Lbl l="How students are approved"><Dropdown value={edit.auto} onChange={(v) => setEdit({ ...edit, auto: v })} options={MODES} /></Lbl></div>
           </div>
           <div className="mt-5 rounded-[8px] border border-black/10 bg-black/[0.02] p-4">
             <AudienceEditor value={edit.aud} onChange={(a) => setEdit({ ...edit, aud: a })} classes={classes} groups={groups} students={students} />
@@ -1947,7 +2081,7 @@ function Schedule({ labs, sessions, apps, users, groups, busy, act, sure, openRo
             <ActBtn busy={busy === 'sedit'} doing="Saving…" label="Save changes" disabled={!audOk(edit.aud) || !edit.date || !edit.from || !edit.to}
               onClick={async () => {
                 if (await act('sedit', () => api(`/api/sessions/${edit.s.id}`, 'PUT', { date: edit.date, from: edit.from, to: edit.to,
-                  places: edit.places === '' ? '' : +edit.places, audience: edit.aud }), 'Lab time saved.')) setEdit(null);
+                  places: edit.places === '' ? '' : +edit.places, audience: edit.aud, autoApprove: edit.auto === 'true' }), 'Lab time saved.')) setEdit(null);
               }} />
             <Btn c="w" onClick={() => setEdit(null)}>Cancel</Btn>
           </div>
@@ -1985,6 +2119,357 @@ function AudienceEditor({ value, onChange, classes, groups, students }) {
   );
 }
 
+/* ---------- Attendance: table of who applied, mark attended, who usually comes ---------- */
+
+const ATT_FILTER = [
+  { value: '', label: 'Any attendance' },
+  { value: 'present', label: 'Present' },
+  { value: 'late', label: 'Late' },
+  { value: 'absent', label: 'Absent' },
+  { value: 'none', label: 'Approved, not marked yet' },
+];
+const attMatch = (a, f) => (!f ? true : f === 'none' ? a.status === 'approved' && !a.att : a.status === 'approved' && attKey(a) === f);
+
+const RateBar = ({ rate }) => (
+  <div className="flex items-center gap-2">
+    <div className="h-1.5 w-20 overflow-hidden rounded-[3px] bg-black/10">
+      <div className={`h-full ${rate == null ? '' : rate >= 80 ? 'bg-[#16a34a]' : rate >= 50 ? 'bg-[#f59e0b]' : 'bg-[#ff4500]'}`} style={{ width: `${rate ?? 0}%` }} />
+    </div>
+    <span className="w-9 text-[11px] font-semibold">{rate == null ? '-' : `${rate}%`}</span>
+  </div>
+);
+
+// Table of bookings: one row per student and lab time.
+function AppTable({ rows, sMap, rates, ids, toggle, act, onPerson, showClass = true }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[980px] text-left text-xs">
+        <thead>
+          <tr className="border-b border-black/10 text-[11px] uppercase tracking-wide text-black/50">
+            <th className="w-8 py-2 pr-2" />
+            <th className="py-2 pr-3">Student</th>
+            {showClass && <th className="py-2 pr-3">Class</th>}
+            <th className="py-2 pr-3">Lab time</th>
+            <th className="py-2 pr-3">Booking</th>
+            <th className="py-2 pr-3">Attendance</th>
+            <th className="py-2 pr-3">Record</th>
+            <th className="py-2">Mark</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((a) => (
+            <tr key={a.id} className="border-b border-black/5 align-middle hover:bg-black/[0.02]">
+              <td className="py-2.5 pr-2">
+                <input type="checkbox" aria-label={`Select ${a.name}`} className="h-4 w-4 accent-[#ff4500]" checked={ids.includes(a.id)} onChange={() => toggle(a.id)} />
+              </td>
+              <td className="py-2.5 pr-3">
+                <button type="button" onClick={() => onPerson(a.name)} className="text-left hover:underline" title="See the full record">
+                  <Person p={a} sub={a.reason || a.email} className="h-8 w-8 text-[10px]" />
+                </button>
+              </td>
+              {showClass && <td className="py-2.5 pr-3 whitespace-nowrap">{a.cls || 'No class'}</td>}
+              <td className="py-2.5 pr-3 whitespace-nowrap">
+                <b>{a.lab}</b>
+                <span className="block text-black/55">{weekdayOf(a.date).slice(0, 3)} {shortDay(a.date)} · {a.from}–{a.to}</span>
+              </td>
+              <td className="py-2.5 pr-3"><StatusBadge a={a} sMap={sMap} /></td>
+              <td className="py-2.5 pr-3">{a.status === 'approved' ? <AttBadge a={a} /> : <span className="text-black/30">—</span>}</td>
+              <td className="py-2.5 pr-3"><HabitBadge rate={rates.get(a.name) ?? null} /></td>
+              <td className="py-2.5">
+                <span className="flex flex-wrap gap-1.5">
+                  {a.status === 'approved'
+                    ? <AttButtons a={a} act={act} />
+                    : <ActBtn busy={false} label="Approve" onClick={() => act('a' + a.id, () => api(`/api/apps/${a.id}/status`, 'PATCH', { status: 'approved' }), 'Approved.')} />}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// The full record of one student: numbers, a strip of the last visits, and every booking.
+function PersonModal({ name, student, list, sMap, onClose }) {
+  const r = recordOf(list);
+  const sorted = [...list].sort((a, b) => `${b.date} ${b.from}`.localeCompare(`${a.date} ${a.from}`));
+  const strip = sorted.filter((a) => a.status === 'approved' && a.att).slice(0, 20).reverse();
+  const who = student || list[0] || { name };
+  return (
+    <Modal title="Student record" onClose={onClose} wide="xl">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Person p={who} sub={`${who.className || who.cls || 'No class'}${who.email ? ` · ${who.email}` : ''}`} className="h-12 w-12 text-sm" />
+        <HabitBadge rate={r.rate} />
+      </div>
+      <div className="mt-5 grid grid-cols-3 gap-3 md:grid-cols-6">
+        <Stat v={r.booked} t="Booked" />
+        <Stat v={r.present} t="Present" tone="gr" />
+        <Stat v={r.late} t="Late" tone="am" />
+        <Stat v={r.absent} t="Absent" tone="or" />
+        <Stat v={r.notMarked} t="Not marked" />
+        <Stat v={r.rate == null ? '-' : `${r.rate}%`} t="Attendance rate" tone="gr" />
+      </div>
+      {strip.length > 0 && (
+        <div className="mt-5">
+          <p className="mb-2 text-xs font-semibold">Last {strip.length} marked visits (oldest to newest)</p>
+          <div className="flex flex-wrap gap-1.5">
+            {strip.map((a) => {
+              const k = attKey(a);
+              return <span key={a.id} title={`${shortDay(a.date)} · ${a.lab} · ${attLabel(a)}`}
+                className={`h-5 w-5 rounded-[4px] ${k === 'present' ? 'bg-[#16a34a]' : k === 'late' ? 'bg-[#f59e0b]' : 'bg-[#ff4500]'}`} />;
+            })}
+          </div>
+          <p className="mt-2 flex flex-wrap gap-4 text-[11px] text-black/55">
+            <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-[2px] bg-[#16a34a]" />Present</span>
+            <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-[2px] bg-[#f59e0b]" />Late</span>
+            <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-[2px] bg-[#ff4500]" />Absent</span>
+          </p>
+        </div>
+      )}
+      <div className="mt-5 overflow-x-auto">
+        <table className="w-full min-w-[560px] text-left text-xs">
+          <thead>
+            <tr className="border-b border-black/10 text-[11px] uppercase tracking-wide text-black/50">
+              <th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Time</th><th className="py-2 pr-3">Lab</th>
+              <th className="py-2 pr-3">Reason</th><th className="py-2 pr-3">Booking</th><th className="py-2">Attendance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.length === 0 && <tr><td colSpan={6}><Empty>This student has no booking yet.</Empty></td></tr>}
+            {sorted.map((a) => (
+              <tr key={a.id} className="border-b border-black/5">
+                <td className="py-2 pr-3 whitespace-nowrap">{weekdayOf(a.date).slice(0, 3)} {shortDay(a.date)}</td>
+                <td className="py-2 pr-3 whitespace-nowrap">{a.from}–{a.to}</td>
+                <td className="py-2 pr-3">{a.lab}</td>
+                <td className="py-2 pr-3 text-black/60">{a.reason}</td>
+                <td className="py-2 pr-3"><StatusBadge a={a} sMap={sMap} /></td>
+                <td className="py-2">{a.status === 'approved' ? <AttBadge a={a} /> : <span className="text-black/30">—</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
+function Attendance({ apps, sessions, users, labs, busy, act, sure, openRoster }) {
+  const p = usePeriod();
+  const [view, setView] = useState('table');
+  const [q, setQ] = useState('');
+  const [cls, setCls] = useState('');
+  const [labF, setLabF] = useState('');
+  const [sid, setSid] = useState('');
+  const [statusF, setStatusF] = useState('');
+  const [attF, setAttF] = useState('');
+  const [habitF, setHabitF] = useState('');
+  const [sort, setSort] = useState('name');
+  const [sel, setSel] = useState([]);
+  const [person, setPerson] = useState('');
+  useEffect(() => { setSid(''); }, [p.mode, p.day, p.week, labF]);
+
+  const sMap = new Map(sessions.map((s) => [s.id, s]));
+  const students = users.filter((u) => u.role === 'student');
+  const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
+  const byName = new Map();
+  apps.forEach((a) => { if (!byName.has(a.name)) byName.set(a.name, []); byName.get(a.name).push(a); });
+  const recFor = (name) => recordOf(byName.get(name) || []);
+  const rates = new Map(students.map((s) => [s.name, recFor(s.name).rate]));
+  const lessons = sessions.filter((s) => (!labF || String(s.labId) === labF) && p.inP(s.date)).sort(byTime);
+
+  const rows = apps
+    .filter((a) => p.inP(a.date)
+      && (!cls || a.cls === cls)
+      && (!labF || String(sMap.get(a.sid)?.labId) === labF)
+      && (!sid || String(a.sid) === sid)
+      && (!statusF || statusKey(a, sMap) === statusF)
+      && attMatch(a, attF)
+      && match(q, a.name, a.email, a.cls, a.lab, a.reason))
+    .sort((a, b) => byTime(a, b) || a.name.localeCompare(b.name));
+  const rec = recordOf(rows);
+  const ids = sel.filter((id) => rows.some((a) => a.id === id));
+  const chosen = rows.filter((a) => ids.includes(a.id));
+  const allSel = rows.length > 0 && ids.length === rows.length;
+  const approvedShown = rows.filter((a) => a.status === 'approved');
+  const toggle = (id) => setSel((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]));
+  const bulk = (key, who, action, done, confirm) => {
+    const body = () => api('/api/apps/bulk', 'POST', { ids: who.map((a) => a.id), action });
+    return confirm ? sure(confirm, key, body, done) : act(key, body, done);
+  };
+
+  const byClass = new Map();
+  rows.forEach((a) => { const k = a.cls || 'No class'; if (!byClass.has(k)) byClass.set(k, []); byClass.get(k).push(a); });
+  const classGroups = [...byClass.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
+  const people = students
+    .filter((s) => (!cls || s.className === cls) && match(q, s.name, s.email, s.className))
+    .map((s) => ({ s, r: recFor(s.name) }))
+    .filter((x) => !habitF || habitOf(x.r.rate) === habitF)
+    .sort((a, b) => {
+      if (sort === 'low') return (a.r.rate ?? 101) - (b.r.rate ?? 101) || a.s.name.localeCompare(b.s.name);
+      if (sort === 'high') return (b.r.rate ?? -1) - (a.r.rate ?? -1) || a.s.name.localeCompare(b.s.name);
+      if (sort === 'absent') return b.r.absent - a.r.absent || a.s.name.localeCompare(b.s.name);
+      if (sort === 'booked') return b.r.booked - a.r.booked || a.s.name.localeCompare(b.s.name);
+      return a.s.name.localeCompare(b.s.name);
+    });
+  const habitCount = (h) => students.filter((s) => (!cls || s.className === cls) && habitOf(recFor(s.name).rate) === h).length;
+
+  const printRows = (list, title) => printTable(title, `${p.text} · ${list.length} booking${list.length === 1 ? '' : 's'}`,
+    ['Student', 'Class', 'Lab', 'Date', 'Time', 'Booking', 'Attendance'],
+    list.map((a) => [a.name, a.cls || '', a.lab, a.date, `${a.from}–${a.to}`, statusText(a, sMap), a.status === 'approved' ? attLabel(a) : '']));
+
+  const personList = person ? byName.get(person) || [] : [];
+  const personStudent = person ? students.find((s) => s.name === person) : null;
+  const clearFilters = () => { setQ(''); setCls(''); setLabF(''); setSid(''); setStatusF(''); setAttF(''); setHabitF(''); };
+  const filtered = q || cls || labF || sid || statusF || attF || habitF;
+
+  return (
+    <div className="space-y-6">
+      <Card t="Attendance" sub="See who applied, mark who came, and see who usually comes. Starts on today.">
+        <Pills value={view} onChange={setView} items={[['table', 'All bookings (table)'], ['class', 'By class'], ['students', 'Students record']]} />
+        {view !== 'students' && <div className="mt-4"><PeriodBar p={p} /></div>}
+        {view === 'students' && <p className="mt-3 text-xs text-black/55">The record counts every marked booking of the student, from all days.</p>}
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <SearchBox value={q} onChange={setQ} placeholder="Search a student, email, class or lab" />
+          <Dropdown value={cls} onChange={setCls} options={[{ value: '', label: 'All classes' }, ...classes.map((c) => ({ value: c, label: c }))]} />
+          {view !== 'students' && <Dropdown value={labF} onChange={setLabF} options={[{ value: '', label: 'All labs' }, ...labs.map((l) => ({ value: String(l.id), label: l.name }))]} />}
+          {view !== 'students' && (
+            <Dropdown value={sid} onChange={setSid} placeholder="All lab times"
+              options={[{ value: '', label: 'All lab times' }, ...lessons.map((s) => ({ value: String(s.id), label: `${s.lab} · ${shortDay(s.date)} ${s.from}–${s.to}` }))]} />
+          )}
+          {view !== 'students' && (
+            <Dropdown value={statusF} onChange={setStatusF} options={[
+              { value: '', label: 'Any booking status' }, { value: 'approved', label: 'Approved' }, { value: 'pending', label: 'Waiting for the admin' },
+              { value: 'queue', label: 'In the queue (lab time full)' }, { value: 'rejected', label: 'Rejected' }, { value: 'released', label: 'Released (did not arrive)' },
+            ]} />
+          )}
+          {view !== 'students' && <Dropdown value={attF} onChange={setAttF} options={ATT_FILTER} />}
+          {view === 'students' && (
+            <Dropdown value={sort} onChange={setSort} options={[
+              { value: 'name', label: 'Sort: name' }, { value: 'low', label: 'Sort: lowest attendance first' }, { value: 'high', label: 'Sort: best attendance first' },
+              { value: 'absent', label: 'Sort: most absences' }, { value: 'booked', label: 'Sort: most bookings' },
+            ]} />
+          )}
+        </div>
+        {view === 'students' && (
+          <div className="mt-4">
+            <Pills value={habitF} onChange={setHabitF} items={[
+              ['', 'Everyone', students.filter((s) => !cls || s.className === cls).length],
+              ['good', 'Usually comes', habitCount('good')], ['mid', 'Sometimes absent', habitCount('mid')],
+              ['poor', 'Often absent', habitCount('poor')], ['none', 'No record yet', habitCount('none')],
+            ]} />
+          </div>
+        )}
+        {filtered && <button type="button" onClick={clearFilters} className="mt-3 text-xs font-semibold text-[#2563eb] hover:underline">Clear all filters</button>}
+      </Card>
+
+      {view !== 'students' && (
+        <>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-6">
+            <Stat v={rows.length} t="Applied (shown)" />
+            <Stat v={rec.approved} t="Approved" tone="gr" />
+            <Stat v={rec.present} t="Present" tone="gr" />
+            <Stat v={rec.late} t="Late" tone="am" />
+            <Stat v={rec.absent} t="Absent" tone="or" />
+            <Stat v={rec.notMarked} t="Not marked yet" />
+          </div>
+
+          <Card t={`${rows.length} booking${rows.length === 1 ? '' : 's'}`} sub={p.text}
+            action={(
+              <div className="flex flex-wrap gap-2">
+                <Btn c="w" disabled={!rows.length} onClick={() => setSel(allSel ? [] : rows.map((a) => a.id))}>{allSel ? 'Unselect all' : 'Select all shown'}</Btn>
+                <ActBtn busy={busy === 'allp'} doing="…" label={`Mark all approved present (${approvedShown.length})`} disabled={!approvedShown.length}
+                  onClick={() => bulk('allp', approvedShown, 'present', `${plural(approvedShown.length, 'student')} marked present.`,
+                    { title: 'Mark everyone present?', message: `Mark ${plural(approvedShown.length, 'approved student')} shown as present?`, ok: 'Yes, mark present' })} />
+                <Btn c="w" disabled={!rows.length} onClick={() => printRows(rows, 'Attendance table')}>Print table</Btn>
+              </div>
+            )}>
+            {ids.length > 0 && (
+              <div className="mb-4 flex flex-wrap items-center gap-2 rounded-[8px] border border-[#ff4500]/40 bg-[#ff4500]/5 p-3">
+                <span className="text-xs font-bold text-[#c2310a]">{ids.length} selected</span>
+                <ActBtn c="bl" busy={busy === 'm0'} doing="…" label="Approve" onClick={() => bulk('m0', chosen, 'approve', bulkText('approved'))} />
+                <ActBtn busy={busy === 'm1'} doing="…" label="Present" onClick={() => bulk('m1', chosen, 'present', bulkText('marked present'))} />
+                <ActBtn c="am" busy={busy === 'm2'} doing="…" label="Late" onClick={() => bulk('m2', chosen, 'late', bulkText('marked late'))} />
+                <ActBtn c="or" busy={busy === 'm3'} doing="…" label="Absent" onClick={() => bulk('m3', chosen, 'absent', bulkText('marked absent'))} />
+                <ActBtn c="w" busy={busy === 'm4'} doing="…" label="Clear mark" onClick={() => bulk('m4', chosen, 'clear', bulkText('cleared'))} />
+                <Btn c="w" onClick={() => setSel([])}>Clear selection</Btn>
+              </div>
+            )}
+            {rows.length === 0 && <Empty>{filtered ? 'No booking matches these filters.' : 'Nobody applied in this period.'}</Empty>}
+            {view === 'table' && rows.length > 0 && (
+              <AppTable rows={rows} sMap={sMap} rates={rates} ids={ids} toggle={toggle} act={act} onPerson={setPerson} />
+            )}
+          </Card>
+
+          {view === 'class' && classGroups.map(([k, list]) => {
+            const r = recordOf(list);
+            const appr = list.filter((a) => a.status === 'approved');
+            return (
+              <Card key={k} t={`${k} · ${plural(list.length, 'booking')}`}
+                sub={`${r.approved} approved · ${r.attended} attended · ${r.absent} absent · ${r.notMarked} not marked`}
+                action={(
+                  <div className="flex flex-wrap gap-2">
+                    <ActBtn busy={busy === 'cp' + k} doing="…" label="All present" disabled={!appr.length} onClick={() => bulk('cp' + k, appr, 'present', `${plural(appr.length, 'student')} marked present.`)} />
+                    <ActBtn c="w" busy={busy === 'ca' + k} doing="…" label="All absent" disabled={!appr.length} onClick={() => bulk('ca' + k, appr, 'absent', `${plural(appr.length, 'student')} marked absent.`)} />
+                    <Btn c="w" onClick={() => printRows(list, `Attendance · ${k}`)}>Print</Btn>
+                  </div>
+                )}>
+                <AppTable rows={list} sMap={sMap} rates={rates} ids={ids} toggle={toggle} act={act} onPerson={setPerson} showClass={false} />
+              </Card>
+            );
+          })}
+        </>
+      )}
+
+      {view === 'students' && (
+        <Card t={`${people.length} student${people.length === 1 ? '' : 's'}`} sub="Click a name to see every booking and the last visits."
+          action={<Btn c="w" disabled={!people.length} onClick={() => printTable('Student attendance record', `${people.length} students`,
+            ['Student', 'Class', 'Booked', 'Present', 'Late', 'Absent', 'Not marked', 'Rate', 'Record'],
+            people.map(({ s, r }) => [s.name, s.className || '', r.booked, r.present, r.late, r.absent, r.notMarked, r.rate == null ? '-' : `${r.rate}%`, HABIT[habitOf(r.rate)][0]]))}>Print record</Btn>}>
+          {people.length === 0 && <Empty>No student matches these filters.</Empty>}
+          {people.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[860px] text-left text-xs">
+                <thead>
+                  <tr className="border-b border-black/10 text-[11px] uppercase tracking-wide text-black/50">
+                    <th className="py-2 pr-3">Student</th><th className="py-2 pr-3">Class</th>
+                    <th className="py-2 pr-3 text-center">Booked</th><th className="py-2 pr-3 text-center">Present</th>
+                    <th className="py-2 pr-3 text-center">Late</th><th className="py-2 pr-3 text-center">Absent</th>
+                    <th className="py-2 pr-3 text-center">Not marked</th><th className="py-2 pr-3">Rate</th><th className="py-2">Record</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {people.slice(0, 150).map(({ s, r }) => (
+                    <tr key={s.id} className="border-b border-black/5 hover:bg-black/[0.02]">
+                      <td className="py-2.5 pr-3">
+                        <button type="button" onClick={() => setPerson(s.name)} className="text-left hover:underline"><Person p={s} className="h-8 w-8 text-[10px]" /></button>
+                      </td>
+                      <td className="py-2.5 pr-3 whitespace-nowrap">{s.className || 'No class'}</td>
+                      <td className="py-2.5 pr-3 text-center font-semibold">{r.booked}</td>
+                      <td className="py-2.5 pr-3 text-center font-semibold text-[#15803d]">{r.present}</td>
+                      <td className="py-2.5 pr-3 text-center font-semibold text-[#b45309]">{r.late}</td>
+                      <td className="py-2.5 pr-3 text-center font-semibold text-[#c2310a]">{r.absent}</td>
+                      <td className="py-2.5 pr-3 text-center">{r.notMarked}</td>
+                      <td className="py-2.5 pr-3"><RateBar rate={r.rate} /></td>
+                      <td className="py-2.5"><HabitBadge rate={r.rate} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {people.length > 150 && <p className="pt-3 text-center text-xs text-black/50">Showing 150 of {people.length}. Search to narrow the list.</p>}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {person && <PersonModal name={person} student={personStudent} list={personList} sMap={sMap} onClose={() => setPerson('')} />}
+    </div>
+  );
+}
+
+/* ---------- Bookings: approve, move, block ---------- */
+
 function Bookings({ apps, sessions, black, busy, act, sure, openRoster }) {
   const p = usePeriod();
   const [status, setStatus] = useState('pending');
@@ -1994,6 +2479,7 @@ function Bookings({ apps, sessions, black, busy, act, sure, openRoster }) {
   const [move, setMove] = useState(null);
   useEffect(() => { setSid(''); }, [p.mode, p.day, p.week]);
 
+  const sMap = new Map(sessions.map((s) => [s.id, s]));
   const lessons = sessions.filter((s) => s.published && p.inP(s.date)).sort(byTime);
   const base = apps.filter((a) => p.inP(a.date) && (!sid || String(a.sid) === sid) && match(q, a.name, a.email, a.cls, a.reason, a.lab));
   const shown = base.filter((a) => status === 'all' || a.status === status);
@@ -2021,15 +2507,15 @@ function Bookings({ apps, sessions, black, busy, act, sure, openRoster }) {
 
   return (
     <div className="space-y-6">
-      <Card t="Bookings" sub="Starts on today. Approve students, mark who came, or remove bookings one by one or all together.">
+      <Card t="Bookings" sub="Starts on today. Instant lab times approve students by themselves. Here you handle the rest: approve, move, block or remove.">
         <PeriodBar p={p} />
         <div className="mt-4 grid gap-3 md:grid-cols-3">
           <SearchBox value={q} onChange={setQ} placeholder="Search a student or lab" />
           <Dropdown value={sid} onChange={setSid} options={[{ value: '', label: 'All lab times' }, ...lessons.map((s) => ({ value: String(s.id), label: `${s.lab} · ${shortDay(s.date)} ${s.from}` }))]} />
           <Dropdown value={status} onChange={setStatus} options={[
-            { value: 'pending', label: `Waiting (${count('pending')})` },
+            { value: 'pending', label: `Waiting and queue (${count('pending')})` },
             { value: 'approved', label: `Approved (${count('approved')})` },
-            { value: 'rejected', label: `Rejected (${count('rejected')})` },
+            { value: 'rejected', label: `Rejected and released (${count('rejected')})` },
             { value: 'all', label: `All (${count('all')})` },
           ]} />
         </div>
@@ -2051,6 +2537,7 @@ function Bookings({ apps, sessions, black, busy, act, sure, openRoster }) {
             <ActBtn busy={busy === 'b1'} doing="…" label="Approve" onClick={() => bulk('b1', chosen, 'approve', bulkText('approved'))} />
             <ActBtn c="w" busy={busy === 'b2'} doing="…" label="Reject" onClick={() => bulk('b2', chosen, 'reject', bulkText('rejected'))} />
             <ActBtn c="ink" busy={busy === 'b3'} doing="…" label="Present" onClick={() => bulk('b3', chosen, 'present', bulkText('marked present'))} />
+            <ActBtn c="am" busy={busy === 'b7'} doing="…" label="Late" onClick={() => bulk('b7', chosen, 'late', bulkText('marked late'))} />
             <ActBtn c="w" busy={busy === 'b4'} doing="…" label="Absent" onClick={() => bulk('b4', chosen, 'absent', bulkText('marked absent'))} />
             <ActBtn c="w" busy={busy === 'b5'} doing="…" label="Clear mark" onClick={() => bulk('b5', chosen, 'clear', bulkText('cleared'))} />
             <ActBtn c="or" busy={busy === 'b6'} doing="Removing…" label={`Remove ${ids.length}`}
@@ -2086,11 +2573,11 @@ function Bookings({ apps, sessions, black, busy, act, sure, openRoster }) {
                   <Person p={a} sub={`${a.cls || 'No class'} · ${a.reason}`} />
                 </span>
                 <span className="flex flex-wrap items-center gap-2">
-                  <Badge s={a.status} />
+                  <StatusBadge a={a} sMap={sMap} />
                   {a.status === 'approved' && (
                     <>
-                      <Btn c={a.att === 'present' ? 'ink' : 'w'} onClick={() => act('att' + a.id, () => api(`/api/apps/${a.id}/attendance`, 'PATCH', { att: a.att === 'present' ? null : 'present' }))}>Present</Btn>
-                      <Btn c={a.att === 'absent' ? 'or' : 'w'} onClick={() => act('att' + a.id, () => api(`/api/apps/${a.id}/attendance`, 'PATCH', { att: a.att === 'absent' ? null : 'absent' }))}>Absent</Btn>
+                      <AttBadge a={a} />
+                      <AttButtons a={a} act={act} />
                     </>
                   )}
                   {a.status !== 'approved' && (
@@ -2147,12 +2634,35 @@ function Settings({ labs, opts, setOpts, busy, act, sure }) {
   const full = Object.fromEntries(grades.map((g) => [g, combosFor(opts, g)]));
   const [newGrade, setNewGrade] = useState('');
   const [newLab, setNewLab] = useState({ name: '', pcs: 10 });
+  const [rules, setRules] = useState({
+    maxConsecutive: String(opts.maxConsecutive ?? 1),
+    graceMinutes: String(opts.graceMinutes ?? 15),
+    autoRelease: String(opts.autoRelease !== false),
+  });
   const clean = (s) => s.trim().toUpperCase().replace(/\s+/g, ' ');
   const putOpts = (body) => api('/api/options', 'PUT', body).then((o) => setOpts({ ...EMPTY_OPTS, ...o }));
   const saveOpts = (body, done) => act('opts', () => putOpts(body), done);
+  const rulesChanged = rules.maxConsecutive !== String(opts.maxConsecutive ?? 1) || rules.graceMinutes !== String(opts.graceMinutes ?? 15) || rules.autoRelease !== String(opts.autoRelease !== false);
 
   return (
     <div className="space-y-6">
+      <Card t="Booking rules" sub="These rules keep the labs fair and free the places of students who do not come.">
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field l="Most days in a row one student can book" hint="0 = no limit. Admin bookings are not stopped by this rule.">
+            <Inp type="number" min="0" max="7" value={rules.maxConsecutive} onChange={(e) => setRules({ ...rules, maxConsecutive: e.target.value })} />
+          </Field>
+          <Field l="Grace time in minutes" hint="After the start plus this time, a student who arrives is marked late.">
+            <Inp type="number" min="0" max="120" value={rules.graceMinutes} onChange={(e) => setRules({ ...rules, graceMinutes: e.target.value })} />
+          </Field>
+          <Lbl l="Give places of no-shows to the queue">
+            <Dropdown value={rules.autoRelease} onChange={(v) => setRules({ ...rules, autoRelease: v })}
+              options={[{ value: 'true', label: 'Yes, automatically' }, { value: 'false', label: 'No, only when I press the button' }]} />
+          </Lbl>
+        </div>
+        <ActBtn className="mt-5" busy={busy === 'opts'} doing="Saving…" label="Save booking rules" disabled={!rulesChanged}
+          onClick={() => saveOpts({ maxConsecutive: +rules.maxConsecutive || 0, graceMinutes: +rules.graceMinutes || 0, autoRelease: rules.autoRelease === 'true' }, 'Booking rules saved.')} />
+      </Card>
+
       <Card t="Labs" sub="Name and number of computers of each room.">
         <div className="mb-5 flex flex-wrap gap-3">
           <Inp className="!w-56" placeholder="Lab name" value={newLab.name} onChange={(e) => setNewLab({ ...newLab, name: e.target.value })} />
@@ -2547,7 +3057,7 @@ function Profile({ onChanged }) {
 /* 10. DASHBOARD SHELL                                                 */
 /* ================================================================== */
 
-const NAV_ICON = { 'My labs': 'Labs', Bookings: 'Bookings', 'Lost & Found': 'Tag', Profile: 'Profile', Overview: 'Overview', People: 'People', Schedule: 'Schedule', Settings: 'Settings' };
+const NAV_ICON = { 'My labs': 'Labs', Bookings: 'Bookings', Attendance: 'Attendance', 'Lost & Found': 'Tag', Profile: 'Profile', Overview: 'Overview', People: 'People', Schedule: 'Schedule', Settings: 'Settings' };
 
 function NavItem({ name, active, onClick }) {
   return (
@@ -2605,7 +3115,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
             ))}
           </nav>
         </header>
-        <main className="mx-auto max-w-5xl px-5 py-8 lg:px-8">
+        <main className={`mx-auto px-5 py-8 lg:px-8 ${page === 'Attendance' ? 'max-w-7xl' : 'max-w-5xl'}`}>
           <div className="mb-6 flex items-center gap-3">
             <Avatar name={user.name} picture={user.picture} className="h-10 w-10 text-xs" />
             <div>
