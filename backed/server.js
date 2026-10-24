@@ -1,5 +1,14 @@
 // server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js).
 // Accounts are created by seed.sql or by the admin. EVERYONE signs in with Google only.
+//
+// New in this version
+//  - Instant booking: a lab time can approve students at once while places are free (no pending).
+//  - Waiting list: when a lab time is full students join the queue. The first one is approved
+//    automatically when a place becomes free.
+//  - "Not too many days in a row": nobody can book more than N days in a row (default 1) so others get a turn.
+//  - Late students: check-in, a grace time, and release of no-shows to the waiting list (automatic or by the admin).
+//    Walk-ins: the admin can seat a student who came without a booking.
+//  - A student in a waiting list can still apply to another lab (waiting entries never block other bookings).
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -9,15 +18,26 @@ const { query, one, tx } = require('./db');
 const SECRET = process.env.JWT_SECRET || 'change-me';
 const CLIENT = process.env.CLIENT_URL || 'http://localhost:5173';
 const ADMINS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+const TZ = process.env.LAB_TZ || 'Africa/Kigali'; // the time zone of the school (used for "today", late and check-in)
 const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families', 'reasons'];
 const ROLES = ['student', 'teacher', 'psychosocial'];
 const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const DEFAULT_GRADE_COMBOS = { S4: ['INGABE'], S5: ['INGABO'], S6: ['IJABO'] };
 const DEFAULT_TREND_CATEGORIES = ['Clothes', 'Shoes', 'Keys', 'Bags', 'Phones and electronics', 'Books and stationery', 'Documents and IDs', 'Water bottles and lunch boxes', 'Jewelry and watches', 'Other'];
-const DEFAULTS = { grades: ['S4', 'S5', 'S6'], gradeCombos: DEFAULT_GRADE_COMBOS, trendCategories: DEFAULT_TREND_CATEGORIES };
+// Booking rules the admin can change in Settings.
+const DEFAULT_SETTINGS = { maxConsecutive: 1, graceMinutes: 15, autoRelease: true };
+const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.floor(+v) || 0));
+const SETTING_PARSERS = {
+  maxConsecutive: v => clampInt(v, 0, 7),
+  graceMinutes: v => clampInt(v, 0, 120),
+  autoRelease: v => v === true || v === 'true',
+};
+const DEFAULTS = { grades: ['S4', 'S5', 'S6'], gradeCombos: DEFAULT_GRADE_COMBOS, trendCategories: DEFAULT_TREND_CATEGORIES, ...DEFAULT_SETTINGS };
 const SECTION_RE = /^[A-Z0-9]{1,2}$/;
 const combosFor = (opts, grade) => opts.gradeCombos?.[grade] ?? DEFAULT_GRADE_COMBOS[grade] ?? [];
+const maxOf = o => (Number.isFinite(+o.maxConsecutive) && o.maxConsecutive !== null ? +o.maxConsecutive : DEFAULT_SETTINGS.maxConsecutive);
+const graceOf = o => (Number.isFinite(+o.graceMinutes) && o.graceMinutes !== null ? +o.graceMinutes : DEFAULT_SETTINGS.graceMinutes);
 
 const nameKey = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
 const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
@@ -25,6 +45,18 @@ const cleanList = list => [...new Set(list.map(x => String(x).trim()).filter(Boo
 const cleanCode = s => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
 const validEmail = e => /^\S+@\S+\.\S+$/.test(e);
 const toIds = v => (Array.isArray(v) ? v : []).map(Number).filter(Number.isInteger);
+
+// Today and the time in the school's time zone, as 'YYYY-MM-DD' and 'HH:MM'.
+const nowLocal = () => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(new Date()).map(x => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
+};
+const addDay = (s, n) => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
+const HM = t => String(t || '').slice(0, 5);
+const mins = t => { const [h, m] = HM(t).split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const isOver = (s, now = nowLocal()) => s.date < now.date || (s.date === now.date && mins(s.to) <= mins(now.time));
+const hasStarted = (s, now = nowLocal()) => s.date < now.date || (s.date === now.date && mins(s.from) <= mins(now.time));
 
 const app = express(), server = http.createServer(app);
 const io = new Server(server, { cors: { origin: CLIENT } });
@@ -50,13 +82,18 @@ const comm = [auth(), wrap(async (req, _res, next) => {
 // ---------- Data helpers ----------
 // session_places is a view (see ensureTables). seats = places open, left = seats - approved, published = visible to others.
 const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
-const HM = t => String(t || '').slice(0, 5);
 const ASSIGNED = 'Assigned by admin';
 const forText = s => s.forGroupName || s.forClass || (s.forPeople ? `${s.forPeople} chosen student${s.forPeople === 1 ? '' : 's'}` : '');
 
 const withPeople = async rows => {
   const m = new Map((await query('SELECT username, email, profile->>\'picture\' AS picture, md5(lower(email)) AS gid FROM users')).map(r => [r.username, r]));
   return rows.map(a => { const p = m.get(a.name); return { ...a, email: p?.email || '', picture: p?.picture || '', gid: p?.gid || '' }; });
+};
+// late = came after the start + grace. released = the place was given back because the student did not arrive.
+const withExtras = async rows => {
+  if (!rows.length) return rows;
+  const ex = new Map((await query('SELECT id, late, note FROM applications WHERE id = ANY($1::int[])', [rows.map(r => r.id)])).map(r => [r.id, r]));
+  return rows.map(a => { const x = ex.get(a.id); return { ...a, late: !!x?.late, note: x?.note || '', released: /^Released/.test(x?.note || '') }; });
 };
 
 const SESSION_ORDER = 'ORDER BY date, "from", lab';
@@ -76,7 +113,7 @@ const listSessions = async (all = false, user = null) => {
   return rows.map(({ people, ...r }) => r);
 };
 const listApps = async (where = '', params = []) =>
-  withPeople(await query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params));
+  withExtras(await withPeople(await query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params)));
 const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_places WHERE id = $1', [sid]))[0]?.left ?? 0;
 const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Booking not found.');
 const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
@@ -85,7 +122,10 @@ const saveOption = (q, k, value) => q('INSERT INTO options(key, value) VALUES($1
 const seedOptions = async () => {
   const cur = await getOptions();
   for (const [k, v] of Object.entries(DEFAULTS)) {
-    const missing = k === 'gradeCombos' ? !cur[k] || Array.isArray(cur[k]) : !Array.isArray(cur[k]) || !cur[k].length;
+    let missing;
+    if (k === 'gradeCombos') missing = !cur[k] || Array.isArray(cur[k]);
+    else if (k in SETTING_PARSERS) missing = cur[k] === undefined || cur[k] === null;
+    else missing = !Array.isArray(cur[k]) || !cur[k].length;
     if (missing) await saveOption(query, k, v);
   }
 };
@@ -102,6 +142,83 @@ const studentProfile = async (grade, combo, section) => {
   section = String(section || '').trim().toUpperCase();
   if (section && !SECTION_RE.test(section)) fail(400, 'The section must be a letter (A to Z) or a number (1 to 12), or empty.');
   return { grade, combo, section, cls: [grade, combo, section].filter(Boolean).join(' ') };
+};
+
+// ---------- Booking engine: waiting list, fair-use rule, late students ----------
+// A booking "holds" the student's time when it is approved, or when it waits for the admin in a lab time that still has places.
+// A student waiting in a FULL lab time (the queue) holds nothing, so they can still apply to another lab.
+const liveOn = (q, date) => q(`SELECT d.name, d.sid, d."from", d."to", d.status, sp."left" AS lft
+  FROM application_details d JOIN session_places sp ON sp.id = d.sid
+  WHERE d.status <> 'rejected' AND d.date = $1`, [date]);
+const holds = (b, sid) => +b.sid === +sid || b.status === 'approved' || +b.lft > 0;
+const overlaps = (b, s) => HM(b.from) < HM(s.to) && HM(s.from) < HM(b.to);
+
+// When a student gets a place, their waiting entries in other full lab times at the same hour are cancelled.
+const dropQueueOverlap = async (q, name, sid) => {
+  const s = (await q('SELECT date, "from", "to" FROM session_places WHERE id = $1', [sid]))[0];
+  if (!s) return;
+  await q(`DELETE FROM applications WHERE student = $1 AND status = 'pending' AND session_id <> $2
+    AND session_id IN (SELECT id FROM session_places WHERE date = $3 AND "from" < $5 AND $4 < "to" AND "left" < 1)`, [name, sid, s.date, s.from, s.to]);
+};
+
+// Fair use: nobody books more than `max` days in a row. max = 0 means no limit.
+const tooManyInRow = async (q, name, date, sid, max) => {
+  if (!(max >= 1)) return false;
+  const rows = await q(`SELECT DISTINCT d.date::text AS day FROM application_details d JOIN session_places sp ON sp.id = d.sid
+    WHERE lower(d.name) = lower($1) AND d.status IN ('approved', 'pending') AND NOT (d.status = 'pending' AND sp."left" < 1)
+    AND d.sid <> $2::int AND d.date::text BETWEEN $3::text AND $4::text`, [name, sid, addDay(date, -max), addDay(date, max)]);
+  const days = new Set(rows.map(r => String(r.day).slice(0, 10)));
+  let run = 1;
+  for (let i = 1; days.has(addDay(date, -i)); i++) run++;
+  for (let i = 1; days.has(addDay(date, i)); i++) run++;
+  return run > max;
+};
+
+// The waiting students of a lab time who can really be given a place (not blocked, no clash, fair-use rule respected).
+const queueFor = async (q, s) => {
+  const max = maxOf(await getOptions());
+  const banned = new Set((await q('SELECT name FROM blacklist')).map(b => nameKey(b.name)));
+  const live = await liveOn(q, s.date);
+  const waiting = await q("SELECT id, student, booked_by FROM applications WHERE session_id = $1 AND status = 'pending' ORDER BY id", [s.id]);
+  const out = [];
+  for (const a of waiting) {
+    const k = nameKey(a.student);
+    if (banned.has(k)) continue;
+    if (live.some(b => nameKey(b.name) === k && +b.sid !== +s.id && holds(b, s.id) && overlaps(b, s))) continue;
+    if (a.booked_by !== ASSIGNED && await tooManyInRow(q, a.student, s.date, s.id, max)) continue;
+    out.push(a);
+  }
+  return out;
+};
+
+// Free places go to the waiting list in order (instant-booking lab times only). Returns how many were approved.
+const promote = async (q, sid, touched = []) => {
+  const s = (await q('SELECT id, date, "from", "to", "left", "autoApprove" FROM session_places WHERE id = $1', [sid]))[0];
+  if (!s || !s.autoApprove || s.left < 1) return 0;
+  let left = s.left, n = 0;
+  for (const a of await queueFor(q, s)) {
+    if (left < 1) break;
+    await q("UPDATE applications SET status = 'approved', note = '' WHERE id = $1", [a.id]);
+    await dropQueueOverlap(q, a.student, sid);
+    left--; n++; touched.push(a.student, a.booked_by);
+  }
+  return n;
+};
+
+// Somebody is waiting, the lab time is full and some approved students did not arrive: give their places to the queue.
+// Only as many places as the queue needs are released. Students who were marked present or who checked in are never released.
+const releaseNoShows = async (q, sid, touched = []) => {
+  await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sid]);
+  await promote(q, sid, touched);
+  const s = (await q('SELECT id, date, "from", "to", "left" FROM session_places WHERE id = $1', [sid]))[0];
+  if (!s) return { released: 0, promoted: 0 };
+  const need = (await queueFor(q, s)).length - s.left;
+  if (need < 1) return { released: 0, promoted: 0 };
+  const cands = await q("SELECT id, student, booked_by FROM applications WHERE session_id = $1 AND status = 'approved' AND attendance IS NULL ORDER BY id DESC LIMIT $2", [sid, need]);
+  if (!cands.length) return { released: 0, promoted: 0 };
+  await q("UPDATE applications SET status = 'rejected', note = $2 WHERE id = ANY($1::int[])", [cands.map(c => c.id), 'Released: did not arrive in time']);
+  cands.forEach(c => touched.push(c.student, c.booked_by));
+  return { released: cands.length, promoted: await promote(q, sid, touched) };
 };
 
 // ---------- Socket.io ----------
@@ -304,16 +421,20 @@ app.patch('/api/users/:id/communication', auth('admin'), wrap(async (req, res) =
 }));
 
 // Deleting an account also removes its own bookings so no ghost names stay in the lab lists.
+// The places it held go to the waiting list.
 const deleteUsers = async ids => {
   if (!ids.length) return 0;
-  const names = await tx(async q => {
+  const { list, extra } = await tx(async q => {
     const list = (await q('SELECT username FROM users WHERE id = ANY($1::int[])', [ids])).map(r => r.username);
+    const sids = (await q("SELECT DISTINCT session_id FROM applications WHERE student = ANY($1::text[]) AND status = 'approved'", [list])).map(r => r.session_id);
     await q('DELETE FROM applications WHERE student = ANY($1::text[])', [list]);
     await q('DELETE FROM users WHERE id = ANY($1::int[])', [ids]);
-    return list;
+    const extra = [];
+    for (const sid of sids) await promote(q, sid, extra);
+    return { list, extra };
   });
-  pushApps(names);
-  return names.length;
+  pushApps([...list, ...extra]);
+  return list.length;
 };
 app.post('/api/users/bulk-delete', auth('admin'), wrap(async (req, res) => {
   const ids = toIds(req.body.ids);
@@ -322,7 +443,7 @@ app.post('/api/users/bulk-delete', auth('admin'), wrap(async (req, res) => {
 }));
 app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await deleteUsers(toIds([req.params.id])); res.sendStatus(204); }));
 
-// ---------- Options (reasons, grades, combinations) ----------
+// ---------- Options (reasons, grades, combinations, booking rules) ----------
 app.get('/api/options', wrap(async (_, res) => res.json(await getOptions())));
 app.put('/api/options', auth('admin'), wrap(async (req, res) => {
   await tx(async q => {
@@ -330,6 +451,7 @@ app.put('/api/options', auth('admin'), wrap(async (req, res) => {
       if (LISTS.includes(k) && Array.isArray(v)) await saveOption(q, k, cleanList(v));
       else if (k === 'gradeCombos' && v && typeof v === 'object' && !Array.isArray(v))
         await saveOption(q, k, Object.fromEntries(Object.entries(v).map(([g, list]) => [String(g).trim(), Array.isArray(list) ? cleanList(list) : []])));
+      else if (k in SETTING_PARSERS) await saveOption(q, k, SETTING_PARSERS[k](v));
     }
   });
   pushSeats();
@@ -476,6 +598,7 @@ const membersOf = (q, s) => q(`SELECT u.id, u.username, ${CLASS_SQL} AS cls FROM
   ) ORDER BY u.username`, [s.for_class || '', s.for_group || null, s.id]);
 
 // Books the assigned students: approved while places remain, then pending. Removes automatic bookings of people no longer assigned.
+// Bookings made by the admin are not stopped by the "days in a row" rule.
 const syncAssigned = async (q, sid) => {
   await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sid]);
   const s = (await q(`SELECT id, to_char(date, 'YYYY-MM-DD') AS d, to_char(starts_at, 'HH24:MI') AS "from", to_char(ends_at, 'HH24:MI') AS "to", for_class, for_group FROM sessions WHERE id = $1`, [sid]))[0];
@@ -486,17 +609,17 @@ const syncAssigned = async (q, sid) => {
   stale.forEach(r => touched.push(r.student));
   if (!members.length) return touched;
   const banned = new Set((await q('SELECT name FROM blacklist')).map(b => nameKey(b.name)));
-  const live = await q("SELECT name, sid, \"from\", \"to\" FROM application_details WHERE status <> 'rejected' AND date = $1", [s.d]);
+  const live = await liveOn(q, s.d);
   let left = await seatsLeft(q, sid);
   for (const m of members) {
     const k = nameKey(m.username);
     if (banned.has(k)) continue;
-    const clash = live.some(b => nameKey(b.name) === k && (+b.sid === +sid || (HM(b.from) < s.to && s.from < HM(b.to))));
+    const clash = live.some(b => nameKey(b.name) === k && holds(b, sid) && (+b.sid === +sid || overlaps(b, s)));
     if (clash) continue;
     const status = left > 0 ? 'approved' : 'pending';
     const made = await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by, status) VALUES($1,$2,$3,'Assigned',$4,$5) ON CONFLICT (session_id, student) WHERE status <> 'rejected' DO NOTHING RETURNING id",
       [sid, m.username, m.cls || '', ASSIGNED, status]);
-    if (made.length && status === 'approved') left--;
+    if (made.length && status === 'approved') { left--; await dropQueueOverlap(q, m.username, sid); }
   }
   return touched;
 };
@@ -505,8 +628,9 @@ const syncAssigned = async (q, sid) => {
 app.get('/api/sessions', auth(), wrap(async (req, res) => res.json(await listSessions(req.user.role === 'admin', req.user))));
 
 app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
-  const { date = new Date().toISOString().slice(0, 10), from, to, labIds } = req.body;
+  const { date = nowLocal().date, from, to, labIds } = req.body;
   const published = req.body.published === true;
+  const autoApprove = req.body.autoApprove !== false;
   if (!from || !to || from >= to) fail(400, 'The start time must be before the end time.');
   const wanted = req.body.places === undefined || req.body.places === null || req.body.places === '' ? null : Math.floor(+req.body.places);
   if (wanted !== null && !(wanted >= 1)) fail(400, 'Places open must be 1 or more.');
@@ -518,8 +642,8 @@ app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
   const touched = [];
   await tx(async q => {
     for (const l of labs) {
-      const row = (await q('INSERT INTO sessions(lab_id, date, starts_at, ends_at, places, published, for_class, for_group, exclusive) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
-        [l.id, date, from, to, wanted === null ? null : Math.min(wanted, l.pcs), published, aud.forClass, aud.forGroup, aud.exclusive]))[0];
+      const row = (await q('INSERT INTO sessions(lab_id, date, starts_at, ends_at, places, published, for_class, for_group, exclusive, auto_approve) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+        [l.id, date, from, to, wanted === null ? null : Math.min(wanted, l.pcs), published, aud.forClass, aud.forGroup, aud.exclusive, autoApprove]))[0];
       await setPeople(q, row.id, aud.ids);
       if (aud.kind) touched.push(...await syncAssigned(q, row.id));
     }
@@ -528,7 +652,7 @@ app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
   res.json({ created: labs.length, published, assigned: touched.length, notFound: aud.notFound });
 }));
 
-// Edit a lab time: day, times, places open (empty = every computer) and who it is for.
+// Edit a lab time: day, times, places open (empty = every computer), booking mode and who it is for.
 app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
   const { date, from, to } = req.body;
   const s = await one('SELECT id, seats, "left", "labId", "from", "to" FROM session_places WHERE id = $1', [req.params.id]) || fail(404, 'That lab time does not exist.');
@@ -542,16 +666,18 @@ app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
     if (places > pcs) fail(400, `This lab has only ${pcs} computers.`);
     if (s.seats - s.left > places) fail(409, `${s.seats - s.left} students are already approved. Move some first.`);
   }
+  const auto = typeof req.body.autoApprove === 'boolean' ? req.body.autoApprove : null;
   const aud = req.body.audience !== undefined ? await parseAudience(req.body.audience) : null;
   const touched = [];
   await tx(async q => {
-    await q('UPDATE sessions SET date = COALESCE($1::date, date), starts_at = COALESCE($2::time, starts_at), ends_at = COALESCE($3::time, ends_at), places = CASE WHEN $6::boolean THEN NULL ELSE COALESCE($4::int, places) END WHERE id = $5',
-      [date ?? null, from ?? null, to ?? null, places, s.id, clearPlaces]);
+    await q('UPDATE sessions SET date = COALESCE($1::date, date), starts_at = COALESCE($2::time, starts_at), ends_at = COALESCE($3::time, ends_at), places = CASE WHEN $6::boolean THEN NULL ELSE COALESCE($4::int, places) END, auto_approve = COALESCE($7::boolean, auto_approve) WHERE id = $5',
+      [date ?? null, from ?? null, to ?? null, places, s.id, clearPlaces, auto]);
     if (aud) {
       await q('UPDATE sessions SET for_class = $1, for_group = $2, exclusive = $3 WHERE id = $4', [aud.forClass, aud.forGroup, aud.exclusive, s.id]);
       await setPeople(q, s.id, aud.ids);
       touched.push(...await syncAssigned(q, s.id));
     }
+    await promote(q, s.id, touched); // more places or instant booking switched on: the waiting list moves up
   });
   pushApps(touched);
   res.json({ ok: true, assigned: touched.length, notFound: aud?.notFound || [] });
@@ -575,10 +701,49 @@ app.post('/api/sessions/bulk-delete', auth('admin'), wrap(async (req, res) => {
 }));
 app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM sessions WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
 
+// The admin gives the places of students who did not arrive to the waiting list (as many as the queue needs).
+app.post('/api/sessions/:id/release-noshows', auth('admin'), wrap(async (req, res) => {
+  const sid = +req.params.id;
+  const s = await one('SELECT date, "from", "to" FROM session_places WHERE id = $1', [sid]) || fail(404, 'That lab time does not exist.');
+  if (!hasStarted(s)) fail(409, 'This lab time has not started yet.');
+  const touched = [];
+  const r = await tx(q => releaseNoShows(q, sid, touched));
+  pushApps(touched);
+  res.json(r);
+}));
+
+// A student who came without a booking (or late, after the place was released): the admin seats them if a place is free.
+app.post('/api/sessions/:id/walkin', auth('admin'), wrap(async (req, res) => {
+  const sid = +req.params.id;
+  const { ids, notFound } = await resolveStudents(splitTokens(req.body.students));
+  if (!ids.length) fail(400, 'Choose at least one student from the list.');
+  const studs = await query(`SELECT id, username, ${CLASS_SQL} AS cls FROM users WHERE id = ANY($1::int[]) ORDER BY username`, [ids]);
+  let added = 0; const skipped = [], touched = [];
+  await tx(async q => {
+    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sid]);
+    const s = (await q('SELECT date, "from", "to" FROM session_places WHERE id = $1', [sid]))[0] || fail(404, 'That lab time does not exist.');
+    const late = hasStarted(s);
+    const banned = new Set((await q('SELECT name FROM blacklist')).map(b => nameKey(b.name)));
+    let left = await seatsLeft(q, sid);
+    for (const st of studs) {
+      if (banned.has(nameKey(st.username))) { skipped.push(`${st.username} (blocked)`); continue; }
+      const ex = (await q("SELECT id, status FROM applications WHERE session_id = $1 AND student = $2 AND status <> 'rejected'", [sid, st.username]))[0];
+      if (ex?.status === 'approved') { skipped.push(`${st.username} (already booked)`); continue; }
+      if (left < 1) { skipped.push(`${st.username} (no free place)`); continue; }
+      if (ex) await q("UPDATE applications SET status = 'approved', note = '', attendance = 'present', late = $2 WHERE id = $1", [ex.id, late]);
+      else await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by, status, attendance, late) VALUES($1,$2,$3,'Walk-in','Walk-in (admin)','approved','present',$4)", [sid, st.username, st.cls || '', late]);
+      await dropQueueOverlap(q, st.username, sid);
+      left--; added++; touched.push(st.username);
+    }
+  });
+  pushApps(touched);
+  res.json({ added, skipped, notFound });
+}));
+
 // ---------- Public lab overview (no login, counts only, never names) ----------
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 app.get('/api/overview', wrap(async (req, res) => {
-  const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : new Date().toISOString().slice(0, 10);
+  const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
   const [labRows, sessions, pend] = await Promise.all([
     query('SELECT id, name, pcs FROM labs ORDER BY name'),
     listSessions(),
@@ -592,7 +757,7 @@ app.get('/api/overview', wrap(async (req, res) => {
       .map(s => {
         const taken = Math.max(s.seats - s.left, 0), p = pendBy.get(Number(s.id)) || 0;
         const waiting = Math.min(p, Math.max(s.left, 0));
-        return { id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken, waiting, over: p - waiting, open: Math.max(s.left - waiting, 0), for: forText(s), exclusive: !!s.exclusive };
+        return { id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken, waiting, over: p - waiting, open: Math.max(s.left - waiting, 0), for: forText(s), exclusive: !!s.exclusive, auto: s.autoApprove !== false };
       })
       .sort((a, b) => a.from.localeCompare(b.from));
     const sum = k => list.reduce((n, s) => n + s[k], 0);
@@ -613,7 +778,12 @@ app.get('/api/overview', wrap(async (req, res) => {
 }));
 
 // ---------- Bookings ----------
-// One live booking per person per lab time, and no overlaps on the same day. Exclusive lab times are only for the assigned people.
+// One live booking per person per lab time. Rules:
+//  - Instant lab times approve the student at once while places are free. When full, the student joins the waiting list.
+//  - Students in a waiting list can still book another lab (waiting entries never block).
+//  - Nobody books more than "maxConsecutive" days in a row (Settings), so others get a turn.
+//  - A lab time that is over cannot be booked. Late students can still book while it runs.
+//  - Exclusive lab times are only for the assigned people.
 app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
   const { reason, students } = req.body, sessionId = +req.body.sessionId;
   const asked = req.user.role === 'student' ? [req.user.name] : (Array.isArray(students) ? students : []);
@@ -631,11 +801,13 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
   const unknown = names.filter(n => !(n in classes));
   if (unknown.length) fail(400, `No student account found for: ${unknown.join(', ')}`);
 
-  let created = 0; const skipped = [];
+  const max = maxOf(await getOptions());
+  let created = 0, approved = 0; const skipped = [], tooMany = [], moved = [];
   await tx(async q => {
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sessionId]);
-    const s = (await q('SELECT date, "from", "to", published FROM session_places WHERE id = $1', [sessionId]))[0];
+    const s = (await q('SELECT date, "from", "to", published, "autoApprove" FROM session_places WHERE id = $1', [sessionId]))[0];
     if (!s || !s.published) fail(404, 'That lab time is not open for booking.');
+    if (isOver(s)) fail(409, 'This lab time is already over.');
     const raw = (await q('SELECT id, exclusive, for_class, for_group FROM sessions WHERE id = $1', [sessionId]))[0];
     if (raw?.exclusive) {
       const allowed = new Set((await membersOf(q, raw)).map(m => nameKey(m.username)));
@@ -644,17 +816,24 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
         ? 'This lab time is only for the people the admin chose.'
         : `This lab time is only for the people the admin chose. Not allowed: ${out.join(', ')}.`);
     }
-    const live = await q("SELECT name, sid, \"from\", \"to\" FROM application_details WHERE status <> 'rejected' AND date = $1", [s.date]);
+    await promote(q, sessionId, moved); // free places go to the people already waiting first
+    let left = await seatsLeft(q, sessionId);
+    const live = await liveOn(q, s.date);
     for (const n of names) {
       const k = nameKey(n);
-      const clash = live.some(b => nameKey(b.name) === k && (+b.sid === sessionId || (HM(b.from) < HM(s.to) && HM(s.from) < HM(b.to))));
+      const clash = live.some(b => nameKey(b.name) === k && holds(b, sessionId) && (+b.sid === sessionId || overlaps(b, s)));
       if (clash) { skipped.push(n); continue; }
-      created += (await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT (session_id, student) WHERE status <> 'rejected' DO NOTHING RETURNING id",
-        [sessionId, n, classes[n] || '', reason || 'Other', req.user.name])).length;
+      if (await tooManyInRow(q, n, s.date, sessionId, max)) { tooMany.push(n); continue; }
+      const status = s.autoApprove && left > 0 ? 'approved' : 'pending';
+      const made = await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by, status) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (session_id, student) WHERE status <> 'rejected' DO NOTHING RETURNING id",
+        [sessionId, n, classes[n] || '', reason || 'Other', req.user.name, status]);
+      if (!made.length) continue;
+      created++;
+      if (status === 'approved') { approved++; left--; await dropQueueOverlap(q, n, sessionId); }
     }
   });
-  pushApps([...names, req.user.name]);
-  res.json({ created, skipped });
+  pushApps([...names, req.user.name, ...moved]);
+  res.json({ created, approved, queued: created - approved, skipped, tooMany, maxConsecutive: max });
 }));
 
 // People who are not the admin never see bookings of lab times that are still drafts.
@@ -662,21 +841,57 @@ app.get('/api/apps', auth(), wrap(async (req, res) => res.json(req.user.role ===
   ? await listApps()
   : await listApps('(name = $1 OR "bookedBy" = $1) AND sid IN (SELECT id FROM session_places WHERE published)', [req.user.name]))));
 
+// "I am here": a student confirms their own arrival. It opens 15 minutes before the start.
+// After the start + grace time it is saved as late (the place is kept unless somebody was waiting and it was already released).
+app.post('/api/apps/:id/checkin', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
+  const a = await getApp(query, req.params.id);
+  if (a.student !== req.user.name) fail(403, 'You can only check in yourself.');
+  if (a.status !== 'approved') fail(409, /^Released/.test(a.note || '')
+    ? 'Your place was given to the waiting list because you did not arrive in time. Apply again: if a place is free you get it at once.'
+    : 'Only approved bookings can check in.');
+  const s = (await query('SELECT date, "from", "to" FROM session_places WHERE id = $1', [a.session_id]))[0] || fail(404, 'That lab time does not exist.');
+  const now = nowLocal(), grace = graceOf(await getOptions()), m = mins(now.time);
+  if (s.date !== now.date) fail(409, 'You can check in on the day of your lab time.');
+  if (m < mins(s.from) - 15) fail(409, `Check-in opens 15 minutes before the start (${s.from}).`);
+  if (m >= mins(s.to)) fail(409, 'This lab time is over.');
+  const late = m > mins(s.from) + grace;
+  await query("UPDATE applications SET attendance = 'present', late = $2, checked_in_at = now() WHERE id = $1", [a.id, late]);
+  pushApps([a.student]); res.json({ ok: true, late });
+}));
+
 app.patch('/api/apps/:id/status', auth('admin'), wrap(async (req, res) => {
   const { status } = req.body;
   if (!['approved', 'rejected', 'pending'].includes(status)) fail(400, 'Unknown status.');
+  const extra = [];
   const a = await tx(async q => {
     const a = await getApp(q, req.params.id);
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [a.session_id]);
     if (status === 'approved' && a.status !== 'approved' && await seatsLeft(q, a.session_id) < 1) fail(409, 'No places left in this lab time.');
-    await q('UPDATE applications SET status = $1 WHERE id = $2', [status, a.id]);
+    await q("UPDATE applications SET status = $1::text, note = CASE WHEN $1::text = 'rejected' THEN note ELSE '' END WHERE id = $2", [status, a.id]);
+    if (status === 'approved') await dropQueueOverlap(q, a.student, a.session_id);
+    else if (a.status === 'approved') await promote(q, a.session_id, extra);
     return a;
   });
-  pushApps([a.student, a.booked_by]); res.json({ ok: true });
+  pushApps([a.student, a.booked_by, ...extra]); res.json({ ok: true });
+}));
+
+// The admin gives one student's place back (the student did not arrive). The waiting list moves up.
+app.patch('/api/apps/:id/release', auth('admin'), wrap(async (req, res) => {
+  const extra = [];
+  const a = await tx(async q => {
+    const a = await getApp(q, req.params.id);
+    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [a.session_id]);
+    if (a.status !== 'approved') fail(409, 'Only an approved booking can be released.');
+    await q("UPDATE applications SET status = 'rejected', note = $2, attendance = NULL, late = false WHERE id = $1", [a.id, 'Released: did not arrive in time']);
+    await promote(q, a.session_id, extra);
+    return a;
+  });
+  pushApps([a.student, a.booked_by, ...extra]); res.json({ ok: true });
 }));
 
 app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => {
   const to = +req.body.sessionId;
+  const extra = [];
   const a = await tx(async q => {
     const a = await getApp(q, req.params.id);
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [to]);
@@ -686,25 +901,30 @@ app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => {
     }
     if (a.status === 'approved' && a.session_id !== to && await seatsLeft(q, to) < 1) fail(409, 'The other lab time is full.');
     await q('UPDATE applications SET session_id = $1 WHERE id = $2', [to, a.id]);
+    if (a.status === 'approved' && a.session_id !== to) {
+      await dropQueueOverlap(q, a.student, to);
+      await promote(q, a.session_id, extra);
+    }
     return a;
   });
-  pushApps([a.student, a.booked_by]); res.json({ ok: true });
+  pushApps([a.student, a.booked_by, ...extra]); res.json({ ok: true });
 }));
 
+// att: 'present', 'late' (came late, counts as present), 'absent' or null (clear).
 app.patch('/api/apps/:id/attendance', auth('admin'), wrap(async (req, res) => {
   const att = req.body.att ?? null;
-  if (![null, 'present', 'absent'].includes(att)) fail(400, 'Use present or absent.');
+  if (![null, 'present', 'absent', 'late'].includes(att)) fail(400, 'Use present, late or absent.');
   const a = await getApp(query, req.params.id);
-  await query('UPDATE applications SET attendance = $1 WHERE id = $2', [att, a.id]);
+  await query('UPDATE applications SET attendance = $1, late = $2 WHERE id = $3', [att === 'late' ? 'present' : att, att === 'late', a.id]);
   pushApps([a.student]); res.json({ ok: true });
 }));
 
-// Many bookings at once: approve, reject, set back to waiting, mark present / absent / clear the mark, or remove.
-// Used for "all", "selected" and one lab time's whole list.
+// Many bookings at once: approve, reject, set back to waiting, mark present / late / absent / clear the mark, or remove.
+// Used for "all", "selected" and one lab time's whole list. Places that become free go to the waiting list.
 app.post('/api/apps/bulk', auth('admin'), wrap(async (req, res) => {
   const ids = toIds(req.body.ids), action = req.body.action;
   if (!ids.length) fail(400, 'Choose at least one booking.');
-  if (!['approve', 'reject', 'pending', 'present', 'absent', 'clear', 'delete'].includes(action)) fail(400, 'Unknown action.');
+  if (!['approve', 'reject', 'pending', 'present', 'late', 'absent', 'clear', 'delete'].includes(action)) fail(400, 'Unknown action.');
   let done = 0, skipped = 0, names = [];
   await tx(async q => {
     const rows = await q('SELECT id, session_id, status, student, booked_by FROM applications WHERE id = ANY($1::int[]) ORDER BY session_id, id', [ids]);
@@ -715,7 +935,8 @@ app.post('/api/apps/bulk', auth('admin'), wrap(async (req, res) => {
         if (!locked.has(r.session_id)) { await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [r.session_id]); locked.add(r.session_id); }
         if (r.status === 'approved') continue;
         if (await seatsLeft(q, r.session_id) < 1) { skipped++; continue; }
-        await q("UPDATE applications SET status = 'approved' WHERE id = $1", [r.id]);
+        await q("UPDATE applications SET status = 'approved', note = '' WHERE id = $1", [r.id]);
+        await dropQueueOverlap(q, r.student, r.session_id);
         done++;
       }
     } else if (action === 'reject' || action === 'pending') {
@@ -723,8 +944,11 @@ app.post('/api/apps/bulk', auth('admin'), wrap(async (req, res) => {
     } else if (action === 'delete') {
       done = (await q('DELETE FROM applications WHERE id = ANY($1::int[]) RETURNING id', [ids])).length;
     } else {
-      const att = action === 'clear' ? null : action;
-      done = (await q("UPDATE applications SET attendance = $2 WHERE id = ANY($1::int[]) AND status = 'approved' RETURNING id", [ids, att])).length;
+      const att = action === 'clear' ? null : action === 'late' ? 'present' : action;
+      done = (await q("UPDATE applications SET attendance = $2, late = $3 WHERE id = ANY($1::int[]) AND status = 'approved' RETURNING id", [ids, att, action === 'late'])).length;
+    }
+    if (['reject', 'pending', 'delete'].includes(action)) {
+      for (const sid of new Set(rows.filter(r => r.status === 'approved').map(r => r.session_id))) await promote(q, sid, names);
     }
   });
   pushApps(names);
@@ -750,7 +974,7 @@ app.get('/api/stats/overview', auth('admin'), wrap(async (_, res) => {
   res.json({
     totals: { applications: apps.length, approved: by('approved'), pending: by('pending'), rejected: by('rejected') },
     labs: labRows.length,
-    attendance: { present, absent: marked.length - present, rate: marked.length ? Math.round(present / marked.length * 100) : null },
+    attendance: { present, absent: marked.length - present, late: apps.filter(a => a.att === 'present' && a.late).length, rate: marked.length ? Math.round(present / marked.length * 100) : null },
   });
 }));
 
@@ -934,11 +1158,18 @@ const ensureTables = async () => {
   await query("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_class text NOT NULL DEFAULT ''");
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_group integer REFERENCES student_groups(id) ON DELETE SET NULL');
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS exclusive boolean NOT NULL DEFAULT false');
+  // Instant booking: approve at once while places are free.
+  await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS auto_approve boolean NOT NULL DEFAULT true');
+  // Late students, released places and check-in.
+  await query("ALTER TABLE applications ADD COLUMN IF NOT EXISTS note text NOT NULL DEFAULT ''");
+  await query('ALTER TABLE applications ADD COLUMN IF NOT EXISTS late boolean NOT NULL DEFAULT false');
+  await query('ALTER TABLE applications ADD COLUMN IF NOT EXISTS checked_in_at timestamptz');
   await query(`CREATE TABLE IF NOT EXISTS session_people (
     session_id integer NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (session_id, user_id))`);
   await query('CREATE INDEX IF NOT EXISTS session_people_user_idx ON session_people (user_id)');
+  // "autoApprove" is added at the END of the view (a view can only grow at the end).
   await query(`CREATE OR REPLACE VIEW session_places AS
     SELECT s.id, s.lab_id AS "labId", l.name AS lab,
       to_char(s.date, 'YYYY-MM-DD') AS date,
@@ -948,13 +1179,32 @@ const ensureTables = async () => {
       s.published,
       s.for_class AS "forClass", s.for_group AS "forGroup", g.name AS "forGroupName", s.exclusive AS exclusive,
       (SELECT COUNT(*)::int FROM session_people p WHERE p.session_id = s.id) AS "forPeople",
-      (SELECT COALESCE(array_agg(u.username ORDER BY u.username), ARRAY[]::text[]) FROM session_people p JOIN users u ON u.id = p.user_id WHERE p.session_id = s.id) AS people
+      (SELECT COALESCE(array_agg(u.username ORDER BY u.username), ARRAY[]::text[]) FROM session_people p JOIN users u ON u.id = p.user_id WHERE p.session_id = s.id) AS people,
+      s.auto_approve AS "autoApprove"
     FROM sessions s
     JOIN labs l ON l.id = s.lab_id
     LEFT JOIN student_groups g ON g.id = s.for_group
     LEFT JOIN (SELECT session_id, COUNT(*)::int AS n FROM applications WHERE status = 'approved' GROUP BY session_id) a ON a.session_id = s.id`);
 };
 
+// Every minute: in a running instant-booking lab time, when students are waiting and the lab is full,
+// the places of approved students who have not arrived (not marked present, no check-in) after the grace time go to the queue.
+const autoRelease = async () => {
+  const opts = await getOptions();
+  if (opts.autoRelease === false) return;
+  const grace = graceOf(opts), now = nowLocal(), m = mins(now.time);
+  const rows = await query('SELECT id, "from", "to" FROM session_places WHERE published AND "autoApprove" AND date = $1', [now.date]);
+  for (const s of rows) {
+    if (m < mins(s.from) + grace || m >= mins(s.to)) continue;
+    const touched = [];
+    const r = await tx(q => releaseNoShows(q, s.id, touched));
+    if (r.released || touched.length) pushApps(touched);
+  }
+};
+
 const port = process.env.PORT || 4000;
-query('SELECT 1').then(ensureTables).then(seedOptions).then(() => server.listen(port, () => console.log('LMS API and Socket.io running on port ' + port)))
+query('SELECT 1').then(ensureTables).then(seedOptions).then(() => server.listen(port, () => {
+  console.log('LMS API and Socket.io running on port ' + port);
+  setInterval(() => autoRelease().catch(e => console.error('auto-release:', e.message)), 60000);
+}))
   .catch(e => { console.error('Cannot start. Check the DB_* values in .env and that the database is set up.\n', e.message); process.exit(1); });
