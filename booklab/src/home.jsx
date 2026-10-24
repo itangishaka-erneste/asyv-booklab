@@ -1298,7 +1298,7 @@ function SchedulePage() {
   const create = (published) => act(published ? 'pub' : 'draft', async () => {
     const r = await api('/api/sessions', 'POST', {
       date: f.date, from: f.from, to: f.to, published, audience: aud, autoApprove: f.auto === 'true',
-      labIds: [+f.labId], places: f.places === '' ? undefined : +f.places,
+      labIds: f.labId === 'all' ? labs.map((l) => +l.id) : [+f.labId], places: f.places === '' ? undefined : +f.places,
     });
     setAud({ ...BLANK_AUD });
     setDay(f.date);
@@ -1316,7 +1316,7 @@ function SchedulePage() {
           <Field l="From"><Inp type="time" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
           <Field l="To"><Inp type="time" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
           <Field l="Lab">
-            <Sel value={f.labId} onChange={(v) => setF({ ...f, labId: v })} options={[{ value: '', label: 'Choose a lab…' }, ...labs.map((l) => ({ value: String(l.id), label: `${l.name} (${l.pcs} computers)` }))]} />
+            <Sel value={f.labId} onChange={(v) => setF({ ...f, labId: v })} options={[{ value: '', label: 'Choose a lab…' }, { value: 'all', label: 'All labs' }, ...labs.map((l) => ({ value: String(l.id), label: `${l.name} (${l.pcs} computers)` }))]} />
           </Field>
           <Field l="Places open" hint="Empty = every computer."><Inp type="number" min="1" value={f.places} onChange={(e) => setF({ ...f, places: e.target.value })} /></Field>
           <Field l="How students are approved">
