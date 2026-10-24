@@ -9,6 +9,8 @@
 //  - Late students: check-in, a grace time, and release of no-shows to the waiting list (automatic or by the admin).
 //    Walk-ins: the admin can seat a student who came without a booking.
 //  - A student in a waiting list can still apply to another lab (waiting entries never block other bookings).
+//  - FIX: booking rows always return date as 'YYYY-MM-DD' and times as 'HH:MM' (no time zone shift),
+//    so the admin screens can filter bookings by day.
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -57,6 +59,9 @@ const HM = t => String(t || '').slice(0, 5);
 const mins = t => { const [h, m] = HM(t).split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 const isOver = (s, now = nowLocal()) => s.date < now.date || (s.date === now.date && mins(s.to) <= mins(now.time));
 const hasStarted = (s, now = nowLocal()) => s.date < now.date || (s.date === now.date && mins(s.from) <= mins(now.time));
+// A date column can arrive as a JS Date (pg parses it at local midnight) or as text. Always return 'YYYY-MM-DD'.
+const pad2 = n => String(n).padStart(2, '0');
+const dayStr = d => (d instanceof Date ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` : String(d ?? '').slice(0, 10));
 
 const app = express(), server = http.createServer(app);
 const io = new Server(server, { cors: { origin: CLIENT } });
@@ -112,8 +117,11 @@ const listSessions = async (all = false, user = null) => {
   } else rows = await query(`SELECT * FROM session_places WHERE published ${SESSION_ORDER}`);
   return rows.map(({ people, ...r }) => r);
 };
-const listApps = async (where = '', params = []) =>
-  withExtras(await withPeople(await query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params)));
+// Booking rows. date is always 'YYYY-MM-DD' and from / to are 'HH:MM' so the screens can filter by day.
+const listApps = async (where = '', params = []) => {
+  const rows = await withExtras(await withPeople(await query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params)));
+  return rows.map(a => ({ ...a, date: dayStr(a.date), from: HM(a.from), to: HM(a.to) }));
+};
 const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_places WHERE id = $1', [sid]))[0]?.left ?? 0;
 const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Booking not found.');
 const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
@@ -1164,6 +1172,9 @@ const ensureTables = async () => {
   await query("ALTER TABLE applications ADD COLUMN IF NOT EXISTS note text NOT NULL DEFAULT ''");
   await query('ALTER TABLE applications ADD COLUMN IF NOT EXISTS late boolean NOT NULL DEFAULT false');
   await query('ALTER TABLE applications ADD COLUMN IF NOT EXISTS checked_in_at timestamptz');
+  // Faster lists and attendance history.
+  await query('CREATE INDEX IF NOT EXISTS applications_session_idx ON applications (session_id, status)');
+  await query('CREATE INDEX IF NOT EXISTS applications_student_idx ON applications (student)');
   await query(`CREATE TABLE IF NOT EXISTS session_people (
     session_id integer NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
