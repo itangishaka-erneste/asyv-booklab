@@ -13,7 +13,7 @@ const SECTIONS = [...Array.from({ length: 12 }, (_, i) => String(i + 1)), ...'AB
 const EMPTY_OPTS = { grades: [], gradeCombos: {}, reasons: [], trendCategories: [] };
 const ROLE_LABEL = { admin: 'Admin', teacher: 'Teacher', psychosocial: 'Psychosocial worker', student: 'Student' };
 const ROLE_CHOICES = ['student', 'teacher', 'psychosocial'];
-const ADMIN_TABS = ['Overview', 'Labs', 'Schedule', 'People', 'Settings'];
+const ADMIN_TABS = ['Overview', 'Labs', 'Schedule', 'People', 'Chat', 'Settings'];
 const gradesOf = (o) => (o.grades?.length ? o.grades : DEFAULT_GRADES);
 const combosFor = (o, g) => o.gradeCombos?.[g] ?? [];
 const catsOf = (o) => (o?.trendCategories?.length ? o.trendCategories : DEFAULT_CATS);
@@ -85,6 +85,9 @@ const ago = (iso) => {
   const d = Math.floor(s / 86400);
   return d === 1 ? 'yesterday' : `${d} days ago`;
 };
+const clock = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+const dayHead = (iso) => { const d = ymd(new Date(iso)); return d === today() ? 'Today' : d === dayOffset(-1) ? 'Yesterday' : niceDay(d); };
+const listTime = (iso) => { const d = ymd(new Date(iso)); return d === today() ? clock(iso) : shortDay(d); };
 const directImg = (u) => {
   const s = String(u || '');
   let m = s.match(/drive\.google\.com\/file\/d\/([\w-]+)/) || s.match(/drive\.google\.com\/(?:open|uc)\?(?:[^#]*&)?id=([\w-]+)/);
@@ -109,6 +112,7 @@ const attLabel = (a) => ({ present: 'Present', late: 'Late', absent: 'Absent' }[
 const STATUS_LABEL = { pending: 'Waiting', queue: 'In queue', released: 'Released', approved: 'Approved', rejected: 'Rejected' };
 const statusKey = (a, s) => (a.released ? 'released' : a.status === 'pending' && s && s.left < 1 ? 'queue' : a.status);
 const STATE_LABEL = { draft: 'Draft', over: 'Over', full: 'Full', open: 'Open' };
+const LAB_STATUS_TEXT = { open: 'Open', full: 'Full', over: 'Over', draft: 'Draft', none: 'No lab time' };
 const labStatus = (sessions) => {
   if (!sessions.length) return 'none';
   if (sessions.every((s) => s.state === 'draft')) return 'draft';
@@ -116,20 +120,41 @@ const labStatus = (sessions) => {
   if (sessions.some((s) => s.state === 'open')) return 'open';
   return 'full';
 };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+// The people who really hold a place or wait for one (released and rejected are left out).
+const liveOf = (s) => s.people.filter((a) => a.status !== 'rejected');
 
 /* Printing: admin only. Students never see print buttons. */
 const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-function printSheet(title, sub, head, rows) {
+const PRINT_CSS = `@page{size:A4 landscape;margin:12mm}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font:12px system-ui,sans-serif;color:#111;margin:0}h1{font-size:20px;margin:0 0 4px}.sub{color:#555;margin:0 0 12px}
+h2{font-size:15px;margin:20px 0 4px}h3{font-size:13px;margin:12px 0 6px;padding:5px 8px;background:#e8efe9;border-left:4px solid #16a34a}
+table{width:100%;border-collapse:collapse;margin-bottom:6px}td,th{border:1px solid #666;padding:6px 8px;text-align:left}th{background:#f3f4f6}
+.sec{page-break-inside:avoid}.lab{page-break-before:auto}.foot{margin-top:14px;color:#777;font-size:10px}`;
+function printDoc(title, sub, html) {
   const w = window.open('', '_blank');
   if (!w) { window.alert('Please allow pop-ups to print.'); return; }
-  const body = `<table><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
-    <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
-    <style>@page{size:A4 landscape;margin:12mm}body{font:12px system-ui,sans-serif;color:#111}h1{font-size:20px;margin:0 0 4px}
-    .sub{color:#555;margin:0 0 14px}table{width:100%;border-collapse:collapse}td,th{border:1px solid #666;padding:6px 8px;text-align:left}
-    th{background:#e8efe9}</style></head><body><h1>${esc(title)}</h1><p class="sub">${esc(sub)}</p>${body}</body></html>`);
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PRINT_CSS}</style></head><body>
+    <h1>${esc(title)}</h1><p class="sub">${esc(sub)}</p>${html}<p class="foot">Asyv_lms · printed ${esc(new Date().toLocaleString())}</p></body></html>`);
   w.document.close();
   setTimeout(() => w.print(), 300);
+}
+const tableHtml = (head, rows) => `<table><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+  <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+const ROSTER_HEAD = ['#', 'Name', 'Class', 'Status', 'Attendance', 'Signature'];
+const rosterRows = (s, list) => list.map((a, i) => [i + 1, a.name, a.cls || '', STATUS_LABEL[statusKey(a, s)] || a.status, attKey(a) ? attLabel(a) : '', '']);
+const sessionHead = (s, list) => `${s.from}–${s.to} · ${STATE_LABEL[s.state]} · ${plural(list.length, 'student')} applied · ${s.seats - s.left} of ${s.seats} places taken · ${audText(s)}`;
+// One lab time on one page.
+function printSession(lab, s) {
+  const list = liveOf(s);
+  printDoc(`${lab.name} · ${niceDay(s.date)}`, sessionHead(s, list), tableHtml(ROSTER_HEAD, rosterRows(s, list)));
+}
+// One lab (or every lab) with all its lab times of the day.
+function printLabs(labs, day) {
+  const html = labs.map((l) => `<div class="lab"><h2>${esc(l.name)} · ${l.pcs} computers</h2>${l.sessions.length
+    ? l.sessions.map((s) => { const list = liveOf(s); return `<div class="sec"><h3>${esc(sessionHead(s, list))}</h3>${tableHtml(ROSTER_HEAD, rosterRows(s, list))}</div>`; }).join('')
+    : '<p>No lab time on this day.</p>'}</div>`).join('');
+  printDoc(labs.length === 1 ? `${labs[0].name} · ${niceDay(day)}` : `All labs · ${niceDay(day)}`, `Printed list of the students of each lab time`, html);
 }
 
 /* ================================================================== */
@@ -189,7 +214,7 @@ const BADGE = {
   approved: 'bg-[#16a34a] text-white', pending: 'bg-[#ff4500]/10 text-[#c2310a]', rejected: 'bg-black/10 text-black/55',
   present: 'bg-[#16a34a] text-white', absent: 'bg-[#ff4500]/10 text-[#c2310a]', late: 'bg-[#f59e0b]/15 text-[#b45309]',
   returned: 'bg-[#2563eb]/10 text-[#1d4ed8]', removed: 'bg-black/10 text-black/55', open: 'bg-[#16a34a]/10 text-[#15803d]',
-  full: 'bg-[#ff4500] text-white', over: 'bg-black/15 text-black/70', draft: 'bg-[#2563eb]/10 text-[#1d4ed8]',
+  full: 'bg-[#ff4500] text-white', over: 'bg-[#dc2626] text-white', draft: 'bg-[#2563eb]/10 text-[#1d4ed8]',
   published: 'bg-[#16a34a]/10 text-[#15803d]', none: 'bg-black/5 text-black/60', queue: 'bg-[#2563eb]/10 text-[#1d4ed8]',
   released: 'bg-black/10 text-black/55', active: 'bg-[#16a34a] text-white',
 };
@@ -198,7 +223,7 @@ const Badge = ({ s, children }) => (
 );
 const Empty = ({ children }) => <p className="py-6 text-center text-sm text-black/50">{children}</p>;
 const Stat = ({ v, t, tone }) => {
-  const color = { gr: 'text-[#16a34a]', or: 'text-[#ff4500]', am: 'text-[#b45309]' }[tone] || 'text-[#111827]';
+  const color = { gr: 'text-[#16a34a]', or: 'text-[#ff4500]', am: 'text-[#b45309]', rd: 'text-[#dc2626]' }[tone] || 'text-[#111827]';
   return (
     <div className="rounded-[8px] border border-black/10 bg-white p-4">
       <div className={`text-2xl font-bold ${color}`}>{v}</div>
@@ -361,6 +386,42 @@ function StudentPicker({ students, value, onChange }) {
   );
 }
 
+// Who a lab time is for: everyone, a class, a group, or chosen students. Used when creating and when editing.
+const BLANK_AUD = { kind: '', value: '', people: [], exclusive: true };
+const audFrom = (s) => {
+  const ex = !!s.exclusive;
+  if (s.forClass) return { kind: 'class', value: s.forClass, people: [], exclusive: ex };
+  if (s.forGroup) return { kind: 'group', value: String(s.forGroup), people: [], exclusive: ex };
+  if (s.forPeople) return { kind: 'people', value: '', people: s.people || [], exclusive: ex };
+  return { ...BLANK_AUD };
+};
+const audOk = (a) => !a.kind || (a.kind === 'people' ? a.people.length > 0 : !!a.value);
+function AudiencePicker({ value, onChange, classes, groups, students }) {
+  const set = (p) => onChange({ ...value, ...p });
+  return (
+    <div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field l="Who is this lab time for?">
+          <Sel value={value.kind} onChange={(kind) => set({ kind, value: '', people: [] })} options={[
+            { value: '', label: 'Everyone' }, { value: 'class', label: 'A class' }, { value: 'group', label: 'A group' }, { value: 'people', label: 'Chosen students' },
+          ]} />
+        </Field>
+        {value.kind && (
+          <Field l="Can other students join?">
+            <Sel value={String(value.exclusive)} onChange={(v) => set({ exclusive: v === 'true' })} options={[
+              { value: 'true', label: 'No, only they can join' }, { value: 'false', label: 'Yes, they get places and the rest stay open' },
+            ]} />
+          </Field>
+        )}
+      </div>
+      {value.kind === 'class' && <div className="mt-4"><Field l="Class"><Sel value={value.value} onChange={(v) => set({ value: v })} options={[{ value: '', label: 'Choose a class…' }, ...classes.map((c) => ({ value: c, label: c }))]} /></Field></div>}
+      {value.kind === 'group' && <div className="mt-4"><Field l="Group"><Sel value={value.value} onChange={(v) => set({ value: v })} options={[{ value: '', label: 'Choose a group…' }, ...groups.map((g) => ({ value: String(g.id), label: `${g.name} (${g.count ?? g.members?.length ?? 0})` }))]} /></Field></div>}
+      {value.kind === 'people' && <div className="mt-4"><StudentPicker students={students} value={value.people} onChange={(people) => set({ people })} /></div>}
+      {value.kind && <p className="mt-3 text-xs text-black/55">The chosen students are booked into this lab time by themselves. You do not need to approve them.</p>}
+    </div>
+  );
+}
+
 // Grade + combination + section. Value is one class at a time.
 const ClassPick = ({ opts, grade, combo, section = '', onChange }) => {
   const choices = gradesOf(opts).flatMap((g) => {
@@ -444,12 +505,14 @@ const GLOBAL_CSS = `
 @keyframes lbIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 @keyframes lbBounce{0%,55%,100%{transform:translateY(0)}25%{transform:translateY(-7px)}40%{transform:translateY(0)}47%{transform:translateY(-2px)}}
 @keyframes lbPulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes lbDot{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-3px);opacity:1}}
 .lb-in{animation:lbIn .6s ease both}
 .lb-bounce{display:inline-block;animation:lbBounce 2.2s ease-in-out infinite}
 .lb-pulse{animation:lbPulse 1.6s ease-in-out infinite}
+.lb-dot{display:inline-block;width:6px;height:6px;border-radius:9999px;background:#9ca3af;animation:lbDot 1.2s infinite}
 /* Border fills up as places are taken. --p is 0 to 100. */
 .lb-ring{padding:3px;border-radius:8px;background:conic-gradient(var(--c,#16a34a) calc(var(--p) * 1%),#e5e7eb 0);transition:--p 1.2s ease}
-@media (prefers-reduced-motion:reduce){.lb-bounce,.lb-pulse,.lb-in{animation:none!important}.lb-ring{transition:none}}
+@media (prefers-reduced-motion:reduce){.lb-bounce,.lb-pulse,.lb-in,.lb-dot{animation:none!important}.lb-ring{transition:none}}
 `;
 
 /* ================================================================== */
@@ -465,7 +528,7 @@ function useOverview(day) {
   return { data, err, loading: !data || data.date !== day };
 }
 
-// One lab time. Closed = thick red border. Otherwise the border fills as places get taken.
+// One lab time. Closed = thick red border with a red "Closed" strip. Otherwise the border fills as places get taken.
 function SessionPick({ s, day, past, onLogin }) {
   const closed = past || s.state === 'over';
   const pct = s.seats ? Math.round(((s.seats - s.left) / s.seats) * 100) : 0;
@@ -474,12 +537,11 @@ function SessionPick({ s, day, past, onLogin }) {
   useEffect(() => { const t = setTimeout(() => setP(pct), 80); return () => clearTimeout(t); }, [pct]);
   const intent = { sessionId: s.id, date: day, lab: s.labName, from: s.from, to: s.to };
   const inner = (
-    <div className="flex items-center justify-between gap-3 rounded-[6px] bg-white p-3">
+    <div className={`flex items-center justify-between gap-3 rounded-[6px] bg-white p-3 ${closed ? 'opacity-75' : ''}`}>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <b className="text-sm">{s.from}–{s.to}</b>
+          <b className={`text-sm ${closed ? 'line-through decoration-[#dc2626]/60' : ''}`}>{s.from}–{s.to}</b>
           {s.for && <Badge s="draft">{s.exclusive ? `Only ${s.for}` : `Reserved for ${s.for}`}</Badge>}
-          {closed && <Badge s="full">Closed</Badge>}
         </div>
         <div className={`mt-1 text-xs ${closed ? 'font-bold text-[#dc2626]' : s.left < 1 ? 'font-bold text-[#c2310a]' : 'font-medium text-[#15803d]'}`}>
           {closed ? 'This lab time is over' : s.left < 1 ? `Full · ${s.waiting} waiting` : `${s.left} of ${s.seats} places free`}
@@ -490,7 +552,14 @@ function SessionPick({ s, day, past, onLogin }) {
       </Btn>
     </div>
   );
-  if (closed) return <div className="rounded-[8px] border-[5px] border-[#dc2626]">{inner}</div>;
+  if (closed) {
+    return (
+      <div className="overflow-hidden rounded-[8px] border-[5px] border-[#dc2626]">
+        <div className="bg-[#dc2626] px-3 py-1 text-[11px] font-bold text-white">Closed · nobody can apply anymore</div>
+        {inner}
+      </div>
+    );
+  }
   return <div className="lb-ring" style={{ '--c': color, '--p': p }}>{inner}</div>;
 }
 
@@ -498,7 +567,7 @@ function LabCard({ lab, day, past, onLogin }) {
   const status = labStatus(lab.sessions.map((s) => ({ ...s, state: past ? 'over' : s.state })));
   const text = { open: 'Places open', full: 'Full', over: 'Closed', none: 'No lab time', draft: 'Not open' }[status];
   return (
-    <article className="flex flex-col overflow-hidden rounded-[8px] border border-black/10 bg-white">
+    <article className={`flex flex-col overflow-hidden rounded-[8px] border bg-white ${status === 'over' ? 'border-[#dc2626]/50' : 'border-black/10'}`}>
       <div className="flex items-center justify-between gap-3 border-b border-black/10 p-4">
         <div className="min-w-0">
           <h3 className="truncate text-base font-bold">{lab.name}</h3>
@@ -629,7 +698,7 @@ function Landing({ onLogin }) {
       </section>
       <section id="labs" className="mx-auto max-w-6xl scroll-mt-16 px-6 py-12">
         <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Labs and free places</h2>
-        <p className="mb-8 mt-2 max-w-xl text-xs text-black/60">The border of each lab time fills as places are taken. Red means the lab time is closed.</p>
+        <p className="mb-8 mt-2 max-w-xl text-xs text-black/60">The border of each lab time fills as places are taken. A red border with the word Closed means the lab time is over and nobody can apply.</p>
         <LabBoard onLogin={onLogin} />
       </section>
       <TrendsBoard />
@@ -825,17 +894,17 @@ function Booker({ user, opts, intent, onIntentDone }) {
                   <b>{s.lab}</b>
                   <span className="text-black/60">{s.from}–{s.to}</span>
                   {forLabel(s) && <Badge s="draft">{audText(s)}</Badge>}
-                  {past && <Badge s="over">Over</Badge>}
+                  {past && <Badge s="over">Closed</Badge>}
                 </div>
                 <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-[3px] bg-black/10">
-                  <div className={`h-full ${s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#ff4500]'}`} style={{ width: pct + '%' }} />
+                  <div className={`h-full ${past ? 'bg-[#dc2626]' : s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#ff4500]'}`} style={{ width: pct + '%' }} />
                 </div>
-                <div className={`mt-1.5 text-xs ${s.left > 0 ? 'font-medium text-[#15803d]' : 'font-bold text-[#c2310a]'}`}>
-                  {s.left > 0 ? `${s.left} of ${s.seats} places left` : 'Full · you can join the waiting list'}
+                <div className={`mt-1.5 text-xs ${past ? 'font-bold text-[#dc2626]' : s.left > 0 ? 'font-medium text-[#15803d]' : 'font-bold text-[#c2310a]'}`}>
+                  {past ? 'This lab time is over' : s.left > 0 ? `${s.left} of ${s.seats} places left` : 'Full · you can join the waiting list'}
                 </div>
               </div>
               {m ? <Badge s={statusKey(m, s)}>{STATUS_LABEL[statusKey(m, s)]}</Badge> : (
-                <ActBtn c={s.left < 1 ? 'bl' : 'ink'} busy={busy === 'a' + s.id} doing="Sending…" label={s.left < 1 ? 'Join queue' : 'Apply'}
+                <ActBtn c={s.left < 1 ? 'bl' : 'ink'} busy={busy === 'a' + s.id} doing="Sending…" label={past ? 'Closed' : s.left < 1 ? 'Join queue' : 'Apply'}
                   disabled={past || s.exclusive} onClick={() => apply(s.id)} />
               )}
             </div>
@@ -886,8 +955,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
 }
 
 /* ================================================================== */
-/* 6. ADMIN: Overview, Labs (by lab, with status), Schedule, People,   */
-/*    Settings                                                          */
+/* 6. ADMIN: Overview, Labs, Schedule, People, Chat, Settings          */
 /* ================================================================== */
 
 // Live presence: which admin is on which page, and recent activity.
@@ -925,7 +993,7 @@ function OverviewPage({ me }) {
         <Card t="Who is online" sub="Admins currently signed in and the page they are on.">
           {presence.length === 0 && <Empty>No admin is online.</Empty>}
           {presence.map((p) => (
-            <div key={p.name} className="flex items-center justify-between gap-3 border-t border-black/10 py-3 first:border-t-0">
+            <div key={p.email || p.name} className="flex items-center justify-between gap-3 border-t border-black/10 py-3 first:border-t-0">
               <span className="flex items-center gap-2">
                 <span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />
                 <b className="text-xs">{p.name}{p.name === me.name && ' (you)'}</b>
@@ -975,10 +1043,10 @@ function OverviewPage({ me }) {
   );
 }
 
-// Labs page: each lab with its status. Click a lab to see its lab times and students.
+// Labs page: only PUBLISHED lab times. For each lab: its status, how many applied and the names of the students.
+// No filters. Click "Open lab" to mark attendance, or "Print" for the list of the lab.
 function LabsPage({ onOpenLab }) {
   const [day, setDay] = useState(today());
-  const [filter, setFilter] = useState('all');
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const load = useCallback(() => api(`/api/board?date=${day}`).then((d) => { setData(d); setErr(''); }).catch((e) => setErr(e.message)), [day]);
@@ -986,9 +1054,10 @@ function LabsPage({ onOpenLab }) {
   useLive({ 'applications:update': load, seats: load });
 
   if (!data) return err ? <Alert>{err}</Alert> : <Loader full label="Loading labs" />;
-  const labs = data.labs.map((l) => ({ ...l, status: labStatus(l.sessions) }));
-  const shown = labs.filter((l) => filter === 'all' || l.status === filter);
-  const counts = (k) => labs.filter((l) => (k === 'all' || l.status === k)).length;
+  const labs = data.labs;
+  const all = labs.flatMap((l) => l.sessions);
+  const applied = all.reduce((n, s) => n + liveOf(s).length, 0);
+  const withTime = labs.filter((l) => l.sessions.length);
 
   return (
     <div className="space-y-6">
@@ -997,60 +1066,82 @@ function LabsPage({ onOpenLab }) {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h3 className="text-base font-bold">{niceDay(day)}</h3>
-            <p className="text-xs text-black/55">Click a lab to see its lab times and the students in each.</p>
+            <p className="text-xs text-black/55">Published lab times and the students in each. Drafts are in Schedule.</p>
           </div>
-          <DayBar day={day} onChange={setDay} />
-        </div>
-        <div className="mt-4">
-          <Pills value={filter} onChange={setFilter} items={[
-            ['all', 'All labs', counts('all')], ['open', 'Open', counts('open')], ['full', 'Full', counts('full')],
-            ['over', 'Over', counts('over')], ['draft', 'Drafts', counts('draft')], ['none', 'No lab time', counts('none')],
-          ]} />
+          <div className="flex flex-wrap items-center gap-2">
+            <DayBar day={day} onChange={setDay} />
+            <Btn c="w" disabled={!withTime.length} onClick={() => printLabs(withTime, day)}>Print all labs</Btn>
+          </div>
         </div>
       </Card>
 
-      {shown.length === 0 && <Empty>No lab in this status for this day.</Empty>}
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <Stat v={all.length} t="Lab times" />
+        <Stat v={applied} t="Students applied" tone="gr" />
+        <Stat v={all.filter((s) => s.state === 'open').length} t="Open now" tone="gr" />
+        <Stat v={all.filter((s) => s.state === 'over').length} t="Over" tone="rd" />
+      </div>
+
+      {labs.length === 0 && <Card><Empty>No labs have been added yet. Add one in Settings.</Empty></Card>}
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-        {shown.map((l) => {
-          const all = l.sessions.flatMap((s) => s.people);
-          const approved = all.filter((p) => p.status === 'approved').length;
-          const waiting = all.filter((p) => p.status === 'pending').length;
-          const present = all.filter((p) => p.att === 'present').length;
+        {labs.map((l) => {
+          const status = labStatus(l.sessions);
           return (
-            <button key={l.id} type="button" onClick={() => onOpenLab(l.id, day, l.name)}
-              className="flex flex-col rounded-[8px] border border-black/10 bg-white p-5 text-left transition-shadow hover:shadow-lg">
-              <div className="flex items-start justify-between gap-3">
+            <article key={l.id} className={`flex flex-col rounded-[8px] border bg-white ${status === 'over' ? 'border-[#dc2626]/40' : 'border-black/10'}`}>
+              <div className="flex items-start justify-between gap-3 border-b border-black/10 p-4">
                 <div>
                   <h3 className="text-base font-bold">{l.name}</h3>
-                  <p className="text-xs text-black/55">{l.pcs} computers · {l.sessions.length} lab time{l.sessions.length === 1 ? '' : 's'}</p>
+                  <p className="text-xs text-black/55">{l.pcs} computers · {plural(l.sessions.length, 'lab time')}</p>
                 </div>
-                <Badge s={l.status}>{{ open: 'Open', full: 'Full', over: 'Over', draft: 'Draft', none: 'No lab time' }[l.status]}</Badge>
+                <Badge s={status}>{LAB_STATUS_TEXT[status]}</Badge>
               </div>
-              <div className="mt-4 grid grid-cols-4 gap-2 text-center">
-                <div><div className="text-lg font-bold">{all.length}</div><div className="text-[11px] text-black/55">Applied</div></div>
-                <div><div className="text-lg font-bold text-[#15803d]">{approved}</div><div className="text-[11px] text-black/55">Approved</div></div>
-                <div><div className="text-lg font-bold text-[#c2310a]">{waiting}</div><div className="text-[11px] text-black/55">Waiting</div></div>
-                <div><div className="text-lg font-bold">{present}</div><div className="text-[11px] text-black/55">Present</div></div>
+              <div className="flex-1 space-y-4 p-4">
+                {l.sessions.length === 0 && <p className="py-4 text-center text-xs text-black/50">No lab time on this day.</p>}
+                {l.sessions.map((s) => {
+                  const list = liveOf(s);
+                  const shown = list.slice(0, 6);
+                  return (
+                    <div key={s.id} className="rounded-[6px] bg-black/[0.03] p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <b className="text-sm">{s.from}–{s.to}</b>
+                        <Badge s={s.state}>{STATE_LABEL[s.state]}</Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-black/60">
+                        <b className="text-[#111827]">{list.length}</b> applied · {s.seats - s.left} of {s.seats} places taken
+                        {forLabel(s) && <span className="text-[#c2310a]"> · {audText(s)}</span>}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {list.length === 0 && <span className="text-xs text-black/45">Nobody yet.</span>}
+                        {shown.map((a) => (
+                          <span key={a.id} title={STATUS_LABEL[statusKey(a, s)]}
+                            className={`inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 text-[11px] font-medium ${a.status === 'approved' ? 'bg-[#16a34a]/10 text-[#15803d]' : 'bg-[#2563eb]/10 text-[#1d4ed8]'}`}>
+                            <Avatar name={a.name} picture={a.picture} gid={a.gid} className="h-5 w-5 text-[8px]" />{a.name}
+                          </span>
+                        ))}
+                        {list.length > shown.length && <span className="py-1 text-[11px] font-semibold text-black/55">+{list.length - shown.length} more</span>}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="mt-4 space-y-1.5 border-t border-black/10 pt-3">
-                {l.sessions.map((s) => (
-                  <div key={s.id} className="flex items-center justify-between text-xs">
-                    <span className="font-medium">{s.from}–{s.to}</span>
-                    <span className="flex items-center gap-2 text-black/60">{s.left} of {s.seats} free <Badge s={s.state}>{STATE_LABEL[s.state]}</Badge></span>
-                  </div>
-                ))}
-                {l.sessions.length === 0 && <p className="text-xs text-black/50">No lab time on this day.</p>}
+              <div className="flex gap-2 border-t border-black/10 p-3">
+                <Btn onClick={() => onOpenLab(l.id, day, l.name)}>Open lab</Btn>
+                <Btn c="w" disabled={!l.sessions.length} onClick={() => printLabs([l], day)}>Print this lab</Btn>
               </div>
-            </button>
+            </article>
           );
         })}
       </div>
+      <p className="flex flex-wrap gap-4 text-[11px] text-black/55">
+        <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#16a34a]" />Approved student</span>
+        <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#2563eb]" />In the waiting list</span>
+      </p>
     </div>
   );
 }
 
 // One lab on one day: its lab times, the students of each, attendance and printing.
-function LabDetail({ labId, day, labName, onBack }) {
+function LabDetail({ labId, day, onBack }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const load = useCallback(() => api(`/api/board?date=${day}`).then((d) => { setData(d); setErr(''); }).catch((e) => setErr(e.message)), [day]);
@@ -1062,87 +1153,94 @@ function LabDetail({ labId, day, labName, onBack }) {
   const lab = data.labs.find((l) => l.id === labId);
   if (!lab) return <Card><Empty>This lab was not found.</Empty></Card>;
   const started = (s) => s.date < today() || (s.date === today() && s.from <= new Date().toTimeString().slice(0, 5));
-
-  const printList = (s, list) => printSheet(`${lab.name} · ${niceDay(s.date)} · ${s.from}–${s.to}`,
-    `${list.length} student${list.length === 1 ? '' : 's'} · ${audText(s)}`,
-    ['#', 'Name', 'Class', 'Status', 'Attendance', 'Signature'],
-    list.map((a, i) => [i + 1, a.name, a.cls || '', STATUS_LABEL[statusKey(a, s)] || a.status, attKey(a) ? attLabel(a) : '', '']));
-
   const setAtt = (a, v) => act('att' + a.id, () => api(`/api/apps/${a.id}/attendance`, 'PATCH', { att: attKey(a) === v ? null : v }));
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Btn c="w" onClick={onBack}>← All labs</Btn>
-        <div className="text-right">
-          <h2 className="text-lg font-bold">{lab.name || labName}</h2>
-          <p className="text-xs text-black/55">{niceDay(day)}</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="text-right">
+            <h2 className="text-lg font-bold">{lab.name}</h2>
+            <p className="text-xs text-black/55">{niceDay(day)}</p>
+          </div>
+          <Btn c="w" disabled={!lab.sessions.length} onClick={() => printLabs([lab], day)}>Print this lab</Btn>
         </div>
       </div>
       {note && <Alert ok={note.ok}>{note.text}</Alert>}
       {err && <Alert>{err}</Alert>}
-      {lab.sessions.length === 0 && <Card><Empty>No lab time for this lab on this day. Add one in Schedule.</Empty></Card>}
+      {lab.sessions.length === 0 && <Card><Empty>No published lab time for this lab on this day. Add one in Schedule.</Empty></Card>}
 
       {lab.sessions.map((s) => {
-        const approved = s.people.filter((a) => a.status === 'approved');
-        const waiting = s.people.filter((a) => a.status === 'pending');
-        const rejected = s.people.filter((a) => a.status === 'rejected');
+        const list = liveOf(s);
+        const approved = list.filter((a) => a.status === 'approved');
+        const waiting = list.filter((a) => a.status !== 'approved');
+        const gone = s.people.filter((a) => a.status === 'rejected');
+        const present = approved.filter((a) => a.att === 'present').length;
         return (
-          <Card key={s.id}
-            t={`${s.from}–${s.to}`}
+          <Card key={s.id} t={`${s.from}–${s.to}`}
             sub={`${audText(s)} · ${s.seats - s.left} of ${s.seats} places taken`}
             action={(
               <div className="flex flex-wrap items-center gap-2">
                 <Badge s={s.state}>{STATE_LABEL[s.state]}</Badge>
-                <Btn c="w" disabled={!s.people.length} onClick={() => printList(s, s.people)}>Print list</Btn>
-                <ActBtn c="bl" busy={busy === 'rel' + s.id} doing="Releasing…" label="Release no-shows"
-                  disabled={!started(s) || !waiting.length}
-                  onClick={() => act('rel' + s.id, () => api(`/api/sessions/${s.id}/release-noshows`, 'POST'),
-                    (r) => `${r.released} place${r.released === 1 ? '' : 's'} released, ${r.promoted} student${r.promoted === 1 ? '' : 's'} moved up from the queue.`)} />
+                <Btn c="w" disabled={!list.length} onClick={() => printSession(lab, s)}>Print list</Btn>
+                {waiting.length > 0 && started(s) && s.state !== 'over' && (
+                  <ActBtn c="bl" busy={busy === 'rel' + s.id} doing="Releasing…" label="Release no-shows"
+                    onClick={() => act('rel' + s.id, () => api(`/api/sessions/${s.id}/release-noshows`, 'POST'),
+                      (r) => `${plural(r.released, 'place')} released, ${plural(r.promoted, 'student')} moved up from the queue.`)} />
+                )}
               </div>
             )}>
-            {s.people.length === 0 && <Empty>Nobody has applied to this lab time yet.</Empty>}
-            {[['Approved', approved], ['Waiting', waiting], ['Rejected or released', rejected]].map(([title, list]) => list.length > 0 && (
-              <div key={title} className="mt-4 first:mt-0">
-                <h4 className="mb-1 text-xs font-bold uppercase tracking-wide text-black/50">{title} ({list.length})</h4>
-                <div className="divide-y divide-black/10">
-                  {list.map((a) => (
-                    <div key={a.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                      <Person p={a} sub={`${a.cls || 'No class'} · ${a.reason || ''}`} className="h-8 w-8 text-[10px]" />
-                      <span className="flex flex-wrap items-center gap-2">
-                        {a.released && <Badge s="released">Released</Badge>}
-                        {a.status === 'approved' && (
-                          <>
-                            {a.att && <Badge s={attKey(a)}>{attLabel(a)}</Badge>}
-                            <Btn c={attKey(a) === 'present' ? 'ink' : 'w'} onClick={() => setAtt(a, 'present')}>Present</Btn>
-                            <Btn c={attKey(a) === 'late' ? 'am' : 'w'} onClick={() => setAtt(a, 'late')}>Late</Btn>
-                            <Btn c={attKey(a) === 'absent' ? 'or' : 'w'} onClick={() => setAtt(a, 'absent')}>Absent</Btn>
-                            {!a.att && started(s) && (
-                              <Btn c="w" onClick={() => sure({ message: `Give ${a.name}'s place to the waiting list?`, ok: 'Release', danger: true }, 'rl' + a.id,
-                                () => api(`/api/apps/${a.id}/release`, 'PATCH'), 'Place released.')}>Release</Btn>
-                            )}
-                          </>
+            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <Stat v={list.length} t="Applied" />
+              <Stat v={approved.length} t="Approved" tone="gr" />
+              <Stat v={waiting.length} t="Waiting" tone="or" />
+              <Stat v={present} t="Present" tone="gr" />
+            </div>
+            {list.length === 0 && <Empty>Nobody has applied to this lab time yet.</Empty>}
+            <div className="divide-y divide-black/10">
+              {list.map((a, i) => (
+                <div key={a.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                  <span className="flex min-w-0 items-center gap-3">
+                    <span className="w-5 text-right text-xs text-black/40">{i + 1}</span>
+                    <Person p={a} sub={`${a.cls || 'No class'}${a.reason ? ` · ${a.reason}` : ''}`} className="h-8 w-8 text-[10px]" />
+                  </span>
+                  <span className="flex flex-wrap items-center gap-2">
+                    {a.status !== 'approved' && <Badge s={statusKey(a, s)}>{STATUS_LABEL[statusKey(a, s)]}</Badge>}
+                    {a.status === 'approved' && (
+                      <>
+                        <Btn c={attKey(a) === 'present' ? 'ink' : 'w'} onClick={() => setAtt(a, 'present')}>Present</Btn>
+                        <Btn c={attKey(a) === 'late' ? 'am' : 'w'} onClick={() => setAtt(a, 'late')}>Late</Btn>
+                        <Btn c={attKey(a) === 'absent' ? 'or' : 'w'} onClick={() => setAtt(a, 'absent')}>Absent</Btn>
+                        {!a.att && started(s) && (
+                          <Btn c="w" onClick={() => sure({ message: `Give ${a.name}'s place to the waiting list?`, ok: 'Release', danger: true }, 'rl' + a.id,
+                            () => api(`/api/apps/${a.id}/release`, 'PATCH'), 'Place released.')}>Release</Btn>
                         )}
-                        {a.status !== 'approved' && (
-                          <ActBtn busy={busy === 'ap' + a.id} doing="…" label="Approve" onClick={() => act('ap' + a.id, () => api(`/api/apps/${a.id}/status`, 'PATCH', { status: 'approved' }), 'Approved.')} />
-                        )}
-                        {a.status === 'pending' && (
-                          <Btn c="w" onClick={() => act('rj' + a.id, () => api(`/api/apps/${a.id}/status`, 'PATCH', { status: 'rejected' }), 'Rejected.')}>Reject</Btn>
-                        )}
-                        <Btn c="or" onClick={() => sure({ message: `Remove ${a.name} from this lab time?`, ok: 'Remove', danger: true }, 'x' + a.id,
-                          () => api('/api/apps/bulk', 'POST', { ids: [a.id], action: 'delete' }), `${a.name} was removed.`)}>Remove</Btn>
-                      </span>
-                    </div>
-                  ))}
+                      </>
+                    )}
+                    {a.status === 'pending' && (
+                      <ActBtn busy={busy === 'ap' + a.id} doing="…" label="Approve" onClick={() => act('ap' + a.id, () => api(`/api/apps/${a.id}/status`, 'PATCH', { status: 'approved' }), 'Approved.')} />
+                    )}
+                    <Btn c="w" onClick={() => sure({ message: `Remove ${a.name} from this lab time?`, ok: 'Remove', danger: true }, 'x' + a.id,
+                      () => api('/api/apps/bulk', 'POST', { ids: [a.id], action: 'delete' }), `${a.name} was removed.`)}>Remove</Btn>
+                  </span>
                 </div>
-              </div>
-            ))}
-            {waiting.length > 0 && (
+              ))}
+            </div>
+            {waiting.some((a) => a.status === 'pending') && (
               <div className="mt-4 border-t border-black/10 pt-4">
                 <ActBtn busy={busy === 'apw' + s.id} doing="Approving…" label={`Approve all waiting (${waiting.length})`}
                   onClick={() => act('apw' + s.id, () => api('/api/apps/bulk', 'POST', { ids: waiting.map((a) => a.id), action: 'approve' }),
                     (r) => `${r.done} approved${r.skipped ? `, ${r.skipped} skipped because the lab time is full` : ''}.`)} />
               </div>
+            )}
+            {gone.length > 0 && (
+              <details className="mt-4 text-xs text-black/60">
+                <summary className="cursor-pointer font-semibold">Released or rejected ({gone.length})</summary>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {gone.map((a) => <span key={a.id} className="rounded-full bg-black/5 px-2 py-0.5">{a.name}{a.released ? ' · did not arrive' : ''}</span>)}
+                </div>
+              </details>
             )}
           </Card>
         );
@@ -1151,7 +1249,7 @@ function LabDetail({ labId, day, labName, onBack }) {
   );
 }
 
-// Schedule: create lab times (with class, group or chosen students) and manage the ones that exist.
+// Schedule: prepare lab times (with a class, a group or chosen students) and manage the ones that exist.
 function SchedulePage() {
   const [day, setDay] = useState(today());
   const [labs, setLabs] = useState([]);
@@ -1159,11 +1257,7 @@ function SchedulePage() {
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
   const [f, setF] = useState({ date: today(), from: '14:00', to: '16:00', labId: '', places: '', auto: 'true' });
-  const [audKind, setAudKind] = useState('');
-  const [audClass, setAudClass] = useState('');
-  const [audGroup, setAudGroup] = useState('');
-  const [audPeople, setAudPeople] = useState([]);
-  const [audExclusive, setAudExclusive] = useState(true);
+  const [aud, setAud] = useState({ ...BLANK_AUD });
   const [edit, setEdit] = useState(null);
   const loadAll = useCallback(() => Promise.all([
     api('/api/labs'), api('/api/sessions'), api('/api/users'), api('/api/groups'),
@@ -1174,33 +1268,30 @@ function SchedulePage() {
 
   const students = users.filter((u) => u.role === 'student');
   const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
-  const audOk = !audKind || (audKind === 'class' ? !!audClass : audKind === 'group' ? !!audGroup : audPeople.length > 0);
-  const aud = audKind === 'class' ? { kind: 'class', value: audClass, exclusive: audExclusive }
-    : audKind === 'group' ? { kind: 'group', value: audGroup, exclusive: audExclusive }
-      : audKind === 'people' ? { kind: 'people', people: audPeople, exclusive: audExclusive } : null;
+  const timeOk = f.date && f.from && f.to && f.from < f.to;
 
   const create = (published) => act(published ? 'pub' : 'draft', async () => {
-    await api('/api/sessions', 'POST', {
-      date: f.date, from: f.from, to: f.to, published, audience: aud || undefined, autoApprove: f.auto === 'true',
-      labIds: f.labId ? [+f.labId] : undefined, places: f.places === '' ? undefined : +f.places,
+    const r = await api('/api/sessions', 'POST', {
+      date: f.date, from: f.from, to: f.to, published, audience: aud, autoApprove: f.auto === 'true',
+      labIds: [+f.labId], places: f.places === '' ? undefined : +f.places,
     });
-    setAudKind(''); setAudPeople([]);
+    setAud({ ...BLANK_AUD });
     setDay(f.date);
-  }, published ? 'Lab time published. Students can see it now.' : 'Saved as a draft. Only admins can see it.');
+    return r;
+  }, (r) => `${published ? 'Published' : 'Saved as a draft'}.${r.assigned ? ` ${plural(r.assigned, 'student')} booked automatically.` : ''}${r.notFound?.length ? ` Not found: ${r.notFound.join(', ')}.` : ''}`);
 
   const dayList = sessions.filter((s) => s.date === day).sort(byTime);
-  const labName = (id) => labs.find((l) => l.id === id)?.name || '';
 
   return (
     <div className="space-y-6">
       {note && <Alert ok={note.ok}>{note.text}</Alert>}
-      <Card t="New lab time" sub="Choose the lab and time. Optionally assign it to a class, a group or chosen students before you publish.">
+      <Card t="Prepare a lab time" sub="Choose the lab and the time. You can give it to a class, a group or chosen students now, so they are already booked when you publish.">
         <div className="grid gap-4 md:grid-cols-3">
           <Field l="Day"><Inp type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
           <Field l="From"><Inp type="time" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
           <Field l="To"><Inp type="time" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
           <Field l="Lab">
-            <Sel value={f.labId} onChange={(v) => setF({ ...f, labId: v })} options={[{ value: '', label: 'Choose a lab…' }, ...labs.map((l) => ({ value: String(l.id), label: l.name }))]} />
+            <Sel value={f.labId} onChange={(v) => setF({ ...f, labId: v })} options={[{ value: '', label: 'Choose a lab…' }, ...labs.map((l) => ({ value: String(l.id), label: `${l.name} (${l.pcs} computers)` }))]} />
           </Field>
           <Field l="Places open" hint="Empty = every computer."><Inp type="number" min="1" value={f.places} onChange={(e) => setF({ ...f, places: e.target.value })} /></Field>
           <Field l="How students are approved">
@@ -1210,28 +1301,13 @@ function SchedulePage() {
           </Field>
         </div>
         <div className="mt-6 rounded-[8px] border border-black/10 bg-black/[0.02] p-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field l="Assign this lab time to">
-              <Sel value={audKind} onChange={(v) => setAudKind(v)} options={[
-                { value: '', label: 'Everyone' }, { value: 'class', label: 'A class' }, { value: 'group', label: 'A group' }, { value: 'people', label: 'Chosen students' },
-              ]} />
-            </Field>
-            {audKind && (
-              <Field l="Only they can join?">
-                <Sel value={String(audExclusive)} onChange={(v) => setAudExclusive(v === 'true')} options={[
-                  { value: 'true', label: 'Yes, only they can join' }, { value: 'false', label: 'No, they get places and the rest stay open' },
-                ]} />
-              </Field>
-            )}
-          </div>
-          {audKind === 'class' && <div className="mt-4"><Field l="Class"><Sel value={audClass} onChange={setAudClass} options={[{ value: '', label: 'Choose a class…' }, ...classes.map((c) => ({ value: c, label: c }))]} /></Field></div>}
-          {audKind === 'group' && <div className="mt-4"><Field l="Group"><Sel value={audGroup} onChange={setAudGroup} options={[{ value: '', label: 'Choose a group…' }, ...groups.map((g) => ({ value: String(g.id), label: g.name }))]} /></Field></div>}
-          {audKind === 'people' && <div className="mt-4"><StudentPicker students={students} value={audPeople} onChange={setAudPeople} /></div>}
+          <AudiencePicker value={aud} onChange={setAud} classes={classes} groups={groups} students={students} />
         </div>
         <div className="mt-5 flex flex-wrap items-center gap-3">
-          <ActBtn c="w" busy={busy === 'draft'} doing="Saving…" label="Save as draft" disabled={!audOk || !f.labId} onClick={() => create(false)} />
-          <ActBtn busy={busy === 'pub'} doing="Publishing…" label="Publish now" disabled={!audOk || !f.labId} onClick={() => create(true)} />
-          {!f.labId && <span className="text-xs text-black/55">Choose one lab to continue.</span>}
+          <ActBtn c="w" busy={busy === 'draft'} doing="Saving…" label="Save as draft" disabled={!audOk(aud) || !f.labId || !timeOk} onClick={() => create(false)} />
+          <ActBtn busy={busy === 'pub'} doing="Publishing…" label="Publish now" disabled={!audOk(aud) || !f.labId || !timeOk} onClick={() => create(true)} />
+          {!f.labId && <span className="text-xs text-black/55">Choose a lab to continue.</span>}
+          {f.labId && !timeOk && <span className="text-xs text-[#c2310a]">The start time must be before the end time.</span>}
         </div>
       </Card>
 
@@ -1243,15 +1319,15 @@ function SchedulePage() {
             <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 py-3.5">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge s={s.published ? 'published' : 'draft'}>{s.published ? 'Published' : 'Draft'}</Badge>
-                  <b>{labName(s.labId) || s.lab} · {s.from}–{s.to}</b>
+                  <Badge s={s.state}>{STATE_LABEL[s.state]}</Badge>
+                  <b>{s.lab} · {s.from}–{s.to}</b>
                 </div>
                 <p className="mt-1 text-xs text-black/55">{s.seats - s.left} of {s.seats} taken · {audText(s)} · {s.autoApprove !== false ? 'Approved at once' : 'Admin approves'}</p>
               </div>
               <span className="flex flex-wrap gap-2">
                 <ActBtn c={s.published ? 'w' : 'ink'} busy={busy === 'p' + s.id} doing="…" label={s.published ? 'Hide' : 'Publish'}
                   onClick={() => act('p' + s.id, () => api(`/api/sessions/${s.id}/publish`, 'PATCH', { published: !s.published }), s.published ? 'Hidden from students.' : 'Published.')} />
-                <Btn c="w" onClick={() => setEdit({ s, date: s.date, from: s.from, to: s.to, places: String(s.seats) })}>Edit</Btn>
+                <Btn c="w" onClick={() => setEdit({ s, date: s.date, from: s.from, to: s.to, places: String(s.seats), auto: String(s.autoApprove !== false), aud: audFrom(s) })}>Edit</Btn>
                 <Btn c="or" onClick={() => sure({ message: 'Remove this lab time? Its bookings are removed too.', ok: 'Remove', danger: true }, 'x' + s.id,
                   () => api(`/api/sessions/${s.id}`, 'DELETE'), 'Lab time removed.')}>Remove</Btn>
               </span>
@@ -1261,16 +1337,29 @@ function SchedulePage() {
       </Card>
 
       {edit && (
-        <Modal title={`Edit ${edit.s.lab} · ${shortDay(edit.s.date)}`} onClose={() => setEdit(null)}>
+        <Modal title={`Edit ${edit.s.lab} · ${shortDay(edit.s.date)}`} onClose={() => setEdit(null)} wide>
           <div className="grid gap-4 md:grid-cols-2">
             <Field l="Day"><Inp type="date" value={edit.date} onChange={(e) => setEdit({ ...edit, date: e.target.value })} /></Field>
             <Field l="Places open"><Inp type="number" min="1" value={edit.places} onChange={(e) => setEdit({ ...edit, places: e.target.value })} /></Field>
             <Field l="From"><Inp type="time" value={edit.from} onChange={(e) => setEdit({ ...edit, from: e.target.value })} /></Field>
             <Field l="To"><Inp type="time" value={edit.to} onChange={(e) => setEdit({ ...edit, to: e.target.value })} /></Field>
+            <div className="md:col-span-2">
+              <Field l="How students are approved">
+                <Sel value={edit.auto} onChange={(v) => setEdit({ ...edit, auto: v })} options={[
+                  { value: 'true', label: 'Approve at once (waiting list when full)' }, { value: 'false', label: 'Admin approves each student' },
+                ]} />
+              </Field>
+            </div>
+          </div>
+          <div className="mt-5 rounded-[8px] border border-black/10 bg-black/[0.02] p-4">
+            <AudiencePicker value={edit.aud} onChange={(a) => setEdit({ ...edit, aud: a })} classes={classes} groups={groups} students={students} />
           </div>
           <div className="mt-5 flex gap-2">
-            <ActBtn busy={busy === 'edit'} doing="Saving…" label="Save changes" onClick={async () => {
-              if (await act('edit', () => api(`/api/sessions/${edit.s.id}`, 'PUT', { date: edit.date, from: edit.from, to: edit.to, places: edit.places === '' ? '' : +edit.places }), 'Lab time saved.')) setEdit(null);
+            <ActBtn busy={busy === 'edit'} doing="Saving…" label="Save changes" disabled={!audOk(edit.aud) || edit.from >= edit.to} onClick={async () => {
+              if (await act('edit', () => api(`/api/sessions/${edit.s.id}`, 'PUT', {
+                date: edit.date, from: edit.from, to: edit.to, places: edit.places === '' ? '' : +edit.places,
+                autoApprove: edit.auto === 'true', audience: edit.aud,
+              }), 'Lab time saved.')) setEdit(null);
             }} />
             <Btn c="w" onClick={() => setEdit(null)}>Cancel</Btn>
           </div>
@@ -1281,7 +1370,7 @@ function SchedulePage() {
 }
 
 // People: accounts, groups, and moving students between classes.
-function PeoplePage({ me }) {
+function PeoplePage() {
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
   const [opts, setOpts] = useState(EMPTY_OPTS);
@@ -1364,7 +1453,7 @@ function PeoplePage({ me }) {
         {shown.length > 100 && <p className="pt-3 text-center text-xs text-black/50">Showing 100 of {shown.length}. Search to narrow the list.</p>}
       </Card>
 
-      <Card t="Groups" sub="A group can mix students from any class. Lab times can be given to a whole group in Schedule.">
+      <Card t="Groups" sub="A group can mix students from any class. In Schedule you can give a lab time to a whole group.">
         <div className="mb-5 rounded-[8px] border border-black/10 bg-black/[0.02] p-4">
           <Inp value={newGroup.name} onChange={(e) => setNewGroup({ ...newGroup, name: e.target.value })} placeholder="New group name, for example Isomo circle" />
           <div className="mt-3"><StudentPicker students={students} value={newGroup.members} onChange={(m) => setNewGroup({ ...newGroup, members: m })} /></div>
@@ -1462,6 +1551,233 @@ function GroupRow({ g, students, open, onToggle, act, sure, busy }) {
             onClick={async () => { if (await act('gadd' + g.id, () => api(`/api/groups/${g.id}/members`, 'POST', { members: add }), 'Students added.')) setAdd([]); }} />
         </div>
       )}
+    </div>
+  );
+}
+
+/* ---------- Admin chat: like Messenger. A group chat for all admins and private chats. ---------- */
+
+const EMOJIS = ['👍', '😊', '😂', '❤️', '🙏', '🎉', '👏', '😮'];
+const GroupIcon = ({ className = 'h-11 w-11 text-lg' }) => (
+  <span className={`grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#16a34a] to-[#2563eb] text-white ${className}`} aria-hidden="true">👥</span>
+);
+const Presence = ({ on, children }) => (
+  <span className="relative shrink-0">
+    {children}
+    <span className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${on ? 'bg-[#16a34a]' : 'bg-black/25'}`} />
+  </span>
+);
+
+function ChatPage({ me, onUnread }) {
+  const [sum, setSum] = useState({ people: [], unread: {}, last: {} });
+  const [active, setActive] = useState('all');
+  const [msgs, setMsgs] = useState(null);
+  const [text, setText] = useState('');
+  const [q, setQ] = useState('');
+  const [online, setOnline] = useState(null);
+  const [typing, setTyping] = useState(null);
+  const [showList, setShowList] = useState(true);
+  const [emoji, setEmoji] = useState(false);
+  const [err, setErr] = useState('');
+  const { busy, run } = useBusy();
+  const box = useRef(null);
+  const lastType = useRef(0);
+  const typingTimer = useRef(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  const loadSum = useCallback(() => api('/api/chat/summary').then((s) => {
+    setSum(s);
+    onUnread?.(Object.values(s.unread).reduce((a, b) => a + b, 0));
+  }).catch(() => {}), []);
+  const markRead = (k) => api('/api/chat/read', 'POST', { with: k }).then(loadSum).catch(() => {});
+
+  useEffect(() => { loadSum(); }, []);
+  useEffect(() => {
+    setMsgs(null); setTyping(null); setErr('');
+    api(`/api/chat/messages?with=${encodeURIComponent(active)}`)
+      .then((m) => { setMsgs(m); markRead(active); })
+      .catch((e) => { setErr(e.message); setMsgs([]); });
+  }, [active]);
+  useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [msgs, typing, active]);
+
+  useLive({
+    'chat:message': (m) => {
+      const key = m.to === 'all' ? 'all' : (m.fromEmail === me.email ? m.to : m.fromEmail);
+      if (key === activeRef.current) {
+        setMsgs((cur) => (cur && !cur.some((x) => x.id === m.id) ? [...cur, m] : cur));
+        if (m.fromEmail !== me.email) { setTyping(null); markRead(key); } else loadSum();
+      } else loadSum();
+    },
+    'chat:typing': (t) => {
+      const key = t.to === 'all' ? 'all' : t.from;
+      if (key !== activeRef.current || t.from === me.email) return;
+      setTyping(t.name);
+      clearTimeout(typingTimer.current);
+      typingTimer.current = setTimeout(() => setTyping(null), 3000);
+    },
+    presence: (list) => setOnline(new Set(list.map((p) => p.email))),
+  });
+
+  const people = sum.people.map((p) => ({ ...p, on: online ? online.has(p.email) : p.online }));
+  const lastAt = (k) => sum.last[k]?.at || '';
+  const sorted = [...people].sort((a, b) => (sum.unread[b.email] || 0) - (sum.unread[a.email] || 0)
+    || lastAt(b.email).localeCompare(lastAt(a.email)) || (+b.on - +a.on) || a.name.localeCompare(b.name));
+  const list = sorted.filter((p) => match(q, p.name, p.email));
+  const showGroup = match(q, 'all admins group');
+  const onlineCount = people.filter((p) => p.on).length + 1;
+  const other = people.find((p) => p.email === active);
+  const preview = (k) => { const l = sum.last[k]; return l ? `${l.fromMe ? 'You: ' : (k === 'all' ? `${l.fromName.split(' ')[0]}: ` : '')}${l.body}` : 'No messages yet'; };
+
+  const open = (k) => { setActive(k); setShowList(false); setEmoji(false); };
+  const send = (body) => run('send', async () => {
+    const b = String(body ?? text).trim();
+    if (!b) return;
+    try {
+      const m = await api('/api/chat/messages', 'POST', { with: active, body: b });
+      setText(''); setEmoji(false);
+      setMsgs((cur) => (cur && !cur.some((x) => x.id === m.id) ? [...cur, m] : cur));
+      loadSum();
+    } catch (e) { setErr(e.message); }
+  });
+  const onType = (v) => {
+    setText(v);
+    const now = Date.now();
+    if (v && now - lastType.current > 2000) { lastType.current = now; liveSocket().emit('chat:typing', activeRef.current); }
+  };
+  const gap = (a, b) => a && b && a.fromEmail === b.fromEmail && dayHead(a.at) === dayHead(b.at) && new Date(b.at) - new Date(a.at) < 5 * 60000;
+  const who = (email) => people.find((p) => p.email === email);
+
+  const Row = ({ k, name, sub, unread, time, avatar, on }) => (
+    <button type="button" onClick={() => open(k)} aria-current={active === k ? 'true' : undefined}
+      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-black/[0.04] ${active === k ? 'bg-[#16a34a]/10' : ''}`}>
+      {on === undefined ? avatar : <Presence on={on}>{avatar}</Presence>}
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline justify-between gap-2">
+          <b className={`truncate text-[13px] ${unread ? 'text-[#111827]' : 'font-semibold'}`}>{name}</b>
+          {time && <span className={`shrink-0 text-[10px] ${unread ? 'font-bold text-[#16a34a]' : 'text-black/40'}`}>{listTime(time)}</span>}
+        </span>
+        <span className={`block truncate text-xs ${unread ? 'font-semibold text-[#111827]' : 'text-black/50'}`}>{sub}</span>
+      </span>
+      {unread > 0 && <span className="grid h-5 min-w-[20px] shrink-0 place-items-center rounded-full bg-[#ff4500] px-1.5 text-[10px] font-bold text-white">{unread > 99 ? '99+' : unread}</span>}
+    </button>
+  );
+
+  return (
+    <div className="flex h-[calc(100vh-11rem)] min-h-[480px] overflow-hidden rounded-[10px] border border-black/10 bg-white">
+      {/* Left: all chats */}
+      <aside className={`${showList ? 'flex' : 'hidden'} w-full shrink-0 flex-col border-r border-black/10 md:flex md:w-80`}>
+        <div className="p-3">
+          <h2 className="mb-2 text-base font-bold">Chats</h2>
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search admins" aria-label="Search admins"
+            className="w-full rounded-full bg-[#f0f2f5] px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
+        </div>
+        <div className="flex-1 overflow-y-auto pb-2">
+          {showGroup && (
+            <Row k="all" name="All admins" unread={sum.unread.all || 0} time={sum.last.all?.at}
+              sub={preview('all')} avatar={<GroupIcon />} />
+          )}
+          {list.map((p) => (
+            <Row key={p.email} k={p.email} name={p.name} unread={sum.unread[p.email] || 0} time={sum.last[p.email]?.at} on={p.on}
+              sub={sum.last[p.email] ? preview(p.email) : (p.on ? 'Active now' : p.lastSeen ? `Active ${ago(p.lastSeen)}` : 'Has not signed in yet')}
+              avatar={<Avatar name={p.name} picture={p.picture} className="h-11 w-11 text-sm" />} />
+          ))}
+          {list.length === 0 && !showGroup && <Empty>No admin found.</Empty>}
+          {people.length === 0 && <p className="px-4 py-3 text-xs leading-relaxed text-black/50">Other admins appear here after they sign in once.</p>}
+        </div>
+      </aside>
+
+      {/* Right: the conversation */}
+      <section className={`${showList ? 'hidden' : 'flex'} min-w-0 flex-1 flex-col md:flex`}>
+        <header className="flex items-center gap-3 border-b border-black/10 px-4 py-3">
+          <button type="button" aria-label="Back to chats" onClick={() => setShowList(true)} className="grid h-8 w-8 place-items-center rounded-full text-lg text-[#16a34a] hover:bg-black/5 md:hidden">←</button>
+          {active === 'all'
+            ? <GroupIcon className="h-10 w-10 text-base" />
+            : <Presence on={!!other?.on}><Avatar name={other?.name || active} picture={other?.picture} className="h-10 w-10 text-xs" /></Presence>}
+          <div className="min-w-0">
+            <b className="block truncate text-sm">{active === 'all' ? 'All admins' : other?.name || active}</b>
+            <span className="block truncate text-[11px] text-black/50">
+              {active === 'all' ? `${people.length + 1} admins · ${onlineCount} online`
+                : other?.on ? 'Active now' : other?.lastSeen ? `Active ${ago(other.lastSeen)}` : 'Offline'}
+            </span>
+          </div>
+        </header>
+
+        <div ref={box} className="flex-1 overflow-y-auto bg-[#f0f2f5] px-3 py-4 sm:px-5">
+          {err && <div className="mb-3"><Alert>{err}</Alert></div>}
+          {msgs === null && <Loader full label="Loading messages" />}
+          {msgs && msgs.length === 0 && (
+            <div className="grid h-full place-items-center text-center">
+              <div>
+                {active === 'all' ? <GroupIcon className="mx-auto h-16 w-16 text-3xl" /> : <Avatar name={other?.name || active} picture={other?.picture} className="mx-auto h-16 w-16 text-lg" />}
+                <p className="mt-3 text-sm font-semibold">{active === 'all' ? 'All admins' : other?.name}</p>
+                <p className="mt-1 text-xs text-black/50">No messages yet. Say hello 👋</p>
+              </div>
+            </div>
+          )}
+          {msgs && msgs.map((m, i) => {
+            const mine = m.fromEmail === me.email;
+            const prev = msgs[i - 1], next = msgs[i + 1];
+            const first = !gap(prev, m), last = !gap(m, next);
+            const sender = who(m.fromEmail);
+            const corner = mine
+              ? `${first ? '' : 'rounded-tr-[6px]'} ${last ? '' : 'rounded-br-[6px]'}`
+              : `${first ? '' : 'rounded-tl-[6px]'} ${last ? '' : 'rounded-bl-[6px]'}`;
+            return (
+              <div key={m.id}>
+                {(!prev || dayHead(prev.at) !== dayHead(m.at)) && (
+                  <div className="my-3 text-center text-[11px] font-medium text-black/45">{dayHead(m.at)}</div>
+                )}
+                <div className={`flex items-end gap-2 ${mine ? 'justify-end' : 'justify-start'} ${first ? 'mt-2' : 'mt-0.5'}`}>
+                  {!mine && (
+                    <span className="w-7 shrink-0">
+                      {last && <Avatar name={m.fromName} picture={sender?.picture} className="h-7 w-7 text-[9px]" />}
+                    </span>
+                  )}
+                  <div className={`flex max-w-[78%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                    {!mine && first && active === 'all' && <span className="mb-0.5 ml-3 text-[11px] font-medium text-black/50">{m.fromName}</span>}
+                    <div title={`${dayHead(m.at)} ${clock(m.at)}`}
+                      className={`whitespace-pre-wrap break-words rounded-[18px] px-3.5 py-2 text-[13px] leading-snug ${corner} ${mine ? 'bg-[#16a34a] text-white' : 'bg-white text-[#111827] shadow-sm'}`}>
+                      {m.body}
+                    </div>
+                    {last && <span className="mx-2 mt-0.5 text-[10px] text-black/40">{clock(m.at)}</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {typing && (
+            <div className="mt-2 flex items-end gap-2">
+              <span className="w-7 shrink-0" />
+              <div className="flex items-center gap-1 rounded-[18px] bg-white px-3.5 py-3 shadow-sm" aria-label={`${typing} is typing`}>
+                <span className="lb-dot" /><span className="lb-dot" style={{ animationDelay: '.15s' }} /><span className="lb-dot" style={{ animationDelay: '.3s' }} />
+              </div>
+              <span className="pb-1 text-[11px] text-black/45">{typing.split(' ')[0]} is typing</span>
+            </div>
+          )}
+        </div>
+
+        <footer className="relative border-t border-black/10 bg-white p-3">
+          {emoji && (
+            <div className="absolute bottom-full left-3 mb-2 flex gap-1 rounded-full border border-black/10 bg-white p-1.5 shadow-lg">
+              {EMOJIS.map((e) => <button key={e} type="button" className="h-8 w-8 rounded-full text-lg hover:bg-black/5" onClick={() => { setText((t) => t + e); setEmoji(false); }}>{e}</button>)}
+            </div>
+          )}
+          <div className="flex items-end gap-2">
+            <button type="button" aria-label="Emoji" onClick={() => setEmoji((v) => !v)} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-xl hover:bg-black/5">☺</button>
+            <textarea rows={1} value={text} onChange={(e) => onType(e.target.value)} placeholder="Write a message"
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+              className="max-h-28 min-h-[40px] flex-1 resize-none rounded-[20px] bg-[#f0f2f5] px-4 py-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
+            {text.trim() ? (
+              <button type="button" aria-label="Send" disabled={busy === 'send'} onClick={() => send()}
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#16a34a] text-white hover:opacity-90 disabled:opacity-40">➤</button>
+            ) : (
+              <button type="button" aria-label="Send a thumbs up" disabled={busy === 'send'} onClick={() => send('👍')}
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-xl hover:bg-black/5">👍</button>
+            )}
+          </div>
+        </footer>
+      </section>
     </div>
   );
 }
@@ -1693,6 +2009,7 @@ function TrendsManager({ user, opts }) {
   );
 }
 
+// Everyone can change their own photo and phone number (students too).
 function Profile({ onChanged }) {
   const [p, setP] = useState(null);
   const [pic, setPic] = useState('');
@@ -1756,38 +2073,49 @@ function Profile({ onChanged }) {
 /* 8. DASHBOARD SHELL and ROOT                                         */
 /* ================================================================== */
 
-const NAV_ICON = { 'My labs': '▦', Bookings: '▤', 'Lost & Found': '⌕', Profile: '◉', Overview: '▦', Labs: '▣', Schedule: '▥', People: '◎', Settings: '⚙' };
+const NAV_ICON = { 'My labs': '▦', Bookings: '▤', 'Lost & Found': '⌕', Profile: '◉', Overview: '▦', Labs: '▣', Schedule: '▥', People: '◎', Chat: '✉', Settings: '⚙' };
+
+const NavBadge = ({ n }) => (n > 0 ? <span className="ml-auto grid h-5 min-w-[20px] place-items-center rounded-full bg-[#ff4500] px-1.5 text-[10px] font-bold text-white">{n > 99 ? '99+' : n}</span> : null);
 
 function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) {
-  const items = user.role === 'admin'
+  const isAdmin = user.role === 'admin';
+  const items = isAdmin
     ? [...ADMIN_TABS, 'Lost & Found', 'Profile']
     : [user.role === 'student' ? 'My labs' : 'Bookings', ...(user.comm ? ['Lost & Found'] : []), 'Profile'];
   const [picked, setPage] = useState(items[0]);
   const page = items.includes(picked) ? picked : items[0];
   const [labView, setLabView] = useState(null);
-  useLive({ 'me:update': onRefreshMe });
+  const [unread, setUnread] = useState(0);
+  const refreshUnread = () => api('/api/chat/summary').then((s) => setUnread(Object.values(s.unread).reduce((a, b) => a + b, 0))).catch(() => {});
+  useLive({
+    'me:update': onRefreshMe,
+    'chat:message': () => { if (isAdmin && page !== 'Chat') refreshUnread(); },
+  });
+  useEffect(() => { if (isAdmin) refreshUnread(); }, []);
 
   // Tell the server which page this admin is on, so other admins can see it live.
   useEffect(() => {
-    if (user.role !== 'admin') return;
+    if (!isAdmin) return;
     const label = labView ? `Labs · ${labView.name || 'lab'}` : page;
     liveSocket().emit('page', label);
-  }, [page, labView, user.role]);
+  }, [page, labView, isAdmin]);
 
   let body;
   if (page === 'Profile') body = <Profile onChanged={onRefreshMe} />;
   else if (page === 'Lost & Found') body = <TrendsManager user={user} opts={opts} />;
-  else if (user.role === 'admin') {
+  else if (isAdmin) {
     if (page === 'Overview') body = <OverviewPage me={user} />;
     else if (page === 'Labs') body = labView
-      ? <LabDetail labId={labView.id} day={labView.day} labName={labView.name} onBack={() => setLabView(null)} />
+      ? <LabDetail labId={labView.id} day={labView.day} onBack={() => setLabView(null)} />
       : <LabsPage onOpenLab={(id, day, name) => setLabView({ id, day, name })} />;
     else if (page === 'Schedule') body = <SchedulePage />;
-    else if (page === 'People') body = <PeoplePage me={user} />;
+    else if (page === 'People') body = <PeoplePage />;
+    else if (page === 'Chat') body = <ChatPage me={user} onUnread={setUnread} />;
     else body = <SettingsPage />;
   } else body = <Booker user={user} opts={opts} intent={intent} onIntentDone={onIntentDone} />;
 
   const go = (x) => { setPage(x); setLabView(null); };
+  const badgeOf = (x) => (x === 'Chat' ? unread : 0);
 
   return (
     <div className="min-h-screen bg-[#f7f8f7] text-[13px] text-[#111827] lg:flex">
@@ -1797,7 +2125,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
           {items.map((x) => (
             <button key={x} type="button" onClick={() => go(x)} aria-current={page === x ? 'page' : undefined}
               className={`flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
-              <span className="w-4 text-center">{NAV_ICON[x] || '•'}</span>{x}
+              <span className="w-4 text-center">{NAV_ICON[x] || '•'}</span>{x}<NavBadge n={badgeOf(x)} />
             </button>
           ))}
         </nav>
@@ -1822,7 +2150,9 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
           <nav className="flex gap-2 overflow-x-auto px-4 pb-3" aria-label="Main">
             {items.map((x) => (
               <button key={x} type="button" onClick={() => go(x)}
-                className={`shrink-0 rounded-[6px] px-3 py-2 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>{x}</button>
+                className={`flex shrink-0 items-center gap-2 rounded-[6px] px-3 py-2 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
+                {x}{badgeOf(x) > 0 && <span className="grid h-4 min-w-[16px] place-items-center rounded-full bg-[#ff4500] px-1 text-[9px] font-bold text-white">{badgeOf(x)}</span>}
+              </button>
             ))}
           </nav>
         </header>

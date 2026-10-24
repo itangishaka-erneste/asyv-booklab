@@ -1,5 +1,11 @@
 // server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js).
-// Everyone signs in with Google. Admins get live presence and an activity log.
+// Everyone signs in with Google. Admins get live presence, an activity log and a private admin chat.
+//
+// What is new in this version
+//  - Admin chat (like Messenger): one group chat for all admins and one private chat between any two admins,
+//    unread counters, "typing..." signal and online status. Tables: admin_people, admin_chat, admin_chat_reads.
+//  - /api/board only returns PUBLISHED lab times (drafts stay in Schedule), with the students of each lab time.
+//  - /api/sessions keeps the "people" list for the admin, so the Edit screen can show who a lab time is assigned to.
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -49,7 +55,7 @@ const isOver = (s, now = nowLocal()) => s.date < now.date || (s.date === now.dat
 const hasStarted = (s, now = nowLocal()) => s.date < now.date || (s.date === now.date && mins(s.from) <= mins(now.time));
 const pad2 = n => String(n).padStart(2, '0');
 const dayStr = d => (d instanceof Date ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` : String(d ?? '').slice(0, 10));
-// State of one lab time, shown on every screen.
+// State of one lab time, shown on every screen: draft, over, full or open.
 const stateOf = s => (!s.published ? 'draft' : isOver(s) ? 'over' : s.left < 1 ? 'full' : 'open');
 
 const app = express(), server = http.createServer(app);
@@ -75,7 +81,6 @@ const comm = [auth(), wrap(async (req, _res, next) => {
 
 /* ---------- Activity log and live presence (admins) ---------- */
 
-// Every admin change is written to the activity table, then the admins are told to refresh.
 const logAct = async (user, action, detail = '') => {
   try {
     await query('INSERT INTO activity(actor, action, detail) VALUES($1,$2,$3)', [user?.name || 'System', action, String(detail).slice(0, 300)]);
@@ -83,12 +88,20 @@ const logAct = async (user, action, detail = '') => {
   } catch (e) { console.error('activity log:', e.message); }
 };
 
-// presence: socket id -> { name, page, since }. The client sends its page with the 'page' event.
+// Remember every admin who signs in, so the admin chat can list them (even when they are offline).
+const upsertAdmin = u => (u?.email
+  ? query(`INSERT INTO admin_people(email, name, picture, last_seen) VALUES($1,$2,$3,now())
+      ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name,
+        picture = CASE WHEN EXCLUDED.picture <> '' THEN EXCLUDED.picture ELSE admin_people.picture END, last_seen = now()`,
+  [u.email, u.name || u.email, u.picture || '']).catch(e => console.error('admin_people:', e.message))
+  : Promise.resolve());
+
+// presence: socket id -> { name, email, page, since }. The client sends its page with the 'page' event.
 const presence = new Map();
 const presenceList = () => {
-  const byName = new Map();
-  presence.forEach(p => { const cur = byName.get(p.name); if (!cur || cur.since < p.since) byName.set(p.name, p); });
-  return [...byName.values()];
+  const byEmail = new Map();
+  presence.forEach(p => { const cur = byEmail.get(p.email); if (!cur || cur.since < p.since) byEmail.set(p.email, p); });
+  return [...byEmail.values()];
 };
 const pushPresence = () => io.to('admins').emit('presence', presenceList());
 
@@ -109,7 +122,7 @@ const withExtras = async rows => {
 };
 
 const SESSION_ORDER = 'ORDER BY date, "from", lab';
-// Admin: every lab time (drafts too). Students: published lab times they may book. Others: published lab times.
+// Admin: every lab time (drafts too, with the list of assigned people). Students: published lab times they may book. Others: published lab times.
 const listSessions = async (all = false, user = null) => {
   let rows;
   if (all) rows = await query(`SELECT * FROM session_places ${SESSION_ORDER}`);
@@ -122,7 +135,7 @@ const listSessions = async (all = false, user = null) => {
         OR EXISTS (SELECT 1 FROM session_people p WHERE p.session_id = sp.id AND p.user_id = $1::int)
       ) ${SESSION_ORDER}`, [me?.id || 0, me?.cls || '']);
   } else rows = await query(`SELECT * FROM session_places WHERE published ${SESSION_ORDER}`);
-  return rows.map(({ people, ...r }) => ({ ...r, state: stateOf(r) }));
+  return rows.map(({ people, ...r }) => ({ ...r, state: stateOf(r), ...(all ? { people } : {}) }));
 };
 // Booking rows. date is always 'YYYY-MM-DD' and times 'HH:MM'.
 const listApps = async (where = '', params = []) => {
@@ -243,8 +256,11 @@ io.on('connection', socket => {
   if (!socket.user) { socket.join('public'); return; }
   socket.join('auth');
   if (socket.user.role === 'admin') {
+    const me = socket.user;
     socket.join('admins');
-    presence.set(socket.id, { name: socket.user.name, page: 'Overview', since: Date.now() });
+    socket.join(`admin:${me.email}`);
+    upsertAdmin(me);
+    presence.set(socket.id, { name: me.name, email: me.email, page: 'Overview', since: Date.now() });
     pushPresence();
     socket.on('page', p => {
       const cur = presence.get(socket.id);
@@ -253,7 +269,17 @@ io.on('connection', socket => {
       cur.since = Date.now();
       pushPresence();
     });
-    socket.on('disconnect', () => { presence.delete(socket.id); pushPresence(); });
+    // "is typing...": sent to the other admin, or to every other admin for the group chat.
+    socket.on('chat:typing', to => {
+      const payload = { from: me.email, name: me.name, to: to === 'all' ? 'all' : String(to || '').toLowerCase() };
+      if (payload.to === 'all') socket.to('admins').emit('chat:typing', payload);
+      else if (validEmail(payload.to)) io.to(`admin:${payload.to}`).emit('chat:typing', payload);
+    });
+    socket.on('disconnect', () => {
+      presence.delete(socket.id);
+      pushPresence();
+      query('UPDATE admin_people SET last_seen = now() WHERE email = $1', [me.email]).catch(() => {});
+    });
   } else socket.join(`user:${socket.user.name}`);
 });
 const pushSeats = () => { io.emit('overview:update'); io.to('auth').emit('seats'); };
@@ -271,8 +297,11 @@ app.post('/api/google', wrap(async (req, res) => {
   catch { fail(401, 'Google sign-in failed. Please try again.'); }
   if (!p.email_verified) fail(403, 'Your Google email is not verified.');
   const email = p.email.toLowerCase(), picture = p.picture || '';
-  if (ADMINS.includes(email))
-    return res.json({ token: sign({ id: 0, role: 'admin', name: cleanName(p.name || email.split('@')[0]), email, picture }) });
+  if (ADMINS.includes(email)) {
+    const name = cleanName(p.name || email.split('@')[0]);
+    await upsertAdmin({ email, name, picture });
+    return res.json({ token: sign({ id: 0, role: 'admin', name, email, picture }) });
+  }
   const u = await one('SELECT id, username, role FROM users WHERE lower(email) = $1', [email]);
   if (!u) fail(403, 'There is no account for this Google email. Ask your admin to add it.');
   if (picture) await query("UPDATE users SET profile = profile || jsonb_build_object('picture', $1::text) WHERE id = $2 AND COALESCE(profile->>'pictureCustom', '') <> 'true'", [picture, u.id]);
@@ -832,7 +861,7 @@ app.get('/api/overview', wrap(async (req, res) => {
   });
 }));
 
-/* ---------- Admin board: each lab, its lab times and the students in them ---------- */
+/* ---------- Admin board: each lab, its PUBLISHED lab times and the students in them ---------- */
 
 app.get('/api/board', auth('admin'), wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
@@ -841,7 +870,7 @@ app.get('/api/board', auth('admin'), wrap(async (req, res) => {
     listSessions(true),
     listApps('date = $1', [date]),
   ]);
-  const day = sessions.filter(s => s.date === date).sort((a, b) => `${a.from} ${a.lab}`.localeCompare(`${b.from} ${b.lab}`));
+  const day = sessions.filter(s => s.date === date && s.published).sort((a, b) => `${a.from} ${a.lab}`.localeCompare(`${b.from} ${b.lab}`));
   const people = new Map();
   apps.forEach(a => { if (!people.has(a.sid)) people.set(a.sid, []); people.get(a.sid).push(a); });
   res.json({
@@ -863,12 +892,76 @@ app.get('/api/board', auth('admin'), wrap(async (req, res) => {
 app.get('/api/activity', auth('admin'), wrap(async (_, res) =>
   res.json(await query('SELECT id, actor, action, detail, created_at AS at FROM activity ORDER BY id DESC LIMIT 60'))));
 
-// Counts per admin per day, for the chart.
 app.get('/api/activity/chart', auth('admin'), wrap(async (req, res) => {
   const days = Math.min(Math.max(+req.query.days || 7, 1), 60);
   res.json(await query(`SELECT actor, to_char(created_at::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
     FROM activity WHERE created_at >= (now() - ($1::int * interval '1 day'))
     GROUP BY actor, day ORDER BY day`, [days]));
+}));
+
+/* ---------- Admin chat ---------- */
+// Rooms: 'all' = every admin. A private chat between two admins has the room 'dm:<email>|<email>' (emails sorted).
+// The screen only knows the "other side": 'all' or the other admin's email.
+
+const dmRoom = (a, b) => 'dm:' + [a, b].sort().join('|');
+const chatWith = v => { const w = String(v || 'all').trim().toLowerCase(); return w === 'all' || validEmail(w) ? w : fail(400, 'Unknown chat.'); };
+const roomOf = (me, w) => (w === 'all' ? 'all' : dmRoom(me, w));
+
+// All admins: the ones in ADMIN_EMAILS plus everyone who ever signed in as admin.
+const adminDirectory = async () => {
+  const rows = await query(`SELECT p.email, p.name, COALESCE(NULLIF(a.picture, ''), p.picture) AS picture, p.last_seen AS "lastSeen"
+    FROM admin_people p LEFT JOIN admin_profiles a ON a.email = p.email`);
+  const map = new Map(rows.map(r => [r.email, r]));
+  ADMINS.forEach(e => { if (!map.has(e)) map.set(e, { email: e, name: e.split('@')[0], picture: '', lastSeen: null }); });
+  return [...map.values()];
+};
+
+// People, last message and unread count of every chat, in one call.
+app.get('/api/chat/summary', auth('admin'), wrap(async (req, res) => {
+  const me = req.user.email;
+  const on = new Set(presenceList().map(p => p.email));
+  const people = (await adminDirectory()).filter(p => p.email !== me)
+    .map(p => ({ ...p, online: on.has(p.email) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const unreadRows = await query(`SELECT CASE WHEN m.room = 'all' THEN 'all' ELSE m.from_email END AS key, COUNT(*)::int AS n
+    FROM admin_chat m LEFT JOIN admin_chat_reads r ON r.email = $1 AND r.room = m.room
+    WHERE m.id > COALESCE(r.last_id, 0) AND m.from_email <> $1 AND (m.room = 'all' OR m.to_email = $1)
+    GROUP BY 1`, [me]);
+  const lastRows = await query(`SELECT DISTINCT ON (room) room, to_email AS "to", from_email AS "fromEmail", from_name AS "fromName", body, created_at AS at
+    FROM admin_chat WHERE room = 'all' OR from_email = $1 OR to_email = $1 ORDER BY room, id DESC`, [me]);
+  const last = {};
+  lastRows.forEach(m => { last[m.room === 'all' ? 'all' : (m.fromEmail === me ? m.to : m.fromEmail)] = { body: m.body, at: m.at, fromMe: m.fromEmail === me, fromName: m.fromName }; });
+  res.json({ me, people, unread: Object.fromEntries(unreadRows.map(r => [r.key, r.n])), last });
+}));
+
+app.get('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
+  const me = req.user.email, w = chatWith(req.query.with), before = Math.max(+req.query.before || 0, 0);
+  const rows = await query(`SELECT id, from_email AS "fromEmail", from_name AS "fromName", to_email AS "to", body, created_at AS at
+    FROM admin_chat WHERE room = $1 AND ($2::int = 0 OR id < $2::int) ORDER BY id DESC LIMIT 80`, [roomOf(me, w), before]);
+  res.json(rows.reverse());
+}));
+
+app.post('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
+  const me = req.user, w = chatWith(req.body.with);
+  const body = String(req.body.body || '').replace(/\r\n/g, '\n').trim().slice(0, 2000);
+  if (!body) fail(400, 'Write a message first.');
+  if (w === me.email) fail(400, 'You cannot write to yourself.');
+  const room = roomOf(me.email, w);
+  const row = await one(`INSERT INTO admin_chat(room, from_email, from_name, to_email, body) VALUES($1,$2,$3,$4,$5)
+    RETURNING id, from_email AS "fromEmail", from_name AS "fromName", to_email AS "to", body, created_at AS at`, [room, me.email, me.name, w, body]);
+  await query(`INSERT INTO admin_chat_reads(email, room, last_id) VALUES($1,$2,$3)
+    ON CONFLICT (email, room) DO UPDATE SET last_id = GREATEST(admin_chat_reads.last_id, EXCLUDED.last_id)`, [me.email, room, row.id]);
+  if (w === 'all') io.to('admins').emit('chat:message', row);
+  else io.to(`admin:${w}`).to(`admin:${me.email}`).emit('chat:message', row);
+  res.json(row);
+}));
+
+app.post('/api/chat/read', auth('admin'), wrap(async (req, res) => {
+  const me = req.user.email, room = roomOf(me, chatWith(req.body.with));
+  await query(`INSERT INTO admin_chat_reads(email, room, last_id)
+    VALUES($1, $2, COALESCE((SELECT MAX(id) FROM admin_chat WHERE room = $2), 0))
+    ON CONFLICT (email, room) DO UPDATE SET last_id = GREATEST(admin_chat_reads.last_id, EXCLUDED.last_id)`, [me, room]);
+  res.json({ ok: true });
 }));
 
 /* ---------- Bookings ---------- */
@@ -1107,7 +1200,7 @@ const resolveLink = async raw => {
 
 const trendRows = async (where = '', params = []) => {
   const t = await query(`SELECT id, title, description, category, found_at AS "foundAt", contact_phone AS phone, contact_email AS email, status,
-    posted_by AS "postedBy", posted_at AS "postedAt", removed_at AS "removedAt", repost_count AS reposts, posted_at AS posted_at_raw
+    posted_by AS "postedBy", posted_at AS "postedAt", removed_at AS "removedAt", repost_count AS reposts
     FROM trends ${where ? 'WHERE ' + where : ''} ORDER BY posted_at DESC, id DESC`, params);
   if (!t.length) return [];
   const media = await query('SELECT id, trend_id, kind, url, name, mime, (data IS NOT NULL) AS stored FROM trend_media WHERE trend_id = ANY($1) ORDER BY id', [t.map(x => x.id)]);
@@ -1241,6 +1334,17 @@ const ensureTables = async () => {
     created_at timestamptz NOT NULL DEFAULT now())`);
   await query('CREATE INDEX IF NOT EXISTS activity_created_idx ON activity (created_at DESC)');
   await query('CREATE INDEX IF NOT EXISTS activity_actor_idx ON activity (actor, created_at)');
+
+  // Admin chat: who the admins are, their messages, and what each admin has already read.
+  await query(`CREATE TABLE IF NOT EXISTS admin_people (
+    email text PRIMARY KEY, name text NOT NULL DEFAULT '', picture text NOT NULL DEFAULT '', last_seen timestamptz NOT NULL DEFAULT now())`);
+  await query(`CREATE TABLE IF NOT EXISTS admin_chat (
+    id serial PRIMARY KEY, room text NOT NULL, from_email text NOT NULL, from_name text NOT NULL DEFAULT '',
+    to_email text NOT NULL DEFAULT 'all', body text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
+  await query('CREATE INDEX IF NOT EXISTS admin_chat_room_idx ON admin_chat (room, id DESC)');
+  await query('CREATE INDEX IF NOT EXISTS admin_chat_to_idx ON admin_chat (to_email, id)');
+  await query(`CREATE TABLE IF NOT EXISTS admin_chat_reads (
+    email text NOT NULL, room text NOT NULL, last_id integer NOT NULL DEFAULT 0, PRIMARY KEY (email, room))`);
 
   await query(`CREATE TABLE IF NOT EXISTS trends (
     id serial PRIMARY KEY, title text NOT NULL, description text NOT NULL DEFAULT '', category text NOT NULL DEFAULT 'Other',
