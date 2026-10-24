@@ -507,13 +507,16 @@ const GLOBAL_CSS = `
 @keyframes lbBounce{0%,55%,100%{transform:translateY(0)}25%{transform:translateY(-7px)}40%{transform:translateY(0)}47%{transform:translateY(-2px)}}
 @keyframes lbPulse{0%,100%{opacity:1}50%{opacity:.4}}
 @keyframes lbDot{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-3px);opacity:1}}
+@keyframes lbFloat{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-10px) rotate(1deg)}}
+@keyframes lbGlow{0%,100%{box-shadow:0 12px 30px rgba(22,163,74,.12)}50%{box-shadow:0 18px 45px rgba(22,163,74,.3)}}
+.lb-float{animation:lbFloat 5s ease-in-out infinite}.lb-glow{animation:lbGlow 4s ease-in-out infinite}
 .lb-in{animation:lbIn .6s ease both}
 .lb-bounce{display:inline-block;animation:lbBounce 2.2s ease-in-out infinite}
 .lb-pulse{animation:lbPulse 1.6s ease-in-out infinite}
 .lb-dot{display:inline-block;width:6px;height:6px;border-radius:9999px;background:#9ca3af;animation:lbDot 1.2s infinite}
 /* Border fills up as places are taken. --p is 0 to 100. */
 .lb-ring{padding:3px;border-radius:8px;background:conic-gradient(var(--c,#16a34a) calc(var(--p) * 1%),#e5e7eb 0);transition:--p 1.2s ease}
-@media (prefers-reduced-motion:reduce){.lb-bounce,.lb-pulse,.lb-in,.lb-dot{animation:none!important}.lb-ring{transition:none}}
+@media (prefers-reduced-motion:reduce){.lb-bounce,.lb-pulse,.lb-in,.lb-dot,.lb-float,.lb-glow{animation:none!important}.lb-ring{transition:none}}
 `;
 
 /* ================================================================== */
@@ -569,6 +572,10 @@ function LabCard({ lab, day, past, onLogin }) {
   const text = { open: 'Places open', full: 'Full', over: 'Closed', none: 'No lab time', draft: 'Not open' }[status];
   return (
     <article className={`flex flex-col overflow-hidden rounded-[8px] border bg-white ${status === 'over' ? 'border-[#dc2626]/50' : 'border-black/10'}`}>
+      <div className="relative h-32 overflow-hidden bg-[#e8f5ec]">
+        <img src="https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=900&q=80" alt="Computer lab" className="lb-float h-full w-full object-cover" />
+        <span className="absolute bottom-3 left-3 rounded-full bg-white/95 px-3 py-1 text-[11px] font-semibold text-[#15803d] shadow">{text}</span>
+      </div>
       <div className="flex items-center justify-between gap-3 border-b border-black/10 p-4">
         <div className="min-w-0">
           <h3 className="truncate text-base font-bold">{lab.name}</h3>
@@ -702,7 +709,7 @@ function Landing({ onLogin }) {
           <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
         </div>
         </div>
-        <div className="relative overflow-hidden rounded-2xl bg-[#e8f5ec] shadow-lg">
+        <div className="lb-glow relative overflow-hidden rounded-2xl bg-[#e8f5ec] shadow-lg">
           <img src="https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1200&q=85" alt="A bright computer lab for student study" className="h-64 w-full object-cover md:h-[340px]" />
           <div className="absolute bottom-4 left-4 rounded-xl bg-white/95 px-4 py-3 shadow-md"><p className="text-xs font-bold text-[#15803d]">Make room for your next idea</p><p className="mt-1 text-[11px] text-black/60">Find and book an available lab session.</p></div>
         </div>
@@ -772,7 +779,13 @@ function Auth({ onDone, onBack, intent }) {
   };
   return (
     <div className="fixed inset-0 grid place-items-center overflow-y-auto bg-white p-6 text-[13px] text-[#111827]">
-      <div className="w-full max-w-md">
+      <div className="grid w-full max-w-5xl overflow-hidden rounded-2xl border border-black/10 bg-white shadow-xl md:grid-cols-2">
+       <div className="relative hidden min-h-[560px] overflow-hidden bg-[#e8f5ec] md:block">
+        <img src="https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=1200&q=85" alt="Bright school computer lab" className="lb-float absolute inset-0 h-full w-full object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#052e16]/80 via-transparent to-[#052e16]/10" />
+        <div className="absolute bottom-8 left-8 right-8 text-white"><p className="text-2xl font-bold">Your next idea starts here.</p><p className="mt-2 text-sm text-white/80">Book a computer lab place before you arrive.</p></div>
+       </div>
+       <div className="w-full max-w-md p-7 md:mx-auto md:py-12">
         <button type="button" onClick={onBack} className="mb-8 text-xs font-medium text-[#2563eb] hover:underline">← Back to home</button>
         <Logo />
         <h1 className="mt-8 text-xl font-bold tracking-tight">Welcome back</h1>
@@ -783,7 +796,8 @@ function Auth({ onDone, onBack, intent }) {
           {hasGoogle ? <GoogleBtn onResult={finish} onError={setErr} /> : <Alert>Google sign-in is not set up yet. Add VITE_GOOGLE_CLIENT_ID to the frontend .env file.</Alert>}
         </div>
         <p className="mt-8 text-center text-xs text-black/50">Account not recognised? Ask your school admin to add your email.</p>
-      </div>
+        </div>
+            </div>
       {signing && <div className="fixed inset-0 z-50 grid place-items-center bg-white/85"><Loader label="Signing you in" /></div>}
     </div>
   );
