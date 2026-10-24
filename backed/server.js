@@ -1,16 +1,5 @@
 // server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js).
-// Accounts are created by seed.sql or by the admin. EVERYONE signs in with Google only.
-//
-// New in this version
-//  - Instant booking: a lab time can approve students at once while places are free (no pending).
-//  - Waiting list: when a lab time is full students join the queue. The first one is approved
-//    automatically when a place becomes free.
-//  - "Not too many days in a row": nobody can book more than N days in a row (default 1) so others get a turn.
-//  - Late students: check-in, a grace time, and release of no-shows to the waiting list (automatic or by the admin).
-//    Walk-ins: the admin can seat a student who came without a booking.
-//  - A student in a waiting list can still apply to another lab (waiting entries never block other bookings).
-//  - FIX: booking rows always return date as 'YYYY-MM-DD' and times as 'HH:MM' (no time zone shift),
-//    so the admin screens can filter bookings by day.
+// Everyone signs in with Google. Admins get live presence and an activity log.
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -20,14 +9,14 @@ const { query, one, tx } = require('./db');
 const SECRET = process.env.JWT_SECRET || 'change-me';
 const CLIENT = process.env.CLIENT_URL || 'http://localhost:5173';
 const ADMINS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
-const TZ = process.env.LAB_TZ || 'Africa/Kigali'; // the time zone of the school (used for "today", late and check-in)
+const TZ = process.env.LAB_TZ || 'Africa/Kigali';
 const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families', 'reasons'];
 const ROLES = ['student', 'teacher', 'psychosocial'];
+const ROLE_NAMES = { student: 'student', teacher: 'teacher', psychosocial: 'psychosocial worker' };
 const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const DEFAULT_GRADE_COMBOS = { S4: ['INGABE'], S5: ['INGABO'], S6: ['IJABO'] };
 const DEFAULT_TREND_CATEGORIES = ['Clothes', 'Shoes', 'Keys', 'Bags', 'Phones and electronics', 'Books and stationery', 'Documents and IDs', 'Water bottles and lunch boxes', 'Jewelry and watches', 'Other'];
-// Booking rules the admin can change in Settings.
 const DEFAULT_SETTINGS = { maxConsecutive: 1, graceMinutes: 15, autoRelease: true };
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.floor(+v) || 0));
 const SETTING_PARSERS = {
@@ -44,7 +33,6 @@ const graceOf = o => (Number.isFinite(+o.graceMinutes) && o.graceMinutes !== nul
 const nameKey = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
 const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
 const cleanList = list => [...new Set(list.map(x => String(x).trim()).filter(Boolean))];
-const cleanCode = s => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
 const validEmail = e => /^\S+@\S+\.\S+$/.test(e);
 const toIds = v => (Array.isArray(v) ? v : []).map(Number).filter(Number.isInteger);
 
@@ -59,9 +47,10 @@ const HM = t => String(t || '').slice(0, 5);
 const mins = t => { const [h, m] = HM(t).split(':').map(Number); return (h || 0) * 60 + (m || 0); };
 const isOver = (s, now = nowLocal()) => s.date < now.date || (s.date === now.date && mins(s.to) <= mins(now.time));
 const hasStarted = (s, now = nowLocal()) => s.date < now.date || (s.date === now.date && mins(s.from) <= mins(now.time));
-// A date column can arrive as a JS Date (pg parses it at local midnight) or as text. Always return 'YYYY-MM-DD'.
 const pad2 = n => String(n).padStart(2, '0');
 const dayStr = d => (d instanceof Date ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` : String(d ?? '').slice(0, 10));
+// State of one lab time, shown on every screen.
+const stateOf = s => (!s.published ? 'draft' : isOver(s) ? 'over' : s.left < 1 ? 'full' : 'open');
 
 const app = express(), server = http.createServer(app);
 const io = new Server(server, { cors: { origin: CLIENT } });
@@ -76,7 +65,7 @@ const auth = (...roles) => (req, res, next) => {
   if (roles.length && !roles.includes(req.user.role)) return res.status(403).json({ error: 'You do not have access to this.' });
   next();
 };
-// Minister of Communication: checked in the database on every request. The admin can always do it too.
+// Minister of Communication: checked in the database on each request. The admin can always do it too.
 const comm = [auth(), wrap(async (req, _res, next) => {
   if (req.user.role === 'admin') return next();
   const ok = req.user.id && await one("SELECT 1 AS ok FROM users WHERE id = $1 AND profile->>'comm' = 'true'", [req.user.id]);
@@ -84,17 +73,35 @@ const comm = [auth(), wrap(async (req, _res, next) => {
   next();
 })];
 
-// ---------- Data helpers ----------
-// session_places is a view (see ensureTables). seats = places open, left = seats - approved, published = visible to others.
+/* ---------- Activity log and live presence (admins) ---------- */
+
+// Every admin change is written to the activity table, then the admins are told to refresh.
+const logAct = async (user, action, detail = '') => {
+  try {
+    await query('INSERT INTO activity(actor, action, detail) VALUES($1,$2,$3)', [user?.name || 'System', action, String(detail).slice(0, 300)]);
+    io.to('admins').emit('activity:update');
+  } catch (e) { console.error('activity log:', e.message); }
+};
+
+// presence: socket id -> { name, page, since }. The client sends its page with the 'page' event.
+const presence = new Map();
+const presenceList = () => {
+  const byName = new Map();
+  presence.forEach(p => { const cur = byName.get(p.name); if (!cur || cur.since < p.since) byName.set(p.name, p); });
+  return [...byName.values()];
+};
+const pushPresence = () => io.to('admins').emit('presence', presenceList());
+
+/* ---------- Data helpers ---------- */
+
 const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
 const ASSIGNED = 'Assigned by admin';
 const forText = s => s.forGroupName || s.forClass || (s.forPeople ? `${s.forPeople} chosen student${s.forPeople === 1 ? '' : 's'}` : '');
 
 const withPeople = async rows => {
-  const m = new Map((await query('SELECT username, email, profile->>\'picture\' AS picture, md5(lower(email)) AS gid FROM users')).map(r => [r.username, r]));
+  const m = new Map((await query("SELECT username, email, profile->>'picture' AS picture, md5(lower(email)) AS gid FROM users")).map(r => [r.username, r]));
   return rows.map(a => { const p = m.get(a.name); return { ...a, email: p?.email || '', picture: p?.picture || '', gid: p?.gid || '' }; });
 };
-// late = came after the start + grace. released = the place was given back because the student did not arrive.
 const withExtras = async rows => {
   if (!rows.length) return rows;
   const ex = new Map((await query('SELECT id, late, note FROM applications WHERE id = ANY($1::int[])', [rows.map(r => r.id)])).map(r => [r.id, r]));
@@ -104,9 +111,9 @@ const withExtras = async rows => {
 const SESSION_ORDER = 'ORDER BY date, "from", lab';
 // Admin: every lab time (drafts too). Students: published lab times they may book. Others: published lab times.
 const listSessions = async (all = false, user = null) => {
-  if (all) return query(`SELECT * FROM session_places ${SESSION_ORDER}`);
   let rows;
-  if (user?.role === 'student') {
+  if (all) rows = await query(`SELECT * FROM session_places ${SESSION_ORDER}`);
+  else if (user?.role === 'student') {
     const me = await one(`SELECT id, ${CLASS_SQL} AS cls FROM users WHERE id = $1`, [user.id || 0]);
     rows = await query(`SELECT * FROM session_places sp WHERE published AND (
         NOT exclusive
@@ -115,9 +122,9 @@ const listSessions = async (all = false, user = null) => {
         OR EXISTS (SELECT 1 FROM session_people p WHERE p.session_id = sp.id AND p.user_id = $1::int)
       ) ${SESSION_ORDER}`, [me?.id || 0, me?.cls || '']);
   } else rows = await query(`SELECT * FROM session_places WHERE published ${SESSION_ORDER}`);
-  return rows.map(({ people, ...r }) => r);
+  return rows.map(({ people, ...r }) => ({ ...r, state: stateOf(r) }));
 };
-// Booking rows. date is always 'YYYY-MM-DD' and from / to are 'HH:MM' so the screens can filter by day.
+// Booking rows. date is always 'YYYY-MM-DD' and times 'HH:MM'.
 const listApps = async (where = '', params = []) => {
   const rows = await withExtras(await withPeople(await query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params)));
   return rows.map(a => ({ ...a, date: dayStr(a.date), from: HM(a.from), to: HM(a.to) }));
@@ -152,16 +159,14 @@ const studentProfile = async (grade, combo, section) => {
   return { grade, combo, section, cls: [grade, combo, section].filter(Boolean).join(' ') };
 };
 
-// ---------- Booking engine: waiting list, fair-use rule, late students ----------
-// A booking "holds" the student's time when it is approved, or when it waits for the admin in a lab time that still has places.
-// A student waiting in a FULL lab time (the queue) holds nothing, so they can still apply to another lab.
+/* ---------- Booking engine: waiting list, fair-use rule, late students ---------- */
+
 const liveOn = (q, date) => q(`SELECT d.name, d.sid, d."from", d."to", d.status, sp."left" AS lft
   FROM application_details d JOIN session_places sp ON sp.id = d.sid
   WHERE d.status <> 'rejected' AND d.date = $1`, [date]);
 const holds = (b, sid) => +b.sid === +sid || b.status === 'approved' || +b.lft > 0;
 const overlaps = (b, s) => HM(b.from) < HM(s.to) && HM(s.from) < HM(b.to);
 
-// When a student gets a place, their waiting entries in other full lab times at the same hour are cancelled.
 const dropQueueOverlap = async (q, name, sid) => {
   const s = (await q('SELECT date, "from", "to" FROM session_places WHERE id = $1', [sid]))[0];
   if (!s) return;
@@ -169,7 +174,6 @@ const dropQueueOverlap = async (q, name, sid) => {
     AND session_id IN (SELECT id FROM session_places WHERE date = $3 AND "from" < $5 AND $4 < "to" AND "left" < 1)`, [name, sid, s.date, s.from, s.to]);
 };
 
-// Fair use: nobody books more than `max` days in a row. max = 0 means no limit.
 const tooManyInRow = async (q, name, date, sid, max) => {
   if (!(max >= 1)) return false;
   const rows = await q(`SELECT DISTINCT d.date::text AS day FROM application_details d JOIN session_places sp ON sp.id = d.sid
@@ -182,7 +186,6 @@ const tooManyInRow = async (q, name, date, sid, max) => {
   return run > max;
 };
 
-// The waiting students of a lab time who can really be given a place (not blocked, no clash, fair-use rule respected).
 const queueFor = async (q, s) => {
   const max = maxOf(await getOptions());
   const banned = new Set((await q('SELECT name FROM blacklist')).map(b => nameKey(b.name)));
@@ -199,7 +202,7 @@ const queueFor = async (q, s) => {
   return out;
 };
 
-// Free places go to the waiting list in order (instant-booking lab times only). Returns how many were approved.
+// Free places go to the waiting list in order (instant-booking lab times only).
 const promote = async (q, sid, touched = []) => {
   const s = (await q('SELECT id, date, "from", "to", "left", "autoApprove" FROM session_places WHERE id = $1', [sid]))[0];
   if (!s || !s.autoApprove || s.left < 1) return 0;
@@ -213,8 +216,7 @@ const promote = async (q, sid, touched = []) => {
   return n;
 };
 
-// Somebody is waiting, the lab time is full and some approved students did not arrive: give their places to the queue.
-// Only as many places as the queue needs are released. Students who were marked present or who checked in are never released.
+// The lab time is full, students are waiting, and some approved students did not arrive: release only what the queue needs.
 const releaseNoShows = async (q, sid, touched = []) => {
   await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sid]);
   await promote(q, sid, touched);
@@ -229,7 +231,8 @@ const releaseNoShows = async (q, sid, touched = []) => {
   return { released: cands.length, promoted: await promote(q, sid, touched) };
 };
 
-// ---------- Socket.io ----------
+/* ---------- Socket.io ---------- */
+
 io.use((socket, next) => {
   const t = socket.handshake.auth?.token;
   if (!t) { socket.user = null; return next(); }
@@ -239,9 +242,20 @@ io.use((socket, next) => {
 io.on('connection', socket => {
   if (!socket.user) { socket.join('public'); return; }
   socket.join('auth');
-  socket.join(socket.user.role === 'admin' ? 'admins' : `user:${socket.user.name}`);
+  if (socket.user.role === 'admin') {
+    socket.join('admins');
+    presence.set(socket.id, { name: socket.user.name, page: 'Overview', since: Date.now() });
+    pushPresence();
+    socket.on('page', p => {
+      const cur = presence.get(socket.id);
+      if (!cur) return;
+      cur.page = String(p || 'Overview').slice(0, 60);
+      cur.since = Date.now();
+      pushPresence();
+    });
+    socket.on('disconnect', () => { presence.delete(socket.id); pushPresence(); });
+  } else socket.join(`user:${socket.user.name}`);
 });
-// 'seats' is only a signal. Each screen re-reads its own data, so people only see what they may see.
 const pushSeats = () => { io.emit('overview:update'); io.to('auth').emit('seats'); };
 const pushApps = (names = []) => {
   io.to('admins').emit('applications:update');
@@ -249,7 +263,8 @@ const pushApps = (names = []) => {
   pushSeats();
 };
 
-// ---------- Sign in: Google only ----------
+/* ---------- Sign in: Google only ---------- */
+
 app.post('/api/google', wrap(async (req, res) => {
   let p;
   try { p = (await gClient.verifyIdToken({ idToken: req.body.credential, audience: process.env.GOOGLE_CLIENT_ID })).getPayload(); }
@@ -260,7 +275,6 @@ app.post('/api/google', wrap(async (req, res) => {
     return res.json({ token: sign({ id: 0, role: 'admin', name: cleanName(p.name || email.split('@')[0]), email, picture }) });
   const u = await one('SELECT id, username, role FROM users WHERE lower(email) = $1', [email]);
   if (!u) fail(403, 'There is no account for this Google email. Ask your admin to add it.');
-  // A photo the person uploaded (link) is kept. Google's photo is used only when no custom photo is set.
   if (picture) await query("UPDATE users SET profile = profile || jsonb_build_object('picture', $1::text) WHERE id = $2 AND COALESCE(profile->>'pictureCustom', '') <> 'true'", [picture, u.id]);
   res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email, picture }) });
 }));
@@ -278,7 +292,6 @@ app.get('/api/me', auth(), wrap(async (req, res) => {
   res.json({ ...req.user, picture, comm: isComm });
 }));
 
-// Own photo and phone. Everyone can change them, the admin too. Name and email come from the school (or Google for the admin).
 app.put('/api/me/profile', auth(), wrap(async (req, res) => {
   const picture = directUrl(String(req.body.picture || '').trim());
   const phone = String(req.body.phone || '').trim().slice(0, 40);
@@ -309,12 +322,11 @@ app.get('/api/profile', auth(), wrap(async (req, res) => {
   if (me.role !== 'admin') {
     const rows = await listApps(me.role === 'student' ? 'name = $1' : '"bookedBy" = $1', [me.name]);
     const n = k => rows.filter(a => a.status === k).length;
-    stats = { total: rows.length, approved: n('approved'), pending: n('pending'), rejected: n('rejected'), present: rows.filter(a => a.att === 'present').length, absent: rows.filter(a => a.att === 'absent').length };
+    stats = { total: rows.length, approved: n('approved'), pending: n('pending'), rejected: n('rejected'), present: rows.filter(a => a.att === 'present').length };
   }
   res.json({ ...info, stats });
 }));
 
-// Student or teacher: the class and groups the admin added them to.
 app.get('/api/me/memberships', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
   const me = req.user.id ? await one(`SELECT ${CLASS_SQL} AS cls FROM users WHERE id = $1`, [req.user.id]) : null;
   const groups = req.user.id
@@ -323,7 +335,8 @@ app.get('/api/me/memberships', auth('student', 'teacher', 'psychosocial'), wrap(
   res.json({ cls: me?.cls || '', groups });
 }));
 
-// ---------- Accounts (admin) ----------
+/* ---------- Accounts (admin) ---------- */
+
 app.get('/api/users', auth('admin'), wrap(async (_, res) =>
   res.json(await query(`SELECT id, username AS name, email, role, profile->>'picture' AS picture, profile->>'phone' AS phone, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'grade' AS grade, profile->>'combo' AS combo, profile->>'section' AS section, (profile->>'comm' = 'true') AS comm FROM users ORDER BY role, username`))));
 
@@ -339,19 +352,20 @@ app.post('/api/users', auth('admin'), wrap(async (req, res) => {
   if (!ROLES.includes(role)) fail(400, 'Choose a role.');
   const profile = role === 'student' ? await studentProfile(grade, combo, section) : {};
   if (req.body.phone) profile.phone = String(req.body.phone).trim().slice(0, 40);
-  if (req.body.comm === true && role !== 'student') profile.comm = 'true';
   if (await nameTaken(name)) fail(409, 'Someone with this name already has an account. Add a middle name or number to tell them apart.');
   try {
+    let row;
     try {
-      res.json(await one('INSERT INTO users(username, email, role, profile) VALUES($1,$2,$3,$4) RETURNING id, username AS name, email, role', [name, email, role, profile]));
+      row = await one('INSERT INTO users(username, email, role, profile) VALUES($1,$2,$3,$4) RETURNING id, username AS name, email, role', [name, email, role, profile]);
     } catch (e) {
       if (e.code !== '23502') throw e;
-      res.json(await one("INSERT INTO users(username, email, hash, role, profile) VALUES($1,$2,'',$3,$4) RETURNING id, username AS name, email, role", [name, email, role, profile]));
+      row = await one("INSERT INTO users(username, email, hash, role, profile) VALUES($1,$2,'',$3,$4) RETURNING id, username AS name, email, role", [name, email, role, profile]);
     }
+    await logAct(req.user, 'Added account', `${name} (${ROLE_NAMES[role]})`);
+    res.json(row);
   } catch (e) { uniqueFail(e); }
 }));
 
-// Edit everything about one account: name, email, role, class, phone, photo.
 app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
   const u = await one('SELECT id, username, email, role FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
   const b = req.body, sets = [], p = [];
@@ -403,34 +417,34 @@ app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
       }
     });
   } catch (e) { uniqueFail(e); }
+  await logAct(req.user, 'Edited account', newName || u.username);
   io.to(`user:${u.username}`).emit('me:update');
   if (newName) io.to(`user:${newName}`).emit('me:update');
   pushApps(newName ? [u.username, newName] : [u.username]);
   res.json({ ok: true });
 }));
 
-// Move many selected students to one class at once.
 app.patch('/api/students/class', auth('admin'), wrap(async (req, res) => {
   const ids = toIds(req.body.ids);
   if (!ids.length) fail(400, 'Choose at least one student.');
   const p = await studentProfile(req.body.grade, req.body.combo, req.body.section);
   await query("UPDATE users SET profile = profile || $2::jsonb WHERE role = 'student' AND id = ANY($1::int[])", [ids, JSON.stringify(p)]);
+  await logAct(req.user, 'Moved students', `${ids.length} to ${p.cls}`);
   pushSeats();
   res.json({ updated: ids.length });
 }));
 
-// Appoint or remove the Minister of Communication (any teacher, psychosocial worker or student).
 app.patch('/api/users/:id/communication', auth('admin'), wrap(async (req, res) => {
   const u = await one('SELECT id, username FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
   if (req.body.on) await query(`UPDATE users SET profile = profile || '{"comm":"true"}'::jsonb WHERE id = $1`, [u.id]);
   else await query("UPDATE users SET profile = profile - 'comm' WHERE id = $1", [u.id]);
+  await logAct(req.user, req.body.on ? 'Made Minister of Communication' : 'Removed Minister', u.username);
   io.to(`user:${u.username}`).emit('me:update');
   res.json({ ok: true });
 }));
 
-// Deleting an account also removes its own bookings so no ghost names stay in the lab lists.
-// The places it held go to the waiting list.
-const deleteUsers = async ids => {
+// Deleting an account also removes its bookings. Places it held go to the waiting list.
+const deleteUsers = async (user, ids) => {
   if (!ids.length) return 0;
   const { list, extra } = await tx(async q => {
     const list = (await q('SELECT username FROM users WHERE id = ANY($1::int[])', [ids])).map(r => r.username);
@@ -441,27 +455,33 @@ const deleteUsers = async ids => {
     for (const sid of sids) await promote(q, sid, extra);
     return { list, extra };
   });
+  await logAct(user, 'Deleted accounts', `${list.length}`);
   pushApps([...list, ...extra]);
   return list.length;
 };
 app.post('/api/users/bulk-delete', auth('admin'), wrap(async (req, res) => {
   const ids = toIds(req.body.ids);
   if (!ids.length) fail(400, 'Choose at least one account.');
-  res.json({ deleted: await deleteUsers(ids) });
+  res.json({ deleted: await deleteUsers(req.user, ids) });
 }));
-app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await deleteUsers(toIds([req.params.id])); res.sendStatus(204); }));
+app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await deleteUsers(req.user, toIds([req.params.id])); res.sendStatus(204); }));
 
-// ---------- Options (reasons, grades, combinations, booking rules) ----------
+/* ---------- Options ---------- */
+
 app.get('/api/options', wrap(async (_, res) => res.json(await getOptions())));
 app.put('/api/options', auth('admin'), wrap(async (req, res) => {
+  const changed = [];
   await tx(async q => {
     for (const [k, v] of Object.entries(req.body)) {
-      if (LISTS.includes(k) && Array.isArray(v)) await saveOption(q, k, cleanList(v));
-      else if (k === 'gradeCombos' && v && typeof v === 'object' && !Array.isArray(v))
+      if (LISTS.includes(k) && Array.isArray(v)) { await saveOption(q, k, cleanList(v)); changed.push(k); }
+      else if (k === 'gradeCombos' && v && typeof v === 'object' && !Array.isArray(v)) {
         await saveOption(q, k, Object.fromEntries(Object.entries(v).map(([g, list]) => [String(g).trim(), Array.isArray(list) ? cleanList(list) : []])));
-      else if (k in SETTING_PARSERS) await saveOption(q, k, SETTING_PARSERS[k](v));
+        changed.push(k);
+      }
+      else if (k in SETTING_PARSERS) { await saveOption(q, k, SETTING_PARSERS[k](v)); changed.push(k); }
     }
   });
+  if (changed.length) await logAct(req.user, 'Changed settings', changed.join(', '));
   pushSeats();
   res.json(await getOptions());
 }));
@@ -469,7 +489,6 @@ app.put('/api/options', auth('admin'), wrap(async (req, res) => {
 app.get('/api/classes', auth('teacher', 'psychosocial', 'admin'), wrap(async (_, res) =>
   res.json((await query(`SELECT DISTINCT ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND ${CLASS_SQL} <> '' ORDER BY cls`)).map(r => r.cls))));
 
-// Students of a class, of a group (?group=ID), or all students (?class= empty, psychosocial only).
 app.get('/api/students', auth('teacher', 'psychosocial', 'admin'), wrap(async (req, res) => {
   const cols = `username AS name, email, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'combo' AS combo`;
   const gid = Number(req.query.group) || 0;
@@ -479,7 +498,8 @@ app.get('/api/students', auth('teacher', 'psychosocial', 'admin'), wrap(async (r
   res.json(await query(`SELECT ${cols} FROM users WHERE role = 'student' AND ($1::text = '' OR ${CLASS_SQL} = $1::text) ORDER BY username`, [cls]));
 }));
 
-// ---------- Student groups ----------
+/* ---------- Student groups ---------- */
+
 const splitTokens = v => [...new Set((Array.isArray(v) ? v : String(v || '').split(/[\n,;]+/)).map(x => String(x).trim()).filter(Boolean))];
 const resolveStudents = async tokens => {
   const studs = await query("SELECT id, username, lower(email) AS email FROM users WHERE role = 'student'");
@@ -517,6 +537,7 @@ app.post('/api/groups', auth('admin'), wrap(async (req, res) => {
     const g = (await q('INSERT INTO student_groups(name, description) VALUES($1,$2) RETURNING id', [name, String(req.body.description || '').trim().slice(0, 300)]))[0];
     return { id: g.id, added: await addMembers(q, g.id, ids) };
   });
+  await logAct(req.user, 'Created group', `${name} (${out.added} students)`);
   pushSeats();
   res.json({ ...out, notFound });
 }));
@@ -525,6 +546,7 @@ app.put('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
   const g = await getGroup(req.params.id);
   const name = await groupName(req.body.name ?? g.name, g.id);
   await query('UPDATE student_groups SET name = $1, description = $2 WHERE id = $3', [name, String(req.body.description ?? g.description ?? '').trim().slice(0, 300), g.id]);
+  await logAct(req.user, 'Edited group', name);
   pushSeats();
   res.json({ ok: true });
 }));
@@ -533,6 +555,7 @@ app.post('/api/groups/:id/members', auth('admin'), wrap(async (req, res) => {
   const g = await getGroup(req.params.id);
   const { ids, notFound } = await resolveStudents(splitTokens(req.body.members));
   const added = await tx(q => addMembers(q, g.id, ids));
+  await logAct(req.user, 'Added to group', `${g.name}: ${added} students`);
   pushSeats();
   res.json({ added, notFound });
 }));
@@ -540,6 +563,7 @@ app.post('/api/groups/:id/members', auth('admin'), wrap(async (req, res) => {
 app.delete('/api/groups/:id/members/:userId', auth('admin'), wrap(async (req, res) => {
   const g = await getGroup(req.params.id);
   await query('DELETE FROM student_group_members WHERE group_id = $1 AND user_id = $2', [g.id, +req.params.userId]);
+  await logAct(req.user, 'Removed from group', g.name);
   pushSeats();
   res.sendStatus(204);
 }));
@@ -547,17 +571,22 @@ app.delete('/api/groups/:id/members/:userId', auth('admin'), wrap(async (req, re
 app.delete('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
   const g = await getGroup(req.params.id);
   await query('DELETE FROM student_groups WHERE id = $1', [g.id]);
+  await logAct(req.user, 'Deleted group', g.name);
   pushSeats();
   res.sendStatus(204);
 }));
 
-// ---------- Labs ----------
+/* ---------- Labs ---------- */
+
 app.get('/api/labs', auth(), wrap(async (_, res) => res.json(await query('SELECT id, name, pcs FROM labs ORDER BY name'))));
 app.post('/api/labs', auth('admin'), wrap(async (req, res) => {
   const { name, pcs } = req.body;
   if (!name?.trim() || !(+pcs >= 1)) fail(400, 'Enter a lab name and at least one computer.');
-  try { res.json(await one('INSERT INTO labs(name, pcs) VALUES($1,$2) RETURNING id', [name.trim(), +pcs])); }
-  catch (e) { fail(e.code === '23505' ? 409 : 500, e.code === '23505' ? 'A lab with this name already exists.' : e.message); }
+  try {
+    const row = await one('INSERT INTO labs(name, pcs) VALUES($1,$2) RETURNING id', [name.trim(), +pcs]);
+    await logAct(req.user, 'Added lab', `${name.trim()} (${+pcs} computers)`);
+    res.json(row);
+  } catch (e) { fail(e.code === '23505' ? 409 : 500, e.code === '23505' ? 'A lab with this name already exists.' : e.message); }
 }));
 app.put('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
   const { pcs } = req.body;
@@ -571,11 +600,17 @@ app.put('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
       if (pcs != null) await q('UPDATE sessions SET places = LEAST(places, $1::int) WHERE lab_id = $2 AND places IS NOT NULL', [+pcs, req.params.id]);
     });
   } catch (e) { if (e.code === '23505') fail(409, 'A lab with this name already exists.'); throw e; }
+  await logAct(req.user, 'Edited lab', name || `lab ${req.params.id}`);
   pushSeats(); res.json({ ok: true });
 }));
-app.delete('/api/labs/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM labs WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
+app.delete('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
+  await query('DELETE FROM labs WHERE id = $1', [req.params.id]);
+  await logAct(req.user, 'Deleted lab', `lab ${req.params.id}`);
+  pushApps(); res.sendStatus(204);
+}));
 
-// ---------- Who a lab time is for ----------
+/* ---------- Who a lab time is for ---------- */
+
 // audience = { kind: '' | 'class' | 'group' | 'people', value, people: [names or emails], exclusive }
 const parseAudience = async (a = {}) => {
   const kind = ['class', 'group', 'people'].includes(a?.kind) ? a.kind : '';
@@ -605,8 +640,7 @@ const membersOf = (q, s) => q(`SELECT u.id, u.username, ${CLASS_SQL} AS cls FROM
     OR u.id IN (SELECT user_id FROM session_people WHERE session_id = $3::int)
   ) ORDER BY u.username`, [s.for_class || '', s.for_group || null, s.id]);
 
-// Books the assigned students: approved while places remain, then pending. Removes automatic bookings of people no longer assigned.
-// Bookings made by the admin are not stopped by the "days in a row" rule.
+// Books the assigned students. Removes automatic bookings of people no longer assigned.
 const syncAssigned = async (q, sid) => {
   await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sid]);
   const s = (await q(`SELECT id, to_char(date, 'YYYY-MM-DD') AS d, to_char(starts_at, 'HH24:MI') AS "from", to_char(ends_at, 'HH24:MI') AS "to", for_class, for_group FROM sessions WHERE id = $1`, [sid]))[0];
@@ -632,7 +666,8 @@ const syncAssigned = async (q, sid) => {
   return touched;
 };
 
-// ---------- Lab times ----------
+/* ---------- Lab times ---------- */
+
 app.get('/api/sessions', auth(), wrap(async (req, res) => res.json(await listSessions(req.user.role === 'admin', req.user))));
 
 app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
@@ -642,8 +677,8 @@ app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
   if (!from || !to || from >= to) fail(400, 'The start time must be before the end time.');
   const wanted = req.body.places === undefined || req.body.places === null || req.body.places === '' ? null : Math.floor(+req.body.places);
   if (wanted !== null && !(wanted >= 1)) fail(400, 'Places open must be 1 or more.');
-  const labs = (await query('SELECT id, pcs FROM labs')).filter(l => !labIds?.length || labIds.includes(l.id));
-  if (!labs.length) fail(400, 'Add a lab first.');
+  const labs = (await query('SELECT id, name, pcs FROM labs')).filter(l => !labIds?.length || labIds.includes(l.id));
+  if (!labs.length) fail(400, 'Choose a lab first.');
   if (wanted !== null && labs.length === 1 && wanted > labs[0].pcs) fail(400, `This lab has only ${labs[0].pcs} computers.`);
   const aud = await parseAudience(req.body.audience);
   if (aud.kind && labs.length > 1) fail(400, 'Choose one lab when you assign a class, a group or people.');
@@ -656,14 +691,15 @@ app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
       if (aud.kind) touched.push(...await syncAssigned(q, row.id));
     }
   });
+  const who = aud.kind ? (aud.kind === 'class' ? ` · for class ${aud.forClass}` : aud.kind === 'group' ? ' · for a group' : ` · for ${aud.ids.length} students`) : '';
+  await logAct(req.user, published ? 'Published lab time' : 'Saved lab time draft', `${labs[0].name} · ${date} ${from}–${to}${who}`);
   pushApps(touched);
   res.json({ created: labs.length, published, assigned: touched.length, notFound: aud.notFound });
 }));
 
-// Edit a lab time: day, times, places open (empty = every computer), booking mode and who it is for.
 app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
   const { date, from, to } = req.body;
-  const s = await one('SELECT id, seats, "left", "labId", "from", "to" FROM session_places WHERE id = $1', [req.params.id]) || fail(404, 'That lab time does not exist.');
+  const s = await one('SELECT id, seats, "left", "labId", "from", "to", lab FROM session_places WHERE id = $1', [req.params.id]) || fail(404, 'That lab time does not exist.');
   if ((from || s.from) >= (to || s.to)) fail(400, 'The start time must be before the end time.');
   let places = null, clearPlaces = false;
   if (req.body.places === '' || req.body.places === 'all') clearPlaces = true;
@@ -685,8 +721,9 @@ app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
       await setPeople(q, s.id, aud.ids);
       touched.push(...await syncAssigned(q, s.id));
     }
-    await promote(q, s.id, touched); // more places or instant booking switched on: the waiting list moves up
+    await promote(q, s.id, touched);
   });
+  await logAct(req.user, 'Edited lab time', `${s.lab} · ${s.from}–${s.to}`);
   pushApps(touched);
   res.json({ ok: true, assigned: touched.length, notFound: aud?.notFound || [] });
 }));
@@ -694,33 +731,41 @@ app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
 app.patch('/api/sessions/:id/publish', auth('admin'), wrap(async (req, res) => {
   const r = await query('UPDATE sessions SET published = $1 WHERE id = $2 RETURNING id', [req.body.published === true, req.params.id]);
   if (!r.length) fail(404, 'That lab time does not exist.');
+  await logAct(req.user, req.body.published ? 'Published lab time' : 'Hid lab time', `#${req.params.id}`);
   pushApps(); res.json({ ok: true });
 }));
 app.post('/api/sessions/publish-all', auth('admin'), wrap(async (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : null;
   const r = await query('UPDATE sessions SET published = true WHERE published = false AND ($1::int[] IS NULL OR id = ANY($1::int[])) RETURNING id', [ids]);
+  await logAct(req.user, 'Published lab times', `${r.length}`);
   pushApps(); res.json({ published: r.length });
 }));
 app.post('/api/sessions/bulk-delete', auth('admin'), wrap(async (req, res) => {
   const ids = toIds(req.body.ids);
   if (!ids.length) fail(400, 'Choose at least one lab time.');
   const r = await query('DELETE FROM sessions WHERE id = ANY($1::int[]) RETURNING id', [ids]);
+  await logAct(req.user, 'Removed lab times', `${r.length}`);
   pushApps(); res.json({ deleted: r.length });
 }));
-app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM sessions WHERE id = $1', [req.params.id]); pushApps(); res.sendStatus(204); }));
+app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
+  await query('DELETE FROM sessions WHERE id = $1', [req.params.id]);
+  await logAct(req.user, 'Removed lab time', `#${req.params.id}`);
+  pushApps(); res.sendStatus(204);
+}));
 
-// The admin gives the places of students who did not arrive to the waiting list (as many as the queue needs).
+// The admin gives the places of students who did not arrive to the waiting list (only as many as needed).
 app.post('/api/sessions/:id/release-noshows', auth('admin'), wrap(async (req, res) => {
   const sid = +req.params.id;
   const s = await one('SELECT date, "from", "to" FROM session_places WHERE id = $1', [sid]) || fail(404, 'That lab time does not exist.');
   if (!hasStarted(s)) fail(409, 'This lab time has not started yet.');
   const touched = [];
   const r = await tx(q => releaseNoShows(q, sid, touched));
+  if (r.released) await logAct(req.user, 'Released no-shows', `${r.released} place(s)`);
   pushApps(touched);
   res.json(r);
 }));
 
-// A student who came without a booking (or late, after the place was released): the admin seats them if a place is free.
+// A student who came without a booking: the admin seats them if a place is free.
 app.post('/api/sessions/:id/walkin', auth('admin'), wrap(async (req, res) => {
   const sid = +req.params.id;
   const { ids, notFound } = await resolveStudents(splitTokens(req.body.students));
@@ -744,11 +789,13 @@ app.post('/api/sessions/:id/walkin', auth('admin'), wrap(async (req, res) => {
       left--; added++; touched.push(st.username);
     }
   });
+  if (added) await logAct(req.user, 'Seated walk-ins', `${added} student(s)`);
   pushApps(touched);
   res.json({ added, skipped, notFound });
 }));
 
-// ---------- Public lab overview (no login, counts only, never names) ----------
+/* ---------- Public overview (no login, counts only, never names) ---------- */
+
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 app.get('/api/overview', wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
@@ -765,7 +812,7 @@ app.get('/api/overview', wrap(async (req, res) => {
       .map(s => {
         const taken = Math.max(s.seats - s.left, 0), p = pendBy.get(Number(s.id)) || 0;
         const waiting = Math.min(p, Math.max(s.left, 0));
-        return { id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken, waiting, over: p - waiting, open: Math.max(s.left - waiting, 0), for: forText(s), exclusive: !!s.exclusive, auto: s.autoApprove !== false };
+        return { id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken, waiting, over: p - waiting, open: Math.max(s.left - waiting, 0), for: forText(s), exclusive: !!s.exclusive, auto: s.autoApprove !== false, state: s.state };
       })
       .sort((a, b) => a.from.localeCompare(b.from));
     const sum = k => list.reduce((n, s) => n + s[k], 0);
@@ -785,13 +832,47 @@ app.get('/api/overview', wrap(async (req, res) => {
   });
 }));
 
-// ---------- Bookings ----------
-// One live booking per person per lab time. Rules:
-//  - Instant lab times approve the student at once while places are free. When full, the student joins the waiting list.
-//  - Students in a waiting list can still book another lab (waiting entries never block).
-//  - Nobody books more than "maxConsecutive" days in a row (Settings), so others get a turn.
-//  - A lab time that is over cannot be booked. Late students can still book while it runs.
-//  - Exclusive lab times are only for the assigned people.
+/* ---------- Admin board: each lab, its lab times and the students in them ---------- */
+
+app.get('/api/board', auth('admin'), wrap(async (req, res) => {
+  const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
+  const [labs, sessions, apps] = await Promise.all([
+    query('SELECT id, name, pcs FROM labs ORDER BY name'),
+    listSessions(true),
+    listApps('date = $1', [date]),
+  ]);
+  const day = sessions.filter(s => s.date === date).sort((a, b) => `${a.from} ${a.lab}`.localeCompare(`${b.from} ${b.lab}`));
+  const people = new Map();
+  apps.forEach(a => { if (!people.has(a.sid)) people.set(a.sid, []); people.get(a.sid).push(a); });
+  res.json({
+    date,
+    labs: labs.map(l => ({
+      id: l.id, name: l.name, pcs: l.pcs,
+      sessions: day.filter(s => s.labId == l.id).map(s => ({
+        id: s.id, from: s.from, to: s.to, date: s.date, lab: s.lab, seats: s.seats, left: s.left, published: s.published,
+        state: s.state, autoApprove: s.autoApprove !== false, forClass: s.forClass, forGroup: s.forGroup,
+        forGroupName: s.forGroupName, forPeople: s.forPeople, exclusive: !!s.exclusive,
+        people: people.get(s.id) || [],
+      })),
+    })),
+  });
+}));
+
+/* ---------- Activity log (admins) ---------- */
+
+app.get('/api/activity', auth('admin'), wrap(async (_, res) =>
+  res.json(await query('SELECT id, actor, action, detail, created_at AS at FROM activity ORDER BY id DESC LIMIT 60'))));
+
+// Counts per admin per day, for the chart.
+app.get('/api/activity/chart', auth('admin'), wrap(async (req, res) => {
+  const days = Math.min(Math.max(+req.query.days || 7, 1), 60);
+  res.json(await query(`SELECT actor, to_char(created_at::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
+    FROM activity WHERE created_at >= (now() - ($1::int * interval '1 day'))
+    GROUP BY actor, day ORDER BY day`, [days]));
+}));
+
+/* ---------- Bookings ---------- */
+
 app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
   const { reason, students } = req.body, sessionId = +req.body.sessionId;
   const asked = req.user.role === 'student' ? [req.user.name] : (Array.isArray(students) ? students : []);
@@ -824,7 +905,7 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
         ? 'This lab time is only for the people the admin chose.'
         : `This lab time is only for the people the admin chose. Not allowed: ${out.join(', ')}.`);
     }
-    await promote(q, sessionId, moved); // free places go to the people already waiting first
+    await promote(q, sessionId, moved);
     let left = await seatsLeft(q, sessionId);
     const live = await liveOn(q, s.date);
     for (const n of names) {
@@ -844,13 +925,11 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
   res.json({ created, approved, queued: created - approved, skipped, tooMany, maxConsecutive: max });
 }));
 
-// People who are not the admin never see bookings of lab times that are still drafts.
 app.get('/api/apps', auth(), wrap(async (req, res) => res.json(req.user.role === 'admin'
   ? await listApps()
   : await listApps('(name = $1 OR "bookedBy" = $1) AND sid IN (SELECT id FROM session_places WHERE published)', [req.user.name]))));
 
-// "I am here": a student confirms their own arrival. It opens 15 minutes before the start.
-// After the start + grace time it is saved as late (the place is kept unless somebody was waiting and it was already released).
+// "I am here": the student confirms their own arrival, 15 minutes before the start until the end.
 app.post('/api/apps/:id/checkin', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
   const a = await getApp(query, req.params.id);
   if (a.student !== req.user.name) fail(403, 'You can only check in yourself.');
@@ -880,10 +959,10 @@ app.patch('/api/apps/:id/status', auth('admin'), wrap(async (req, res) => {
     else if (a.status === 'approved') await promote(q, a.session_id, extra);
     return a;
   });
+  await logAct(req.user, status === 'approved' ? 'Approved booking' : status === 'rejected' ? 'Rejected booking' : 'Set booking to waiting', a.student);
   pushApps([a.student, a.booked_by, ...extra]); res.json({ ok: true });
 }));
 
-// The admin gives one student's place back (the student did not arrive). The waiting list moves up.
 app.patch('/api/apps/:id/release', auth('admin'), wrap(async (req, res) => {
   const extra = [];
   const a = await tx(async q => {
@@ -894,6 +973,7 @@ app.patch('/api/apps/:id/release', auth('admin'), wrap(async (req, res) => {
     await promote(q, a.session_id, extra);
     return a;
   });
+  await logAct(req.user, 'Released place', a.student);
   pushApps([a.student, a.booked_by, ...extra]); res.json({ ok: true });
 }));
 
@@ -915,20 +995,21 @@ app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => {
     }
     return a;
   });
+  await logAct(req.user, 'Moved booking', a.student);
   pushApps([a.student, a.booked_by, ...extra]); res.json({ ok: true });
 }));
 
-// att: 'present', 'late' (came late, counts as present), 'absent' or null (clear).
+// att: 'present', 'late' (counts as present), 'absent' or null (clear).
 app.patch('/api/apps/:id/attendance', auth('admin'), wrap(async (req, res) => {
   const att = req.body.att ?? null;
   if (![null, 'present', 'absent', 'late'].includes(att)) fail(400, 'Use present, late or absent.');
   const a = await getApp(query, req.params.id);
   await query('UPDATE applications SET attendance = $1, late = $2 WHERE id = $3', [att === 'late' ? 'present' : att, att === 'late', a.id]);
+  await logAct(req.user, 'Marked attendance', `${a.student}: ${att || 'cleared'}`);
   pushApps([a.student]); res.json({ ok: true });
 }));
 
-// Many bookings at once: approve, reject, set back to waiting, mark present / late / absent / clear the mark, or remove.
-// Used for "all", "selected" and one lab time's whole list. Places that become free go to the waiting list.
+// Many bookings at once. Places that become free go to the waiting list.
 app.post('/api/apps/bulk', auth('admin'), wrap(async (req, res) => {
   const ids = toIds(req.body.ids), action = req.body.action;
   if (!ids.length) fail(400, 'Choose at least one booking.');
@@ -959,11 +1040,13 @@ app.post('/api/apps/bulk', auth('admin'), wrap(async (req, res) => {
       for (const sid of new Set(rows.filter(r => r.status === 'approved').map(r => r.session_id))) await promote(q, sid, names);
     }
   });
+  await logAct(req.user, `Bulk: ${action}`, `${done} booking(s)`);
   pushApps(names);
   res.json({ done, skipped });
 }));
 
-// ---------- Blocked students and statistics ----------
+/* ---------- Blocked students and statistics ---------- */
+
 app.get('/api/blacklist', auth('admin'), wrap(async (_, res) => res.json((await query('SELECT name FROM blacklist ORDER BY name')).map(r => r.name))));
 app.post('/api/blacklist', auth('admin'), wrap(async (req, res) => {
   const name = cleanName(req.body.name); if (!name) fail(400, 'Enter a student name.');
@@ -971,9 +1054,14 @@ app.post('/api/blacklist', auth('admin'), wrap(async (req, res) => {
     await q('INSERT INTO blacklist(name, reason) VALUES($1,$2) ON CONFLICT (name) DO UPDATE SET reason = EXCLUDED.reason', [name, req.body.reason || '']);
     await q("UPDATE applications SET status = 'rejected' WHERE student = $1 AND status = 'pending'", [name]);
   });
+  await logAct(req.user, 'Blocked student', name);
   pushApps([name]); res.json({ ok: true });
 }));
-app.delete('/api/blacklist/:name', auth('admin'), wrap(async (req, res) => { await query('DELETE FROM blacklist WHERE name = $1', [req.params.name]); pushApps(); res.sendStatus(204); }));
+app.delete('/api/blacklist/:name', auth('admin'), wrap(async (req, res) => {
+  await query('DELETE FROM blacklist WHERE name = $1', [req.params.name]);
+  await logAct(req.user, 'Unblocked student', req.params.name);
+  pushApps(); res.sendStatus(204);
+}));
 
 app.get('/api/stats/overview', auth('admin'), wrap(async (_, res) => {
   const [apps, labRows] = await Promise.all([listApps(), query('SELECT id, name, pcs FROM labs ORDER BY name')]);
@@ -986,7 +1074,8 @@ app.get('/api/stats/overview', auth('admin'), wrap(async (_, res) => {
   });
 }));
 
-// ---------- Lost & Found ----------
+/* ---------- Lost and Found ---------- */
+
 const DAY = 864e5, HOLD_DAYS = 7, MAX_FILES = 6, MAX_FILE = 12 * 1024 * 1024, MAX_TOTAL = 24 * 1024 * 1024;
 const FILE_OK = /^(image\/(png|jpe?g|gif|webp|avif)|video\/(mp4|webm|ogg|quicktime)|text\/plain|application\/(pdf|msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)))$/i;
 const fileKind = mime => (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : 'file');
@@ -1018,7 +1107,7 @@ const resolveLink = async raw => {
 
 const trendRows = async (where = '', params = []) => {
   const t = await query(`SELECT id, title, description, category, found_at AS "foundAt", contact_phone AS phone, contact_email AS email, status,
-    posted_by AS "postedBy", posted_at AS "postedAt", removed_at AS "removedAt", repost_count AS reposts
+    posted_by AS "postedBy", posted_at AS "postedAt", removed_at AS "removedAt", repost_count AS reposts, posted_at AS posted_at_raw
     FROM trends ${where ? 'WHERE ' + where : ''} ORDER BY posted_at DESC, id DESC`, params);
   if (!t.length) return [];
   const media = await query('SELECT id, trend_id, kind, url, name, mime, (data IS NOT NULL) AS stored FROM trend_media WHERE trend_id = ANY($1) ORDER BY id', [t.map(x => x.id)]);
@@ -1083,6 +1172,7 @@ app.post('/api/trends', comm, wrap(async (req, res) => {
     for (const l of resolved) await q('INSERT INTO trend_media(trend_id, kind, url, name) VALUES($1,$2,$3,$4)', [row.id, l.kind, l.url, l.url.slice(0, 120)]);
     return row.id;
   });
+  await logAct(req.user, 'Posted lost item', t.title);
   io.emit('trends:update'); res.json({ id });
 }));
 
@@ -1105,6 +1195,7 @@ app.patch('/api/trends/:id/returned', comm, wrap(async (req, res) => {
   const cur = await getTrend(req.params.id);
   if (cur.status !== 'active') fail(409, 'This post is not active.');
   await query("UPDATE trends SET status = 'returned', removed_at = now() WHERE id = $1", [cur.id]);
+  await logAct(req.user, 'Marked item returned', cur.title);
   io.emit('trends:update'); res.json({ ok: true });
 }));
 
@@ -1114,6 +1205,7 @@ app.patch('/api/trends/:id/remove', comm, wrap(async (req, res) => {
   const left = Math.ceil(HOLD_DAYS - (Date.now() - new Date(cur.posted_at).getTime()) / DAY);
   if (left > 0) fail(409, `A post can be removed ${HOLD_DAYS} days after it was posted. ${left} day${left === 1 ? '' : 's'} left.`);
   await query("UPDATE trends SET status = 'removed', removed_at = now() WHERE id = $1", [cur.id]);
+  await logAct(req.user, 'Removed lost item', cur.title);
   io.emit('trends:update'); res.json({ ok: true });
 }));
 
@@ -1121,6 +1213,7 @@ app.patch('/api/trends/:id/repost', comm, wrap(async (req, res) => {
   const cur = await getTrend(req.params.id);
   if (cur.status === 'active') fail(409, 'This post is already on the board.');
   await query("UPDATE trends SET status = 'active', posted_at = now(), removed_at = NULL, repost_count = repost_count + 1 WHERE id = $1", [cur.id]);
+  await logAct(req.user, 'Reposted lost item', cur.title);
   io.emit('trends:update'); res.json({ ok: true });
 }));
 
@@ -1128,6 +1221,7 @@ app.delete('/api/trends/:id', comm, wrap(async (req, res) => {
   const cur = await getTrend(req.params.id);
   if (cur.status === 'active') fail(409, 'Remove the post from the board first.');
   await query('DELETE FROM trends WHERE id = $1', [cur.id]);
+  await logAct(req.user, 'Deleted lost item', cur.title);
   io.emit('trends:update'); res.sendStatus(204);
 }));
 
@@ -1135,10 +1229,18 @@ app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.
   error: err.type === 'entity.too.large' ? 'The files are too big. Use smaller photos or paste a link for videos.' : err.message || 'Something went wrong.',
 }));
 
-// ---------- Database set-up (safe to run on every start) ----------
+/* ---------- Database set-up (safe to run on every start) ---------- */
+
 const ensureTables = async () => {
   await query(`CREATE TABLE IF NOT EXISTS admin_profiles (
     email text PRIMARY KEY, picture text NOT NULL DEFAULT '', phone text NOT NULL DEFAULT '')`);
+
+  // Activity log: every admin change. Used for the live feed and the chart.
+  await query(`CREATE TABLE IF NOT EXISTS activity (
+    id serial PRIMARY KEY, actor text NOT NULL, action text NOT NULL, detail text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now())`);
+  await query('CREATE INDEX IF NOT EXISTS activity_created_idx ON activity (created_at DESC)');
+  await query('CREATE INDEX IF NOT EXISTS activity_actor_idx ON activity (actor, created_at)');
 
   await query(`CREATE TABLE IF NOT EXISTS trends (
     id serial PRIMARY KEY, title text NOT NULL, description text NOT NULL DEFAULT '', category text NOT NULL DEFAULT 'Other',
@@ -1166,13 +1268,10 @@ const ensureTables = async () => {
   await query("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_class text NOT NULL DEFAULT ''");
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_group integer REFERENCES student_groups(id) ON DELETE SET NULL');
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS exclusive boolean NOT NULL DEFAULT false');
-  // Instant booking: approve at once while places are free.
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS auto_approve boolean NOT NULL DEFAULT true');
-  // Late students, released places and check-in.
   await query("ALTER TABLE applications ADD COLUMN IF NOT EXISTS note text NOT NULL DEFAULT ''");
   await query('ALTER TABLE applications ADD COLUMN IF NOT EXISTS late boolean NOT NULL DEFAULT false');
   await query('ALTER TABLE applications ADD COLUMN IF NOT EXISTS checked_in_at timestamptz');
-  // Faster lists and attendance history.
   await query('CREATE INDEX IF NOT EXISTS applications_session_idx ON applications (session_id, status)');
   await query('CREATE INDEX IF NOT EXISTS applications_student_idx ON applications (student)');
   await query(`CREATE TABLE IF NOT EXISTS session_people (
@@ -1199,7 +1298,7 @@ const ensureTables = async () => {
 };
 
 // Every minute: in a running instant-booking lab time, when students are waiting and the lab is full,
-// the places of approved students who have not arrived (not marked present, no check-in) after the grace time go to the queue.
+// places of approved students who have not arrived after the grace time go to the queue.
 const autoRelease = async () => {
   const opts = await getOptions();
   if (opts.autoRelease === false) return;
