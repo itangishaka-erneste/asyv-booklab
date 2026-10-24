@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import { CalendarDays, CalendarCheck2, UserRound, LayoutDashboard, FlaskConical, CalendarClock, UsersRound, MessageCircle, Settings2, PackageSearch } from 'lucide-react';
 import logo from './assets/as.png';
 
 /* ================================================================== */
@@ -658,7 +659,11 @@ function TrendsBoard() {
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {shown.map((t) => (
               <button key={t.id} type="button" onClick={() => setOpen(t)} className="flex flex-col overflow-hidden rounded-[8px] border border-black/10 bg-white text-left hover:shadow-lg">
-                <div className="flex aspect-[4/3] items-center justify-center bg-black/5 text-xs text-black/40">{t.category}</div>
+                <div className="flex aspect-[4/3] items-center justify-center overflow-hidden bg-gradient-to-br from-[#e8f5ec] via-[#f4f6f8] to-[#fff0e9] text-xs text-black/40">
+                  {t.media?.map(itemPhoto).find(Boolean)
+                    ? <img src={t.media.map(itemPhoto).find(Boolean)} alt={t.title} referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+                    : <div className="flex flex-col items-center gap-2"><PackageSearch className="h-10 w-10 text-[#16a34a]/70" aria-hidden="true" /><span>{t.category}</span></div>}
+                </div>
                 <div className="p-4">
                   <h3 className="text-sm font-semibold">{t.title}</h3>
                   <p className="mt-2 text-[11px] text-black/50">{t.foundAt ? `Found at ${t.foundAt}` : `Posted ${ago(t.postedAt)}`}</p>
@@ -687,13 +692,19 @@ function Landing({ onLogin }) {
           <Btn onClick={() => onLogin()}>Log in</Btn>
         </div>
       </header>
-      <section className="mx-auto max-w-6xl px-6 pt-14 pb-6">
+      <section className="mx-auto grid max-w-6xl items-center gap-8 px-6 pt-14 pb-6 md:grid-cols-[1.05fr_.95fr]">
+        <div>
         <span className="lb-in inline-block rounded-[6px] border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[11px] font-semibold text-[#15803d]">Live places, updated automatically</span>
         <h1 className="lb-in mt-5 max-w-2xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
         <p className="mt-5 max-w-md text-sm leading-relaxed text-black/65">Pick a lab time and press Apply. Free places are approved at once. When a lab time is full you join the waiting list.</p>
         <div className="mt-7 flex flex-wrap gap-3">
           <a href="#labs" className="rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white">See the labs</a>
           <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
+        </div>
+        </div>
+        <div className="relative overflow-hidden rounded-2xl bg-[#e8f5ec] shadow-lg">
+          <img src="https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1200&q=85" alt="A bright computer lab for student study" className="h-64 w-full object-cover md:h-[340px]" />
+          <div className="absolute bottom-4 left-4 rounded-xl bg-white/95 px-4 py-3 shadow-md"><p className="text-xs font-bold text-[#15803d]">Make room for your next idea</p><p className="mt-1 text-[11px] text-black/60">Find and book an available lab session.</p></div>
         </div>
       </section>
       <section id="labs" className="mx-auto max-w-6xl scroll-mt-16 px-6 py-12">
@@ -2073,7 +2084,7 @@ function Profile({ onChanged }) {
 /* 8. DASHBOARD SHELL and ROOT                                         */
 /* ================================================================== */
 
-const NAV_ICON = { 'My labs': '▦', Bookings: '▤', 'Lost & Found': '⌕', Profile: '◉', Overview: '▦', Labs: '▣', Schedule: '▥', People: '◎', Chat: '✉', Settings: '⚙' };
+const NAV_ICON = { 'My labs': CalendarDays, Bookings: CalendarCheck2, 'Lost & Found': PackageSearch, Profile: UserRound, Overview: LayoutDashboard, Labs: FlaskConical, Schedule: CalendarClock, People: UsersRound, Chat: MessageCircle, Settings: Settings2 };
 
 const NavBadge = ({ n }) => (n > 0 ? <span className="ml-auto grid h-5 min-w-[20px] place-items-center rounded-full bg-[#ff4500] px-1.5 text-[10px] font-bold text-white">{n > 99 ? '99+' : n}</span> : null);
 
@@ -2125,7 +2136,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
           {items.map((x) => (
             <button key={x} type="button" onClick={() => go(x)} aria-current={page === x ? 'page' : undefined}
               className={`flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
-              <span className="w-4 text-center">{NAV_ICON[x] || '•'}</span>{x}<NavBadge n={badgeOf(x)} />
+              {(() => { const Icon = NAV_ICON[x] || UserRound; return <Icon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />; })()}{x}<NavBadge n={badgeOf(x)} />
             </button>
           ))}
         </nav>
@@ -2151,7 +2162,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
             {items.map((x) => (
               <button key={x} type="button" onClick={() => go(x)}
                 className={`flex shrink-0 items-center gap-2 rounded-[6px] px-3 py-2 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
-                {x}{badgeOf(x) > 0 && <span className="grid h-4 min-w-[16px] place-items-center rounded-full bg-[#ff4500] px-1 text-[9px] font-bold text-white">{badgeOf(x)}</span>}
+                {(() => { const Icon = NAV_ICON[x] || UserRound; return <Icon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />; })()}{x}{badgeOf(x) > 0 && <span className="grid h-4 min-w-[16px] place-items-center rounded-full bg-[#ff4500] px-1 text-[9px] font-bold text-white">{badgeOf(x)}</span>}
               </button>
             ))}
           </nav>
