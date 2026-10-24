@@ -2104,6 +2104,8 @@ const NAV_ICON = { 'My labs': CalendarDays, Bookings: CalendarCheck2, 'Lost & Fo
 const NavBadge = ({ n }) => (n > 0 ? <span className="ml-auto grid h-5 min-w-[20px] place-items-center rounded-full bg-[#ff4500] px-1.5 text-[10px] font-bold text-white">{n > 99 ? '99+' : n}</span> : null);
 
 function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) {
+  const [dark, setDark] = useState(() => localStorage.getItem('lms_dark') === 'true');
+  useEffect(() => { localStorage.setItem('lms_dark', String(dark)); }, [dark]);
   const isAdmin = user.role === 'admin';
   const items = isAdmin
     ? [...ADMIN_TABS, 'Lost & Found', 'Profile']
@@ -2144,7 +2146,8 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
   const badgeOf = (x) => (x === 'Chat' ? unread : 0);
 
   return (
-    <div className="min-h-screen bg-[#f7f8f7] text-[13px] text-[#111827] lg:flex">
+    <div className={dark ? 'lms-dark min-h-screen bg-[#f7f8f7] text-[13px] text-[#111827] lg:flex' : 'min-h-screen bg-[#f7f8f7] text-[13px] text-[#111827] lg:flex'}>
+      <style>{`.lms-dark{background:#111827!important;color:#e5e7eb!important;color-scheme:dark}.lms-dark .bg-white{background:#1f2937!important}.lms-dark .bg-\\[\\#f7f8f7\\]{background:#111827!important}.lms-dark .text-\\[\\#111827\\]{color:#e5e7eb!important}.lms-dark [class*=\"text-black/\"]{color:#9ca3af!important}.lms-dark [class*=\"border-black/\"]{border-color:#374151!important}.lms-dark [class*=\"divide-black/\"]>*+*{border-color:#374151!important}.lms-dark input,.lms-dark select,.lms-dark textarea{background:#111827!important;color:#e5e7eb!important;border-color:#4b5563!important}.lms-dark .hover\\:bg-black\\/5:hover{background:#374151!important}.lms-dark .bg-black\\/\\[0\\.04\\],.lms-dark .bg-black\\/\\[0\\.02\\]{background:#273449!important}`}</style>
       <aside className="hidden flex-col border-r border-black/10 bg-white p-5 lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-64 lg:shrink-0">
         <Logo />
         <nav className="mt-8 flex-1 space-y-1 overflow-y-auto" aria-label="Main">
@@ -2164,6 +2167,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
             </div>
           </div>
           <button type="button" onClick={onLogout} className="mt-3 w-full rounded-[6px] px-2 py-2 text-left text-xs font-semibold text-[#ff4500] hover:bg-[#ff4500]/10">Log out</button>
+          <button type="button" onClick={() => setDark((value) => !value)} className="mt-1 w-full rounded-[6px] px-2 py-2 text-left text-xs font-semibold hover:bg-black/5">{dark ? '☀️ Light mode' : '🌙 Dark mode'}</button>
         </div>
       </aside>
 
@@ -2171,7 +2175,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
         <header className="border-b border-black/10 bg-white lg:hidden">
           <div className="flex h-14 items-center justify-between px-4">
             <Logo />
-            <Btn c="w" onClick={onLogout}>Log out</Btn>
+            <div className="flex items-center gap-2"><button type="button" aria-label="Toggle dark mode" onClick={() => setDark((value) => !value)} className="rounded px-2 py-1">{dark ? '☀️' : '🌙'}</button><Btn c="w" onClick={onLogout}>Log out</Btn></div>
           </div>
           <nav className="flex gap-2 overflow-x-auto px-4 pb-3" aria-label="Main">
             {items.map((x) => (
