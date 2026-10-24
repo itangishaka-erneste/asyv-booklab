@@ -1316,7 +1316,8 @@ function SchedulePage() {
           <Field l="From"><Inp type="time" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
           <Field l="To"><Inp type="time" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
           <Field l="Lab">
-            <Sel value={f.labId} onChange={(v) => setF({ ...f, labId: v })} options={[{ value: '', label: 'Choose a lab…' }, { value: 'all', label: 'All labs' }, ...labs.map((l) => ({ value: String(l.id), label: `${l.name} (${l.pcs} computers)` }))]} />
+            <Sel value={f.labId} onChange={(v) => setF({ ...f, labId: v })} options={[{ value: '', label: 'Choose a lab…' }, { value: 'all', label: 'All labs — same schedule for every lab' }, ...labs.map((l) => ({ value: String(l.id), label: `${l.name} (${l.pcs} computers)` }))]} />
+            <p className="mt-1.5 text-[11px] text-black/50">Choose a single lab to prepare it individually, or select All labs to create this schedule for every lab.</p>
           </Field>
           <Field l="Places open" hint="Empty = every computer."><Inp type="number" min="1" value={f.places} onChange={(e) => setF({ ...f, places: e.target.value })} /></Field>
           <Field l="How students are approved">
