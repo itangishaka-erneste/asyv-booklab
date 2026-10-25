@@ -119,6 +119,7 @@ function useLive(handlers) {
 
 const pad = (n) => String(n).padStart(2, '0');
 const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
 const dayOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return ymd(d); };
 const today = () => dayOffset(0);
 const shiftDay = (s, n) => { const [y, m, d] = s.split('-').map(Number); return ymd(new Date(y, m - 1, d + n)); };
@@ -1075,7 +1076,7 @@ function Slideshow({ className = '' }) {
     <div className={`relative overflow-hidden bg-[#e8f5ec] ${className}`}>
       {LOGIN_SLIDES.map((s, k) => (
         <div key={s.id} className="absolute inset-0 transition-opacity duration-[1400ms]" style={{ opacity: k === i ? 1 : 0 }} aria-hidden={k !== i}>
-          <img src={unsplash(s.id, 1200)} alt="" className={`h-full w-full object-cover ${k === i ? 'lb-zoom' : ''}`} />
+          <img src={s.id} alt="" className={`h-full w-full object-cover ${k === i ? 'lb-zoom' : ''}`} />
         </div>
       ))}
       <div className="absolute inset-0 bg-gradient-to-t from-[#000000]/85 via-[#000000]/10 to-[#000000]/20" />
