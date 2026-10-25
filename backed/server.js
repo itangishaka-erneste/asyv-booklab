@@ -2,9 +2,11 @@
 // Everyone signs in with Google. Admins get live presence, an activity log and a private admin chat.
 //
 // What is new in this version
+//  - Lab pictures: every lab can have its own uploaded picture (or a link), changed one by one. Reset gives the default picture back.
+//  - Admin chat is complete: reply, forward, edit, delete for me / for everyone, photos, videos, audio, voice notes and files.
+//  - Admin audio and video calls (WebRTC). The server only passes the call messages between the two admins.
 //  - GET /api/roster: teachers, psychosocial workers and admins see every student of every lab time of a day in one call.
-//  - Upload limit raised to 40 MB (24 MB of files becomes about 32 MB of base64), so lost-item photos are not rejected.
-//  - Lunch periods, lab images, activity filters and bulk delete work as before.
+//  - Upload limit is 40 MB (25 MB of files becomes about 33 MB of base64).
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -76,6 +78,8 @@ const auth = (...roles) => (req, res, next) => {
   if (roles.length && !roles.includes(req.user.role)) return res.status(403).json({ error: 'You do not have access to this.' });
   next();
 };
+// Photos, videos and files are opened by <img> and <video> tags, which cannot send a header. They pass the token as ?t=...
+const qAuth = (req, _res, next) => { if (!req.headers.authorization && req.query.t) req.headers.authorization = 'Bearer ' + req.query.t; next(); };
 // Minister of Communication: checked in the database on each request. The admin can always do it too.
 const comm = [auth(), wrap(async (req, _res, next) => {
   if (req.user.role === 'admin') return next();
@@ -83,6 +87,24 @@ const comm = [auth(), wrap(async (req, _res, next) => {
   if (!ok) fail(403, 'Only the Minister of Communication can do this.');
   next();
 })];
+
+// Sends stored bytes with range support (needed so videos and audio can be played and skipped).
+function sendData(req, res, f, { download = false, priv = false } = {}) {
+  const size = f.data.length;
+  res.set({
+    'Content-Type': f.mime || 'application/octet-stream', 'Accept-Ranges': 'bytes',
+    'Cache-Control': priv ? 'private, max-age=3600' : 'public, max-age=86400',
+    'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*',
+    'Content-Disposition': `${download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(f.name || 'file')}`,
+  });
+  const r = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (r && (r[1] || r[2])) {
+    const start = r[1] ? +r[1] : Math.max(size - +r[2], 0), end = r[1] && r[2] ? Math.min(+r[2], size - 1) : size - 1;
+    if (start > end || start >= size) return res.status(416).set('Content-Range', `bytes */${size}`).end();
+    return res.status(206).set({ 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 }).end(f.data.subarray(start, end + 1));
+  }
+  return res.set('Content-Length', size).end(f.data);
+}
 
 /* ---------- Activity log and live presence (admins) ---------- */
 
@@ -113,6 +135,8 @@ const pushPresence = () => io.to('admins').emit('presence', presenceList());
 /* ---------- Data helpers ---------- */
 
 const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
+// A lab picture is either an uploaded file (served by this API) or a link the admin pasted.
+const LAB_IMG = "CASE WHEN image_data IS NOT NULL THEN '/api/labs/' || id || '/photo?v=' || image_ver ELSE COALESCE(image, '') END AS image";
 const ASSIGNED = 'Assigned by admin';
 const forText = s => s.forGroupName || s.forClass || (s.forPeople ? `${s.forPeople} chosen student${s.forPeople === 1 ? '' : 's'}` : '');
 
@@ -280,6 +304,19 @@ io.on('connection', socket => {
       if (payload.to === 'all') socket.to('admins').emit('chat:typing', payload);
       else if (validEmail(payload.to)) io.to(`admin:${payload.to}`).emit('chat:typing', payload);
     });
+    // Calls: the server only passes the messages between the two admins. WebRTC carries the sound and the video.
+    ['call:invite', 'call:accept', 'call:reject', 'call:end', 'call:signal', 'call:busy'].forEach(ev => socket.on(ev, p => {
+      const to = String(p?.to || '').toLowerCase();
+      if (!validEmail(to) || to === me.email) return;
+      if (ev === 'call:invite' && !io.sockets.adapter.rooms.get(`admin:${to}`)?.size) {
+        socket.emit('call:unavailable', { callId: String(p.callId || ''), from: to });
+        return;
+      }
+      io.to(`admin:${to}`).emit(ev, {
+        callId: String(p.callId || ''), kind: p.kind === 'video' ? 'video' : 'audio', data: p.data,
+        from: me.email, name: me.name, picture: me.picture || '',
+      });
+    }));
     socket.on('disconnect', () => {
       presence.delete(socket.id);
       pushPresence();
@@ -610,15 +647,17 @@ app.delete('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
   res.sendStatus(204);
 }));
 
-/* ---------- Labs (with an image each) ---------- */
+/* ---------- Labs (with a picture each: uploaded file or link, changed one by one) ---------- */
 
 const labImage = v => {
   const u = directUrl(String(v || '').trim());
   if (u && !/^https?:\/\/\S+$/i.test(u)) fail(400, 'The lab image must be a link that starts with http:// or https://');
   return u.slice(0, 600);
 };
+const LAB_IMG_OK = /^image\/(png|jpe?g|gif|webp|avif)$/i;
+const LAB_IMG_MAX = 8 * 1024 * 1024;
 
-app.get('/api/labs', auth(), wrap(async (_, res) => res.json(await query("SELECT id, name, pcs, COALESCE(image, '') AS image FROM labs ORDER BY name"))));
+app.get('/api/labs', auth(), wrap(async (_, res) => res.json(await query(`SELECT id, name, pcs, ${LAB_IMG} FROM labs ORDER BY name`))));
 app.post('/api/labs', auth('admin'), wrap(async (req, res) => {
   const { name, pcs } = req.body;
   if (!name?.trim() || !(+pcs >= 1)) fail(400, 'Enter a lab name and at least one computer.');
@@ -633,13 +672,17 @@ app.post('/api/labs', auth('admin'), wrap(async (req, res) => {
 app.put('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
   const { pcs } = req.body;
   const name = req.body.name == null ? null : String(req.body.name).trim();
-  const image = req.body.image === undefined ? null : labImage(req.body.image);
+  // An uploaded picture shows as a path that starts with /api/. Sending it back means "unchanged".
+  const raw = req.body.image;
+  const image = raw === undefined || (typeof raw === 'string' && raw.startsWith('/api/labs/')) ? null : labImage(raw);
   if (name !== null && !name) fail(400, 'The lab name cannot be empty.');
   if (pcs != null && !(+pcs >= 1)) fail(400, 'A lab needs at least one computer.');
   if (pcs != null && (await listSessions(true)).some(s => s.labId == req.params.id && s.seats - s.left > +pcs)) fail(409, 'More students are approved than this many computers.');
   try {
     await tx(async q => {
-      await q('UPDATE labs SET name = COALESCE($1, name), pcs = COALESCE($2, pcs), image = COALESCE($4, image) WHERE id = $3', [name, pcs ?? null, req.params.id, image]);
+      await q(`UPDATE labs SET name = COALESCE($1, name), pcs = COALESCE($2, pcs), image = COALESCE($4::text, image),
+        image_data = CASE WHEN $4::text IS NULL THEN image_data ELSE NULL END,
+        image_ver = image_ver + (CASE WHEN $4::text IS NULL THEN 0 ELSE 1 END) WHERE id = $3`, [name, pcs ?? null, req.params.id, image]);
       if (pcs != null) await q('UPDATE sessions SET places = LEAST(places, $1::int) WHERE lab_id = $2 AND places IS NOT NULL', [+pcs, req.params.id]);
     });
   } catch (e) { if (e.code === '23505') fail(409, 'A lab with this name already exists.'); throw e; }
@@ -650,6 +693,30 @@ app.delete('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
   await query('DELETE FROM labs WHERE id = $1', [req.params.id]);
   await logAct(req.user, 'Deleted lab', `lab ${req.params.id}`);
   pushApps(); res.sendStatus(204);
+}));
+
+// Upload a picture for one lab.
+app.post('/api/labs/:id/image', auth('admin'), wrap(async (req, res) => {
+  const mime = String(req.body.mime || '').toLowerCase(), buf = Buffer.from(String(req.body.data || ''), 'base64');
+  if (!LAB_IMG_OK.test(mime)) fail(400, 'Use a PNG, JPG, GIF, WebP or AVIF picture.');
+  if (!buf.length) fail(400, 'Choose a picture first.');
+  if (buf.length > LAB_IMG_MAX) fail(413, 'The picture is too big (8 MB maximum).');
+  const r = await query("UPDATE labs SET image_data = $1, image_mime = $2, image = '', image_ver = image_ver + 1 WHERE id = $3 RETURNING name", [buf, mime, +req.params.id]);
+  if (!r.length) fail(404, 'Lab not found.');
+  await logAct(req.user, 'Changed lab picture', r[0].name);
+  pushSeats(); res.json({ ok: true });
+}));
+// Back to the default picture.
+app.delete('/api/labs/:id/image', auth('admin'), wrap(async (req, res) => {
+  const r = await query("UPDATE labs SET image_data = NULL, image_mime = '', image = '', image_ver = image_ver + 1 WHERE id = $1 RETURNING name", [+req.params.id]);
+  if (!r.length) fail(404, 'Lab not found.');
+  await logAct(req.user, 'Reset lab picture', r[0].name);
+  pushSeats(); res.json({ ok: true });
+}));
+// The picture itself. Public, so the landing page can show it.
+app.get('/api/labs/:id/photo', wrap(async (req, res) => {
+  const f = (Number.isInteger(+req.params.id) && await one('SELECT name, image_mime AS mime, image_data AS data FROM labs WHERE id = $1 AND image_data IS NOT NULL', [+req.params.id])) || fail(404, 'Picture not found.');
+  sendData(req, res, { ...f, name: `${f.name}.img` });
 }));
 
 /* ---------- Who a lab time is for ---------- */
@@ -857,7 +924,7 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 app.get('/api/overview', wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
   const [labRows, sessions, pend] = await Promise.all([
-    query("SELECT id, name, pcs, COALESCE(image, '') AS image FROM labs ORDER BY name"),
+    query(`SELECT id, name, pcs, ${LAB_IMG} FROM labs ORDER BY name`),
     listSessions(),
     query("SELECT sid, COUNT(*)::int AS n FROM application_details WHERE status = 'pending' GROUP BY sid"),
   ]);
@@ -915,7 +982,7 @@ app.get('/api/roster', auth('teacher', 'psychosocial', 'admin'), wrap(async (req
 app.get('/api/board', auth('admin'), wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
   const [labs, sessions, apps] = await Promise.all([
-    query("SELECT id, name, pcs, COALESCE(image, '') AS image FROM labs ORDER BY name"),
+    query(`SELECT id, name, pcs, ${LAB_IMG} FROM labs ORDER BY name`),
     listSessions(true),
     listApps('date = $1', [date]),
   ]);
@@ -961,10 +1028,27 @@ app.get('/api/activity/chart', auth('admin'), wrap(async (req, res) => {
 /* ---------- Admin chat ---------- */
 // Rooms: 'all' = every admin. A private chat between two admins has the room 'dm:<email>|<email>' (emails sorted).
 // The screen only knows the "other side": 'all' or the other admin's email.
+// A message can have a reply (reply_to), a file (file_id), be forwarded, edited or deleted.
+// "Delete for me" hides it only for the person who deleted it. "Delete for everyone" empties it for all (own messages only).
 
 const dmRoom = (a, b) => 'dm:' + [a, b].sort().join('|');
 const chatWith = v => { const w = String(v || 'all').trim().toLowerCase(); return w === 'all' || validEmail(w) ? w : fail(400, 'Unknown chat.'); };
 const roomOf = (me, w) => (w === 'all' ? 'all' : dmRoom(me, w));
+
+const CHAT_COLS = `m.id, m.room, m.from_email AS "fromEmail", m.from_name AS "fromName", m.to_email AS "to", m.body, m.created_at AS at,
+  m.reply_to AS "replyTo", m.forwarded, m.deleted, m.edited_at AS "editedAt", m.file_id AS "fileId",
+  f.name AS "fileName", f.mime AS "fileMime", f.size AS "fileSize",
+  r.from_name AS "replyName", CASE WHEN r.deleted THEN '' ELSE LEFT(r.body, 120) END AS "replyBody",
+  (r.file_id IS NOT NULL AND NOT r.deleted) AS "replyFile", COALESCE(r.deleted, false) AS "replyDeleted",
+  (SELECT rf.name FROM admin_chat_files rf WHERE rf.id = r.file_id) AS "replyFileName"`;
+const CHAT_FROM = 'admin_chat m LEFT JOIN admin_chat_files f ON f.id = m.file_id LEFT JOIN admin_chat r ON r.id = m.reply_to';
+const chatOne = id => one(`SELECT ${CHAT_COLS} FROM ${CHAT_FROM} WHERE m.id = $1`, [id]);
+const chatAudience = row => (row.to === 'all' ? io.to('admins') : io.to(`admin:${row.to}`).to(`admin:${row.fromEmail}`));
+const CHAT_FILE_OK = /^(image\/(png|jpe?g|gif|webp|avif)|video\/(mp4|webm|ogg|quicktime|x-matroska)|audio\/[\w.+-]+|text\/plain|application\/(pdf|zip|x-zip-compressed|msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)))$/i;
+const CHAT_MAX_FILE = 25 * 1024 * 1024;
+const chatBody = v => String(v || '').replace(/\r\n/g, '\n').trim().slice(0, 2000);
+const markRead = (email, room, id) => query(`INSERT INTO admin_chat_reads(email, room, last_id) VALUES($1,$2,$3)
+  ON CONFLICT (email, room) DO UPDATE SET last_id = GREATEST(admin_chat_reads.last_id, EXCLUDED.last_id)`, [email, room, id]);
 
 // All admins: the ones in ADMIN_EMAILS plus everyone who ever signed in as admin.
 const adminDirectory = async () => {
@@ -985,10 +1069,15 @@ app.get('/api/chat/summary', auth('admin'), wrap(async (req, res) => {
     .sort((a, b) => a.name.localeCompare(b.name));
   const unreadRows = await query(`SELECT CASE WHEN m.room = 'all' THEN 'all' ELSE m.from_email END AS key, COUNT(*)::int AS n
     FROM admin_chat m LEFT JOIN admin_chat_reads r ON r.email = $1 AND r.room = m.room
-    WHERE m.id > COALESCE(r.last_id, 0) AND m.from_email <> $1 AND (m.room = 'all' OR m.to_email = $1)
+    WHERE m.id > COALESCE(r.last_id, 0) AND m.from_email <> $1 AND (m.room = 'all' OR m.to_email = $1) AND NOT m.deleted
+    AND NOT EXISTS (SELECT 1 FROM admin_chat_hidden h WHERE h.msg_id = m.id AND h.email = $1)
     GROUP BY 1`, [me]);
-  const lastRows = await query(`SELECT DISTINCT ON (room) room, to_email AS "to", from_email AS "fromEmail", from_name AS "fromName", body, created_at AS at
-    FROM admin_chat WHERE room = 'all' OR from_email = $1 OR to_email = $1 ORDER BY room, id DESC`, [me]);
+  const lastRows = await query(`SELECT DISTINCT ON (c.room) c.room, c.to_email AS "to", c.from_email AS "fromEmail", c.from_name AS "fromName",
+      CASE WHEN c.deleted THEN 'Message deleted' WHEN c.file_id IS NOT NULL AND c.body = '' THEN '📎 ' || COALESCE((SELECT f.name FROM admin_chat_files f WHERE f.id = c.file_id), 'File') ELSE c.body END AS body,
+      c.created_at AS at
+    FROM admin_chat c WHERE (c.room = 'all' OR c.from_email = $1 OR c.to_email = $1)
+    AND NOT EXISTS (SELECT 1 FROM admin_chat_hidden h WHERE h.msg_id = c.id AND h.email = $1)
+    ORDER BY c.room, c.id DESC`, [me]);
   const last = {};
   lastRows.forEach(m => { last[m.room === 'all' ? 'all' : (m.fromEmail === me ? m.to : m.fromEmail)] = { body: m.body, at: m.at, fromMe: m.fromEmail === me, fromName: m.fromName }; });
   const mine = dir.find(p => p.email === me);
@@ -997,24 +1086,80 @@ app.get('/api/chat/summary', auth('admin'), wrap(async (req, res) => {
 
 app.get('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
   const me = req.user.email, w = chatWith(req.query.with), before = Math.max(+req.query.before || 0, 0);
-  const rows = await query(`SELECT id, from_email AS "fromEmail", from_name AS "fromName", to_email AS "to", body, created_at AS at
-    FROM admin_chat WHERE room = $1 AND ($2::int = 0 OR id < $2::int) ORDER BY id DESC LIMIT 80`, [roomOf(me, w), before]);
+  const rows = await query(`SELECT ${CHAT_COLS} FROM ${CHAT_FROM} WHERE m.room = $1 AND ($2::int = 0 OR m.id < $2::int)
+    AND NOT EXISTS (SELECT 1 FROM admin_chat_hidden h WHERE h.msg_id = m.id AND h.email = $3)
+    ORDER BY m.id DESC LIMIT 80`, [roomOf(me, w), before, me]);
   res.json(rows.reverse());
 }));
 
+// Send a message: text, a reply (replyTo), a file ({name, mime, data: base64}) or a forward (forwardOf = id of the message).
 app.post('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
   const me = req.user, w = chatWith(req.body.with);
-  const body = String(req.body.body || '').replace(/\r\n/g, '\n').trim().slice(0, 2000);
-  if (!body) fail(400, 'Write a message first.');
   if (w === me.email) fail(400, 'You cannot write to yourself.');
   const room = roomOf(me.email, w);
-  const row = await one(`INSERT INTO admin_chat(room, from_email, from_name, to_email, body) VALUES($1,$2,$3,$4,$5)
-    RETURNING id, from_email AS "fromEmail", from_name AS "fromName", to_email AS "to", body, created_at AS at`, [room, me.email, me.name, w, body]);
-  await query(`INSERT INTO admin_chat_reads(email, room, last_id) VALUES($1,$2,$3)
-    ON CONFLICT (email, room) DO UPDATE SET last_id = GREATEST(admin_chat_reads.last_id, EXCLUDED.last_id)`, [me.email, room, row.id]);
-  if (w === 'all') io.to('admins').emit('chat:message', row);
-  else io.to(`admin:${w}`).to(`admin:${me.email}`).emit('chat:message', row);
+  let body = chatBody(req.body.body), fileId = null, forwarded = false;
+  const replyTo = Number.isInteger(+req.body.replyTo) && +req.body.replyTo > 0 ? +req.body.replyTo : null;
+  if (replyTo) {
+    const r = await one('SELECT room FROM admin_chat WHERE id = $1', [replyTo]);
+    if (!r || r.room !== room) fail(400, 'You can only reply to a message of this chat.');
+  }
+  if (req.body.forwardOf) {
+    const src = await one('SELECT room, from_email, to_email, body, file_id, deleted FROM admin_chat WHERE id = $1', [+req.body.forwardOf]);
+    if (!src || src.deleted || !(src.room === 'all' || src.from_email === me.email || src.to_email === me.email)) fail(404, 'That message cannot be forwarded.');
+    body = src.body; fileId = src.file_id; forwarded = true;
+  } else if (req.body.file) {
+    const f = req.body.file, mime = String(f.mime || '').toLowerCase().split(';')[0], buf = Buffer.from(String(f.data || ''), 'base64');
+    if (!buf.length) fail(400, 'The file is empty.');
+    if (!CHAT_FILE_OK.test(mime)) fail(400, 'This file type is not allowed. Use photos, videos, audio, PDF, Office files, zip or text.');
+    if (buf.length > CHAT_MAX_FILE) fail(413, 'The file is too big (25 MB maximum).');
+    fileId = (await one('INSERT INTO admin_chat_files(name, mime, size, data) VALUES($1,$2,$3,$4) RETURNING id', [cleanName(f.name).slice(0, 160) || 'file', mime, buf.length, buf])).id;
+  }
+  if (!body && !fileId) fail(400, 'Write a message first.');
+  const ins = await one('INSERT INTO admin_chat(room, from_email, from_name, to_email, body, reply_to, file_id, forwarded) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
+    [room, me.email, me.name, w, body, replyTo, fileId, forwarded]);
+  const row = await chatOne(ins.id);
+  await markRead(me.email, room, row.id);
+  chatAudience(row).emit('chat:message', row);
   res.json(row);
+}));
+
+// Edit your own message.
+app.patch('/api/chat/messages/:id', auth('admin'), wrap(async (req, res) => {
+  const m = await one('SELECT id, from_email, deleted, file_id FROM admin_chat WHERE id = $1', [+req.params.id]) || fail(404, 'Message not found.');
+  if (m.from_email !== req.user.email) fail(403, 'You can only edit your own messages.');
+  if (m.deleted) fail(409, 'This message was deleted.');
+  const body = chatBody(req.body.body);
+  if (!body && !m.file_id) fail(400, 'A message cannot be empty.');
+  await query('UPDATE admin_chat SET body = $1, edited_at = now() WHERE id = $2', [body, m.id]);
+  const row = await chatOne(m.id);
+  chatAudience(row).emit('chat:edited', row);
+  res.json(row);
+}));
+
+// Delete: ?scope=me hides it for you only. ?scope=all removes it for everyone (your own messages).
+app.delete('/api/chat/messages/:id', auth('admin'), wrap(async (req, res) => {
+  const me = req.user.email;
+  const m = await one('SELECT id, room, from_email, to_email, deleted, file_id FROM admin_chat WHERE id = $1', [+req.params.id]) || fail(404, 'Message not found.');
+  if (!(m.room === 'all' || m.from_email === me || m.to_email === me)) fail(403, 'You do not have access to this.');
+  if (req.query.scope === 'all') {
+    if (m.from_email !== me) fail(403, 'You can only delete your own messages for everyone.');
+    if (!m.deleted) {
+      await query("UPDATE admin_chat SET deleted = true, body = '', file_id = NULL WHERE id = $1", [m.id]);
+      if (m.file_id) await query('DELETE FROM admin_chat_files WHERE id = $1::int AND NOT EXISTS (SELECT 1 FROM admin_chat WHERE file_id = $1::int)', [m.file_id]);
+      chatAudience({ to: m.to_email, fromEmail: m.from_email }).emit('chat:deleted', { id: m.id, to: m.to_email, fromEmail: m.from_email });
+    }
+  } else {
+    await query('INSERT INTO admin_chat_hidden(email, msg_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [me, m.id]);
+    io.to(`admin:${me}`).emit('chat:hidden', { id: m.id });
+  }
+  res.json({ ok: true });
+}));
+
+// Photos, videos, audio and files of the chat. Only admins who are part of the chat can open them (token in ?t=). ?dl=1 downloads.
+app.get('/api/chat/files/:id', qAuth, auth('admin'), wrap(async (req, res) => {
+  const f = (Number.isInteger(+req.params.id) && await one(`SELECT f.name, f.mime, f.data FROM admin_chat_files f WHERE f.id = $1 AND EXISTS (
+      SELECT 1 FROM admin_chat m WHERE m.file_id = f.id AND NOT m.deleted AND (m.room = 'all' OR m.from_email = $2 OR m.to_email = $2))`, [+req.params.id, req.user.email])) || fail(404, 'File not found.');
+  sendData(req, res, f, { download: req.query.dl === '1', priv: true });
 }));
 
 app.post('/api/chat/read', auth('admin'), wrap(async (req, res) => {
@@ -1290,19 +1435,7 @@ app.get('/api/trends', wrap(async (_, res) => res.json(await trendRows("status =
 // Stored photos and files. Open to every site so the landing page can show them (images were blocked before).
 app.get('/api/trends/files/:id', wrap(async (req, res) => {
   const f = (Number.isInteger(+req.params.id) && await one('SELECT name, mime, data FROM trend_media WHERE id = $1 AND data IS NOT NULL', [+req.params.id])) || fail(404, 'File not found.');
-  const size = f.data.length;
-  res.set({
-    'Content-Type': f.mime, 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=86400',
-    'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*',
-    'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`,
-  });
-  const r = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
-  if (r && (r[1] || r[2])) {
-    const start = r[1] ? +r[1] : Math.max(size - +r[2], 0), end = r[1] && r[2] ? Math.min(+r[2], size - 1) : size - 1;
-    if (start > end || start >= size) return res.status(416).set('Content-Range', `bytes */${size}`).end();
-    return res.status(206).set({ 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 }).end(f.data.subarray(start, end + 1));
-  }
-  res.set('Content-Length', size).end(f.data);
+  sendData(req, res, f);
 }));
 
 app.get('/api/trends/manage', comm, wrap(async (_, res) => res.json(await trendRows())));
@@ -1416,6 +1549,18 @@ const ensureTables = async () => {
   await query('CREATE INDEX IF NOT EXISTS admin_chat_to_idx ON admin_chat (to_email, id)');
   await query(`CREATE TABLE IF NOT EXISTS admin_chat_reads (
     email text NOT NULL, room text NOT NULL, last_id integer NOT NULL DEFAULT 0, PRIMARY KEY (email, room))`);
+  // Chat files (photos, videos, audio, documents) and the new message columns: reply, file, forwarded, deleted, edited.
+  await query(`CREATE TABLE IF NOT EXISTS admin_chat_files (
+    id serial PRIMARY KEY, name text NOT NULL DEFAULT '', mime text NOT NULL DEFAULT '', size integer NOT NULL DEFAULT 0,
+    data bytea NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
+  await query('ALTER TABLE admin_chat ADD COLUMN IF NOT EXISTS reply_to integer');
+  await query('ALTER TABLE admin_chat ADD COLUMN IF NOT EXISTS file_id integer REFERENCES admin_chat_files(id) ON DELETE SET NULL');
+  await query('ALTER TABLE admin_chat ADD COLUMN IF NOT EXISTS forwarded boolean NOT NULL DEFAULT false');
+  await query('ALTER TABLE admin_chat ADD COLUMN IF NOT EXISTS deleted boolean NOT NULL DEFAULT false');
+  await query('ALTER TABLE admin_chat ADD COLUMN IF NOT EXISTS edited_at timestamptz');
+  await query('CREATE INDEX IF NOT EXISTS admin_chat_file_idx ON admin_chat (file_id)');
+  await query(`CREATE TABLE IF NOT EXISTS admin_chat_hidden (
+    email text NOT NULL, msg_id integer NOT NULL REFERENCES admin_chat(id) ON DELETE CASCADE, PRIMARY KEY (email, msg_id))`);
 
   await query(`CREATE TABLE IF NOT EXISTS trends (
     id serial PRIMARY KEY, title text NOT NULL, description text NOT NULL DEFAULT '', category text NOT NULL DEFAULT 'Other',
@@ -1439,6 +1584,10 @@ const ensureTables = async () => {
   await query('CREATE INDEX IF NOT EXISTS student_group_members_user_idx ON student_group_members (user_id)');
 
   await query("ALTER TABLE labs ADD COLUMN IF NOT EXISTS image text NOT NULL DEFAULT ''");
+  // Uploaded lab pictures live in the database. image_ver changes on every new picture so browsers load the new one.
+  await query('ALTER TABLE labs ADD COLUMN IF NOT EXISTS image_data bytea');
+  await query("ALTER TABLE labs ADD COLUMN IF NOT EXISTS image_mime text NOT NULL DEFAULT ''");
+  await query('ALTER TABLE labs ADD COLUMN IF NOT EXISTS image_ver integer NOT NULL DEFAULT 0');
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS published boolean NOT NULL DEFAULT true');
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS places integer CHECK (places IS NULL OR places >= 1)');
   await query("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_class text NOT NULL DEFAULT ''");
