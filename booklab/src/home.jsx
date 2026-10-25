@@ -1224,9 +1224,13 @@ function Booker({ user, opts, intent, onIntentDone }) {
       {approvalWelcome && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="approval-welcome-title">
           <div className="w-full max-w-3xl rounded-3xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-green-100 px-6 py-10 text-center text-slate-900 shadow-2xl sm:px-14 sm:py-16">
+            <div className="mb-6 flex items-center justify-center gap-4">
+              <img src={logo} alt="System logo" className="h-14 w-14 rounded-xl object-contain" />
+              <img src={imgOf(approvalWelcome.labId)} alt={`${approvalWelcome.lab} lab`} className="h-14 w-20 rounded-xl object-cover" />
+            </div>
             <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-full bg-emerald-600 text-4xl font-bold text-white shadow-lg shadow-emerald-900/20" aria-hidden="true">✓</div>
             <p className="text-sm font-bold uppercase tracking-[0.25em] text-emerald-700">Booking approved</p>
-            <h2 id="approval-welcome-title" className="mt-4 text-4xl font-black leading-tight tracking-tight text-slate-900 sm:text-6xl">Congratulations!</h2>
+            <h2 id="approval-welcome-title" className="mt-4 text-4xl font-black leading-tight tracking-tight text-slate-900 sm:text-6xl">{'Congratulations!'.split('').map((letter, i) => <span key={i} className="inline-block animate-bounce" style={{ animationDelay: `${i * 0.06}s` }}>{letter === ' ' ? '\u00a0' : letter}</span>)}</h2>
             <p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-slate-700 sm:text-2xl">
               Welcome to <strong className="text-emerald-800">{approvalWelcome.lab}</strong>! {approvalWelcome.count === 1 ? 'Your booking has' : `${approvalWelcome.count} bookings have`} been approved.
             </p>
@@ -1315,9 +1319,6 @@ function Booker({ user, opts, intent, onIntentDone }) {
                 {a.released && <span className="block text-xs text-[#c2310a]">Your place was given to the waiting list because you did not arrive in time.</span>}
               </span>
               <span className="flex flex-wrap items-center gap-2">
-                {isStudent && a.name === user.name && a.status === 'approved' && !a.att && a.date === todayStr && (
-                  <ActBtn busy={busy === 'ci' + a.id} doing="…" label="I am here" onClick={() => checkIn(a.id)} />
-                )}
                 {a.status === 'approved' && a.att && <Badge s={attKey(a) || 'none'}>{attLabel(a)}</Badge>}
                 <Badge s={statusKey(a, s)}>{STATUS_LABEL[statusKey(a, s)] || a.status}</Badge>
               </span>
