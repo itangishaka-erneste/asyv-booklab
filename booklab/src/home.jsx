@@ -1181,7 +1181,10 @@ function Booker({ user, opts, intent, onIntentDone }) {
       return true;
     } catch (e) { setNote({ ok: false, text: e.message }); return false; }
   };
-  const apply = (id) => run('a' + id, () => sendBooking(id));
+  const apply = (id) => {
+    if (isStudent && apps.some((a) => a.date === sessions.find((s) => s.id === id)?.date && a.name === user.name && a.status !== 'rejected')) return;
+    return run('a' + id, () => sendBooking(id));
+  };
   const bookStudents = () => run('bk', () => sendBooking(+sid, picked));
 
   // A lab time chosen on the home page is booked once, right after sign-in.
@@ -1219,14 +1222,14 @@ function Booker({ user, opts, intent, onIntentDone }) {
     <div className="space-y-6">
       {approvalWelcome && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="approval-welcome-title">
-          <div className="w-full max-w-4xl rounded-3xl border border-white/15 bg-[#050505] px-6 py-10 text-center text-white shadow-2xl sm:px-14 sm:py-16">
-            <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-full border border-emerald-400/40 bg-emerald-400/10 text-4xl font-bold text-emerald-300" aria-hidden="true">✓</div>
-            <p className="text-sm font-bold uppercase tracking-[0.25em] text-emerald-300">Booking approved</p>
-            <h2 id="approval-welcome-title" className="mt-4 text-4xl font-black leading-tight sm:text-6xl">Congratulations!</h2>
-            <p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-white/80 sm:text-2xl">
-              Welcome to <strong className="text-white">{approvalWelcome.lab}</strong>! {approvalWelcome.count === 1 ? 'Your booking has' : `${approvalWelcome.count} bookings have`} been approved.
+          <div className="w-full max-w-3xl rounded-3xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-green-100 px-6 py-10 text-center text-slate-900 shadow-2xl sm:px-14 sm:py-16">
+            <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-full bg-emerald-600 text-4xl font-bold text-white shadow-lg shadow-emerald-900/20" aria-hidden="true">✓</div>
+            <p className="text-sm font-bold uppercase tracking-[0.25em] text-emerald-700">Booking approved</p>
+            <h2 id="approval-welcome-title" className="mt-4 text-4xl font-black leading-tight tracking-tight text-slate-900 sm:text-6xl">Congratulations!</h2>
+            <p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-slate-700 sm:text-2xl">
+              Welcome to <strong className="text-emerald-800">{approvalWelcome.lab}</strong>! {approvalWelcome.count === 1 ? 'Your booking has' : `${approvalWelcome.count} bookings have`} been approved.
             </p>
-            <button type="button" autoFocus onClick={() => setApprovalWelcome(null)} className="mt-9 rounded-lg bg-white px-9 py-3 text-base font-bold text-black transition hover:bg-white/85 focus:outline-none focus:ring-2 focus:ring-emerald-300">Continue</button>
+            <button type="button" autoFocus onClick={() => setApprovalWelcome(null)} className="mt-9 rounded-xl bg-emerald-700 px-9 py-3 text-base font-bold text-white shadow-md transition hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">Continue</button>
           </div>
         </div>
       )}
@@ -1245,6 +1248,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
         {dayLabs.length === 0 && <Empty>No lab time on this day. Try another day.</Empty>}
         {dayLabs.map((s) => {
           const m = mine(s.id);
+          const alreadyBookedToday = isStudent && myApps.some((a) => a.date === s.date && a.status !== 'rejected');
           const pct = s.seats ? ((s.seats - s.left) / s.seats) * 100 : 100;
           const past = s.date < todayStr || s.state === 'over';
           return (
@@ -1269,7 +1273,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
               </div>
               {m ? <Badge s={statusKey(m, s)}>{STATUS_LABEL[statusKey(m, s)]}</Badge> : (
                 <ActBtn c={s.left < 1 ? 'bl' : 'ink'} busy={busy === 'a' + s.id} doing="Sending…" label={past ? 'Closed' : s.left < 1 ? 'Join queue' : 'Apply'}
-                  disabled={past || s.exclusive} onClick={() => apply(s.id)} />
+                  disabled={past || s.exclusive || alreadyBookedToday} onClick={() => apply(s.id)} />
               )}
             </div>
           );
