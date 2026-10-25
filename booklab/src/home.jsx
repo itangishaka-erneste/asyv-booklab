@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import {
-  CalendarDays, CalendarCheck2, UserRound, LayoutDashboard, FlaskConical, CalendarClock, UsersRound, MessageCircle, Settings2, PackageSearch,
-  Sun, Moon, Send, Smile, ThumbsUp, Users, ChevronLeft, ChevronRight, X, Trash2, Printer, Plus, LogOut, Sunrise, Sunset, Eye, Radio, ArrowLeft, CheckCheck,
-} from 'lucide-react';
+// Inline icon fallback avoids requiring lucide-react at build time.
+const makeIcon = (glyph) => function Icon({ size = 20, color = 'currentColor', strokeWidth = 2, ...props }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}><text x="12" y="17" textAnchor="middle" fontSize="16" fill={color} stroke="none">{glyph}</text></svg>;
+};
+const CalendarDays = makeIcon('▦'), CalendarCheck2 = makeIcon('✓'), UserRound = makeIcon('◉'), LayoutDashboard = makeIcon('▦'), FlaskConical = makeIcon('⚗'), CalendarClock = makeIcon('◷'), UsersRound = makeIcon('♧'), MessageCircle = makeIcon('●'), Settings2 = makeIcon('⚙'), PackageSearch = makeIcon('⌕');
+const Sun = makeIcon('☼'), Moon = makeIcon('☾'), Send = makeIcon('➤'), Smile = makeIcon('☺'), ThumbsUp = makeIcon('＋'), Users = makeIcon('♧'), ChevronLeft = makeIcon('‹'), ChevronRight = makeIcon('›'), X = makeIcon('×'), Trash2 = makeIcon('▤'), Printer = makeIcon('▣'), Plus = makeIcon('+'), LogOut = makeIcon('↗'), Sunrise = makeIcon('↗'), Sunset = makeIcon('↘'), Eye = makeIcon('◉'), Radio = makeIcon('◉'), ArrowLeft = makeIcon('←'), CheckCheck = makeIcon('✓');
 import logo from './assets/as.png';
 
 /* ================================================================== */
@@ -706,7 +708,12 @@ const DEMO_LABS = [
 function LiveLabs() {
   const { data } = useOverview(today());
   const [tick, setTick] = useState(0);
-  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 2600); return () => clearInterval(t); }, []);
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    if (paused) return undefined;
+    const t = setInterval(() => setTick((n) => n + 1), 2600);
+    return () => clearInterval(t);
+  }, [paused]);
   const real = (data?.labs || []).slice(0, 4);
   const demo = !real.length;
   const labs = demo
@@ -717,7 +724,8 @@ function LiveLabs() {
     })
     : real;
   const hot = labs.length ? tick % labs.length : 0;
-  const free = labs.reduce((n, l) => n + (l.free || 0), 0);
+  const selected = labs[hot];
+  const free = labs.reduce((n, l) => n + (l.free ?? l.sessions?.reduce((a, s) => a + (s.left || 0), 0) ?? 0), 0);
   return (
     <div className="lb-glow relative overflow-hidden rounded-2xl bg-[#e8f5ec] shadow-lg">
       <div className="absolute inset-0">
@@ -740,24 +748,25 @@ function LiveLabs() {
           </span>
           <span className="rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-semibold backdrop-blur"><Radio className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />{free} free places today</span>
         </div>
-        <div className="grid grid-cols-3 gap-2" aria-label="Lab photos">
+        <div className="grid grid-cols-3 gap-2" aria-label="Choose a lab">
           {labs.slice(0, 3).map((l, i) => (
-            <div key={`photo-${l.id}`} className="relative h-16 overflow-hidden rounded-lg border border-white/40 shadow-md sm:h-20">
+            <button key={`photo-${l.id}`} type="button" aria-pressed={i === hot} aria-label={`Show ${l.name}`} onClick={() => { setTick(i); setPaused(true); }} className={`relative h-16 overflow-hidden rounded-lg border shadow-md sm:h-20 ${i === hot ? 'border-white ring-2 ring-white' : 'border-white/40'}`}>
               <LabImg lab={demo ? { id: i } : l} index={i} w={360} className="h-full w-full object-cover" />
               <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-2 py-1 text-[10px] font-semibold text-white">{l.name}</span>
-            </div>
+            </button>
           ))}
         </div>
-        <div className="space-y-2.5">
-          {labs.map((l, i) => {
+        {selected && (() => {
+            const l = selected;
             const [color, text] = LIVE[l.status] || LIVE.none;
-            const seats = l.seats || 0;
-            const pct = seats ? Math.round(((l.taken || 0) / seats) * 100) : 0;
             const ss = l.sessions || [];
-            const cur = ss.length ? ss[(tick + i) % ss.length] : null;
-            const on = i === hot;
+            const cur = ss.length ? ss[tick % ss.length] : null;
+            const seats = cur?.seats || l.seats || 0;
+            const places = cur?.left ?? l.free ?? 0;
+            const applied = cur?.applied ?? cur?.applications ?? cur?.people?.length ?? (seats ? Math.max(0, seats - places) : 0);
+            const pct = seats ? Math.round((applied / seats) * 100) : 0;
             return (
-              <div key={l.id} className={`rounded-xl bg-white/92 p-3 text-[#111827] shadow transition-all duration-500 ${on ? 'scale-[1.02] ring-2 ring-white' : 'opacity-90'}`} style={{ background: 'rgba(255,255,255,.93)' }}>
+              <div key={l.id} className="lb-rise rounded-xl bg-white/92 p-4 text-[#111827] shadow ring-2 ring-white" style={{ background: 'rgba(255,255,255,.93)' }}>
                 <div className="flex items-center justify-between gap-3">
                   <b className="truncate text-sm">{l.name}</b>
                   <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-bold" style={{ color }}>
@@ -767,12 +776,20 @@ function LiveLabs() {
                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-black/10">
                   <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${pct}%`, background: color }} />
                 </div>
-                <div key={tick + '-' + i} className="lb-rise mt-1.5 text-[11px] text-black/60">
-                  {cur ? `${cur.from}–${cur.to} · ${cur.left} of ${cur.seats} places free` : 'No lab time today'}
+                <div className="mt-2 flex flex-wrap justify-between gap-2 text-[11px] font-medium text-black/70">
+                  <span>{cur ? `${cur.from}–${cur.to}` : 'No lab time today'}</span>
+                  {cur && <><span>{applied} applied</span><span>{places} of {seats} places free</span></>}
                 </div>
               </div>
             );
-          })}
+          })()}
+        <div className="flex items-center justify-between text-[11px] text-white/90">
+          <span>Lab {labs.length ? hot + 1 : 0} of {labs.length}</span>
+          <div className="flex gap-2">
+            <button type="button" className="rounded-full bg-white/15 px-3 py-1.5 font-semibold hover:bg-white/25" onClick={() => { setTick((n) => (n - 1 + labs.length) % labs.length); setPaused(true); }}>Previous</button>
+            <button type="button" className="rounded-full bg-white/15 px-3 py-1.5 font-semibold hover:bg-white/25" onClick={() => setPaused((v) => !v)}>{paused ? 'Play' : 'Pause'}</button>
+            <button type="button" className="rounded-full bg-white/15 px-3 py-1.5 font-semibold hover:bg-white/25" onClick={() => { setTick((n) => (n + 1) % labs.length); setPaused(true); }}>Next</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1402,7 +1419,7 @@ function LabsPage({ onOpenLab }) {
           const status = labStatus(l.sessions);
           return (
             <article key={l.id} className={`flex flex-col overflow-hidden rounded-[8px] border bg-white ${status === 'over' ? 'border-[#dc2626]/40' : 'border-black/10'}`}>
-              <div className="relative h-28 overflow-hidden bg-[#e8f5ec]">
+              <div className="relative h-56 overflow-hidden bg-[#e8f5ec]">
                 <LabImg lab={l} index={li} w={700} className="h-full w-full object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/55 to-transparent" />
                 <div className="absolute bottom-2.5 left-4 right-4 flex items-end justify-between gap-3 text-white">
@@ -1485,7 +1502,7 @@ function LabDetail({ labId, day, onBack }) {
   return (
     <div className="space-y-6">
       <div className="relative overflow-hidden rounded-[10px] bg-[#e8f5ec]">
-        <LabImg lab={lab} index={labIndex} w={1200} className="h-36 w-full object-cover" />
+        <LabImg lab={lab} index={labIndex} w={1200} className="h-56 w-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/30 to-transparent" />
         <div className="absolute inset-0 flex flex-wrap items-center justify-between gap-3 p-5 text-white">
           <div>
@@ -2729,7 +2746,7 @@ export default function Home() {
   const [dark, setDark] = useState(() => localStorage.getItem('lms_dark') === 'true');
   useEffect(() => {
     localStorage.setItem('lms_dark', String(dark));
-    document.body.style.background = dark ? '#0f172a' : '';
+    document.body.style.background = dark ? '#171717' : '';
   }, [dark]);
   const toggleDark = () => setDark((v) => !v);
 
