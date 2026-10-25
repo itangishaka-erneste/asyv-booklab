@@ -740,6 +740,14 @@ function LiveLabs() {
           </span>
           <span className="rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-semibold backdrop-blur"><Radio className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />{free} free places today</span>
         </div>
+        <div className="grid grid-cols-3 gap-2" aria-label="Lab photos">
+          {labs.slice(0, 3).map((l, i) => (
+            <div key={`photo-${l.id}`} className="relative h-16 overflow-hidden rounded-lg border border-white/40 shadow-md sm:h-20">
+              <LabImg lab={demo ? { id: i } : l} index={i} w={360} className="h-full w-full object-cover" />
+              <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-2 py-1 text-[10px] font-semibold text-white">{l.name}</span>
+            </div>
+          ))}
+        </div>
         <div className="space-y-2.5">
           {labs.map((l, i) => {
             const [color, text] = LIVE[l.status] || LIVE.none;
@@ -1012,6 +1020,7 @@ function Auth({ onDone, onBack, intent, dark, onToggleDark }) {
 
 function Booker({ user, opts, intent, onIntentDone }) {
   const isStudent = user.role === 'student';
+  const [labPhoto, setLabPhoto] = useState(null);
   const [ready, setReady] = useState(false);
   const [day, setDay] = useState(intent?.date || today());
   const [sessions, setSessions] = useState([]);
@@ -1117,6 +1126,10 @@ function Booker({ user, opts, intent, onIntentDone }) {
           const past = s.date < todayStr || s.state === 'over';
           return (
             <div key={s.id} className="flex flex-wrap items-center justify-between gap-4 border-t border-black/10 py-4">
+              <button type="button" aria-label={`View ${s.lab} photo`} onClick={() => setLabPhoto({ name: s.lab, id: s.labId ?? s.id, image: s.labImage || s.image })}
+                className="h-20 w-full overflow-hidden rounded-[8px] border border-black/10 sm:w-36">
+                <LabImg lab={{ name: s.lab, id: s.labId ?? s.id, image: s.labImage || s.image }} index={s.id} className="h-full w-full object-cover transition-transform hover:scale-105" />
+              </button>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <b>{s.lab}</b>
@@ -1124,8 +1137,8 @@ function Booker({ user, opts, intent, onIntentDone }) {
                   {forLabel(s) && <Badge s="draft">{audText(s)}</Badge>}
                   {past && <Badge s="over">Closed</Badge>}
                 </div>
-                <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-[3px] bg-black/10">
-                  <div className={`h-full ${past ? 'bg-[#dc2626]' : s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#ff4500]'}`} style={{ width: pct + '%' }} />
+                <div className="mt-3 h-5 w-full max-w-md overflow-hidden rounded-full bg-black/10" role="progressbar" aria-label={`${s.seats - s.left} of ${s.seats} places taken`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
+                  <div className={`flex h-full items-center justify-end rounded-full px-2 text-[10px] font-bold text-white transition-[width] duration-700 ${past ? 'bg-[#dc2626]' : s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#ff4500]'}`} style={{ width: `${Math.max(pct, 8)}%` }}>{Math.round(pct)}%</div>
                 </div>
                 <div className={`mt-1.5 text-xs ${past ? 'font-bold text-[#dc2626]' : s.left > 0 ? 'font-medium text-[#15803d]' : 'font-bold text-[#c2310a]'}`}>
                   {past ? 'This lab time is over' : s.left > 0 ? `${s.left} of ${s.seats} places left` : 'Full · you can join the waiting list'}
@@ -1139,6 +1152,11 @@ function Booker({ user, opts, intent, onIntentDone }) {
           );
         })}
       </Card>
+
+      {labPhoto && <Modal title={`${labPhoto.name} · lab photo`} onClose={() => setLabPhoto(null)} wide>
+        <LabImg lab={labPhoto} index={labPhoto.id} w={1400} className="max-h-[70vh] w-full rounded-[8px] object-contain" />
+        <p className="mt-3 text-xs text-black/55">Review the lab photo before applying.</p>
+      </Modal>}
 
       {!isStudent && (
         <Card t="Book students" sub="Choose a class or group, then the lab time and the students.">
