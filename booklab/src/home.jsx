@@ -21,6 +21,23 @@ const Plus = icon('M12 5v14m-7-7h14'); const LogOut = icon('M9 21H5a2 2 0 0 1-2-
 const Sunrise = icon('M12 2v7m-4-3 4 3 4-3M3 18h18M5 14a7 7 0 0 1 14 0m-17 8h20'); const Sunset = icon('M12 22v-7m-4 3 4-3 4 3M3 6h18M5 10a7 7 0 0 1 14 0m-17-8h20');
 const Eye = icon('M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'); const Radio = icon('M4 8h16a2 2 0 0 1 2 2v10H2V10a2 2 0 0 1 2-2zm4 4h.01');
 const ArrowLeft = icon('m12 19-7-7 7-7m-7 7h14'); const CheckCheck = icon('m2 12 4 4L16 6m-4 6 4 4 6-10');
+// Chat and call icons
+const PHONE = 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z';
+const VIDEO = 'm16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 11M4 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z';
+const MIC = 'M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v3';
+const Phone = icon(PHONE); const PhoneOff = icon(PHONE + 'M2 2l20 20');
+const Video = icon(VIDEO); const VideoOff = icon(VIDEO + 'M2 2l20 20');
+const Mic = icon(MIC); const MicOff = icon(MIC + 'M2 2l20 20');
+const Paperclip = icon('m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5');
+const Smile = icon('M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01');
+const Reply = icon('M9 17 4 12l5-5M20 18v-2a4 4 0 0 0-4-4H4');
+const Forward = icon('m15 17 5-5-5-5M4 18v-2a4 4 0 0 1 4-4h12');
+const MoreV = icon('M12 5h.01M12 12h.01M12 19h.01');
+const Pencil = icon('M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z');
+const Copy = icon('M9 9h11v11H9zM5 15H4V4h11v1');
+const Download = icon('M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3');
+const Monitor = icon('M3 4h18v12H3zM8 20h8M12 16v4');
+const FileIcon = icon('M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6');
 import logo from './assets/as.png';
 
 /* ================================================================== */
@@ -135,6 +152,13 @@ const itemPhoto = (m) => {
   if (m.kind === 'link') { const d = directImg(m.src); return d !== m.src ? d : ''; }
   return '';
 };
+// Picture of a lab: an uploaded one (path that starts with /api/) or a link.
+const labSrc = (u) => { const s = String(u || ''); return s.startsWith('/') ? BASE + s : directImg(s); };
+// Chat files are opened with the sign-in token in the link, because <img> and <video> cannot send a header.
+const chatFileUrl = (id, dl) => `${BASE}/api/chat/files/${id}?t=${encodeURIComponent(getToken())}${dl ? '&dl=1' : ''}`;
+const readB64 = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
+const fileSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const mmss = (s) => `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
 const byTime = (a, b) => `${a.date} ${a.from} ${a.lab}`.localeCompare(`${b.date} ${b.from} ${b.lab}`);
 const forLabel = (s) => s.forGroupName || s.forClass || (s.forPeople ? `${s.forPeople} chosen student${s.forPeople === 1 ? '' : 's'}` : '');
 const audText = (s) => (forLabel(s) ? `${s.exclusive ? 'Only ' : 'Reserved for '}${forLabel(s)}` : 'Everyone');
@@ -338,10 +362,10 @@ const Photo = ({ src, alt = '', className = '', fallback = null }) => {
   if (!src || bad) return fallback;
   return <img src={src} alt={alt} loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} className={className} />;
 };
-// The picture of a lab: its own image, or a nice default one.
+// The picture of a lab: its own image (uploaded or a link), or a nice default one.
 const LabImg = ({ lab, index = 0, className = '', w = 900 }) => {
   const def = defaultLabPic(lab?.id ?? index, w);
-  return <Photo src={lab?.image ? directImg(lab.image) : def} alt={lab?.name || 'Computer lab'} className={className}
+  return <Photo src={lab?.image ? labSrc(lab.image) : def} alt={lab?.name || 'Computer lab'} className={className}
     fallback={<img src={def} alt={lab?.name || 'Computer lab'} className={className} />} />;
 };
 const ThemeBtn = ({ dark, onToggle, className = '' }) => (
@@ -571,7 +595,7 @@ const Logo = ({ light }) => (
     <span className="text-base sm:text-lg" aria-label="Asyv_lms">
       {LOGO_LETTERS.map(([ch, tone], i) => (
         <span key={i} aria-hidden="true" className="lb-bounce"
-          style={{ animationDelay: `${i * 0.12}s`, color: tone === 'or' ? '#ff4500' : tone === 'green' ? (light ? '#ffffff' : '#16a34a') : (light ? '#ffffff' : 'var(--ink, #111827)') }}>
+          style={{ animationDelay: `${i * 0.12}s`, color: tone === 'or' ? '#ff4500' : tone === 'green' ? (light ? '#ffffff' : 'var(--ok, #16a34a)') : (light ? '#ffffff' : 'var(--ink, #111827)') }}>
           {ch}
         </span>
       ))}
@@ -580,6 +604,7 @@ const Logo = ({ light }) => (
 );
 
 // Light and dark mode. Everything is wrapped in .lms-dark when dark mode is on.
+// Dark mode is TRUE BLACK (#000) with orangered (#ff4500) as the only accent. Green is not used in dark mode.
 const GLOBAL_CSS = `
 @property --p { syntax: '<number>'; inherits: false; initial-value: 0; }
 @keyframes lbIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
@@ -603,21 +628,40 @@ const GLOBAL_CSS = `
 .lb-ring{padding:3px;border-radius:8px;background:conic-gradient(var(--c,#16a34a) calc(var(--p) * 1%),#e5e7eb 0);transition:--p 1.2s ease}
 @media (prefers-reduced-motion:reduce){.lb-bounce,.lb-pulse,.lb-in,.lb-dot,.lb-float,.lb-glow,.lb-zoom,.lb-rise,.lb-ping{animation:none!important}.lb-ring{transition:none}}
 
-/* Dark mode */
-.lms-dark{--ink:#f1f5f9;background:#0f172a;color:#e5e7eb;color-scheme:dark}
-.lms-dark .bg-white{background-color:#1e293b!important}
-.lms-dark [class~="bg-[#f7f8f7]"],.lms-dark [class~="bg-[#f0f2f5]"]{background-color:#0f172a!important}
-.lms-dark [class~="bg-[#e8f5ec]"]{background-color:#14301f!important}
-.lms-dark [class*="bg-white/"]{background-color:rgba(30,41,59,.92)!important}
-.lms-dark [class~="text-[#111827]"]{color:#e5e7eb!important}
-.lms-dark [class*="text-black/"]{color:#94a3b8!important}
-.lms-dark [class*="border-black/"]{border-color:#334155!important}
-.lms-dark [class*="divide-black/"]>*+*{border-color:#334155!important}
-.lms-dark input,.lms-dark select,.lms-dark textarea{background-color:#0f172a!important;color:#e5e7eb!important;border-color:#475569!important}
-.lms-dark [class*="hover:bg-black/"]:hover{background-color:#334155!important}
-.lms-dark [class*="bg-black/["]{background-color:#243247!important}
-.lms-dark .lb-ring{background:conic-gradient(var(--c,#16a34a) calc(var(--p) * 1%),#334155 0)}
-.lms-dark [class~="bg-[#111827]"]{background-color:#475569!important}
+/* Dark mode: true black, orangered accent, no green */
+.lms-dark{--ink:#ffffff;--ok:#ff4500;--full:#ffffff;--card:rgba(0,0,0,.88);background:#000;color:#f5f5f5;color-scheme:dark}
+.lms-dark .bg-white{background-color:#0a0a0a!important}
+.lms-dark [class~="bg-[#f7f8f7]"],.lms-dark [class~="bg-[#f0f2f5]"]{background-color:#000!important}
+.lms-dark [class~="bg-[#e8f5ec]"]{background-color:#1a0b05!important}
+.lms-dark [class*="from-[#e8f5ec]"]{background-image:none!important;background-color:#140a06!important}
+.lms-dark [class*="bg-white/"]{background-color:rgba(0,0,0,.92)!important}
+.lms-dark [class~="text-[#111827]"]{color:#f5f5f5!important}
+.lms-dark [class*="text-black/"]{color:#b8b8b8!important}
+.lms-dark [class*="border-black/"]{border-color:#2e2e2e!important}
+.lms-dark [class*="divide-black/"]>*+*{border-color:#2e2e2e!important}
+.lms-dark input,.lms-dark select,.lms-dark textarea{background-color:#000!important;color:#f5f5f5!important;border-color:#4a4a4a!important;accent-color:#ff4500}
+.lms-dark input::placeholder,.lms-dark textarea::placeholder{color:#8a8a8a!important}
+.lms-dark [class*="hover:bg-black/"]:hover{background-color:#1f1f1f!important}
+.lms-dark [class*="bg-black/["],.lms-dark [class~="bg-black/5"]{background-color:#181818!important}
+.lms-dark [class~="bg-black/10"]{background-color:#2a2a2a!important}
+.lms-dark [class~="bg-[#111827]"]{background-color:#2a2a2a!important}
+.lms-dark .lb-ring{background:conic-gradient(var(--c,#ff4500) calc(var(--p) * 1%),#2a2a2a 0)}
+/* green becomes orangered */
+.lms-dark [class*="bg-[#16a34a]"]{background-color:#ff4500!important}
+.lms-dark [class*="bg-[#16a34a]/"]{background-color:rgba(255,69,0,.2)!important}
+.lms-dark [class*="from-[#16a34a]"]{background-image:linear-gradient(135deg,#ff4500,#7a2200)!important}
+.lms-dark [class*="bg-[#4ade80]"]{background-color:#ff4500!important}
+.lms-dark [class*="text-[#16a34a]"],.lms-dark [class*="text-[#15803d]"]{color:#ff7a45!important}
+.lms-dark [class*="border-[#16a34a]"]{border-color:#ff4500!important}
+.lms-dark [class*="border-[#16a34a]/20"]{border-color:rgba(255,69,0,.28)!important}
+.lms-dark [class*="border-t-[#ff4500]"]{border-top-color:#ff4500!important}
+.lms-dark [class*="focus:border-[#16a34a]"]:focus{border-color:#ff4500!important}
+/* other colours that must stay readable on black */
+.lms-dark [class~="text-[#c2310a]"]{color:#ff7a45!important}
+.lms-dark [class~="text-[#b45309]"]{color:#ffb020!important}
+.lms-dark [class~="text-[#1d4ed8]"],.lms-dark [class~="text-[#2563eb]"]{color:#7db3ff!important}
+.lms-dark [class~="text-[#dc2626]"]{color:#ff6b6b!important}
+.lms-dark .rounded-full[class~="border-white"]{border-color:#000!important}
 `;
 
 /* ================================================================== */
@@ -637,7 +681,7 @@ function useOverview(day) {
 function SessionPick({ s, day, past, onLogin }) {
   const closed = past || s.state === 'over';
   const pct = s.seats ? Math.round(((s.seats - s.left) / s.seats) * 100) : 0;
-  const color = s.left < 1 ? '#ff4500' : '#16a34a';
+  const color = s.left < 1 ? 'var(--full, #ff4500)' : 'var(--ok, #16a34a)';
   const [p, setP] = useState(0);
   useEffect(() => { const t = setTimeout(() => setP(pct), 80); return () => clearTimeout(t); }, [pct]);
   const intent = { sessionId: s.id, date: day, lab: s.labName, from: s.from, to: s.to };
@@ -714,8 +758,8 @@ function LabBoard({ onLogin }) {
 
 // Animated live status of the labs, shown next to the headline on the landing page.
 const LIVE = {
-  available: ['#16a34a', 'Places open'], limited: ['#f59e0b', 'Few places left'], requested: ['#2563eb', 'Waiting list'],
-  full: ['#ff4500', 'Full'], none: ['#9ca3af', 'No lab time'],
+  available: ['var(--ok, #16a34a)', 'Places open'], limited: ['#f59e0b', 'Few places left'], requested: ['#2563eb', 'Waiting list'],
+  full: ['var(--full, #ff4500)', 'Full'], none: ['#9ca3af', 'No lab time'],
 };
 const DEMO_LABS = [
   { id: 'd1', name: 'Lab A', seats: 24 }, { id: 'd2', name: 'Lab B', seats: 20 }, { id: 'd3', name: 'Lab C', seats: 16 },
@@ -750,7 +794,7 @@ function LiveLabs() {
           </div>
         ))}
         {!labs.length && <img src={defaultLabPic(0, 1200)} alt="Computer lab" className="h-full w-full object-cover" />}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#052e16]/55 via-[#052e16]/25 to-[#052e16]/80" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#000000]/55 via-[#000000]/25 to-[#000000]/80" />
       </div>
       <div className="relative flex min-h-[380px] flex-col justify-between p-5 text-white">
         <div className="flex items-center justify-between gap-3">
@@ -781,7 +825,7 @@ function LiveLabs() {
             const applied = cur?.applied ?? cur?.applications ?? cur?.people?.length ?? (seats ? Math.max(0, seats - places) : 0);
             const pct = seats ? Math.round((applied / seats) * 100) : 0;
             return (
-              <div key={l.id} className="lb-rise rounded-xl bg-white/92 p-4 text-[#111827] shadow ring-2 ring-white" style={{ background: 'rgba(255,255,255,.93)' }}>
+              <div key={l.id} className="lb-rise rounded-xl bg-white/92 p-4 text-[#111827] shadow ring-2 ring-white" style={{ background: 'var(--card, rgba(255,255,255,.93))' }}>
                 <div className="flex items-center justify-between gap-3">
                   <b className="truncate text-sm">{l.name}</b>
                   <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-bold" style={{ color }}>
@@ -999,7 +1043,7 @@ function Slideshow({ className = '' }) {
           <img src={unsplash(s.id, 1200)} alt="" className={`h-full w-full object-cover ${k === i ? 'lb-zoom' : ''}`} />
         </div>
       ))}
-      <div className="absolute inset-0 bg-gradient-to-t from-[#052e16]/85 via-[#052e16]/10 to-[#052e16]/20" />
+      <div className="absolute inset-0 bg-gradient-to-t from-[#000000]/85 via-[#000000]/10 to-[#000000]/20" />
       <div className="absolute bottom-6 left-6 right-6 text-white">
         <div key={i} className="lb-rise">
           <p className="text-xl font-bold md:text-2xl">{LOGIN_SLIDES[i].t}</p>
@@ -1057,6 +1101,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
   const [day, setDay] = useState(intent?.date || today());
   const [sessions, setSessions] = useState([]);
   const [apps, setApps] = useState([]);
+  const [labsList, setLabsList] = useState([]);
   const [reason, setReason] = useState(opts.reasons?.[0] || '');
   const [classes, setClasses] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -1068,7 +1113,10 @@ function Booker({ user, opts, intent, onIntentDone }) {
   const { busy, run } = useBusy();
   const sent = useRef(false);
 
-  const loadSessions = () => api('/api/sessions').then(setSessions).catch((e) => setNote({ ok: false, text: e.message }));
+  const loadSessions = () => {
+    api('/api/labs').then(setLabsList).catch(() => {});
+    return api('/api/sessions').then(setSessions).catch((e) => setNote({ ok: false, text: e.message }));
+  };
   const loadApps = () => api('/api/apps').then(setApps).catch(() => {});
   useLive({ seats: loadSessions, 'applications:update': loadApps });
 
@@ -1129,6 +1177,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
   const mine = (id) => apps.find((a) => a.sid === id && a.status !== 'rejected');
   const myApps = apps.filter((a) => a.name === user.name || a.bookedBy === user.name).sort((a, b) => `${b.date} ${b.from}`.localeCompare(`${a.date} ${a.from}`));
   const sessionById = new Map(sessions.map((s) => [s.id, s]));
+  const imgOf = (labId) => labsList.find((x) => x.id === labId)?.image || '';
   const count = (k) => myApps.filter((a) => a.status === k).length;
   const srcOpts = [
     { value: '', label: 'Choose a class or group…' },
@@ -1158,9 +1207,9 @@ function Booker({ user, opts, intent, onIntentDone }) {
           const past = s.date < todayStr || s.state === 'over';
           return (
             <div key={s.id} className="flex flex-wrap items-center justify-between gap-4 border-t border-black/10 py-4">
-              <button type="button" aria-label={`View ${s.lab} photo`} onClick={() => setLabPhoto({ name: s.lab, id: s.labId ?? s.id, image: s.labImage || s.image })}
+              <button type="button" aria-label={`View ${s.lab} photo`} onClick={() => setLabPhoto({ name: s.lab, id: s.labId ?? s.id, image: imgOf(s.labId) })}
                 className="h-20 w-full overflow-hidden rounded-[8px] border border-black/10 sm:w-36">
-                <LabImg lab={{ name: s.lab, id: s.labId ?? s.id, image: s.labImage || s.image }} index={s.id} className="h-full w-full object-cover transition-transform hover:scale-105" />
+                <LabImg lab={{ name: s.lab, id: s.labId ?? s.id, image: imgOf(s.labId) }} index={s.id} className="h-full w-full object-cover transition-transform hover:scale-105" />
               </button>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -2440,7 +2489,7 @@ function TrendsManager({ user, opts }) {
     for (const file of list) {
       if (files.length >= 6) { setErr('You can add up to 6 files.'); break; }
       if (file.size > 12 * 1024 * 1024) { setErr(`${file.name} is bigger than 12 MB. Paste a link for long videos.`); continue; }
-      const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
+      const data = await readB64(file);
       setFiles((p) => (p.length >= 6 ? p : [...p, { name: file.name, mime: file.type || 'application/octet-stream', data, size: file.size }]));
     }
   });
@@ -2748,7 +2797,7 @@ export default function Home() {
   const [dark, setDark] = useState(() => localStorage.getItem('lms_dark') === 'true');
   useEffect(() => {
     localStorage.setItem('lms_dark', String(dark));
-    document.body.style.background = dark ? '#171717' : '';
+    document.body.style.background = dark ? '#000000' : '';
   }, [dark]);
   const toggleDark = () => setDark((v) => !v);
 
