@@ -114,6 +114,25 @@ const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate(
 const dayOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return ymd(d); };
 const today = () => dayOffset(0);
 const shiftDay = (s, n) => { const [y, m, d] = s.split('-').map(Number); return ymd(new Date(y, m - 1, d + n)); };
+const BOOKABLE_WEEKDAYS = new Set([5, 0, 6]); // Fri, Sat, Sun
+const isBookableDay = (s) => {
+  if (!s) return false;
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return !Number.isNaN(dt.getTime()) && BOOKABLE_WEEKDAYS.has(dt.getDay());
+};
+const shiftBookableDay = (s, dir = 1) => {
+  const base = new Date(`${s || today()}T12:00:00`);
+  let d = new Date(base);
+  let tries = 0;
+  while (tries < 14) {
+    d.setDate(d.getDate() + dir);
+    tries += 1;
+    if (BOOKABLE_WEEKDAYS.has(d.getDay())) return ymd(d);
+  }
+  return today();
+};
+const pickBookableDay = (s) => (isBookableDay(s) ? s : shiftBookableDay(s, 1));
 const niceDay = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); };
 const shortDay = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 const weekdayShort = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short' }); };
@@ -329,14 +348,19 @@ const Pills = ({ value, onChange, items }) => (
     ))}
   </div>
 );
-const DayBar = ({ day, onChange }) => (
-  <div className="flex flex-wrap items-center gap-2">
-    <Btn c="w" onClick={() => onChange(shiftDay(day, -1))}><ChevronLeft className="h-4 w-4" aria-hidden="true" />Previous day</Btn>
-    <Inp type="date" aria-label="Choose a day" value={day} onChange={(e) => e.target.value && onChange(e.target.value)} className="!w-40" />
-    <Btn c="w" onClick={() => onChange(shiftDay(day, 1))}>Next day<ChevronRight className="h-4 w-4" aria-hidden="true" /></Btn>
-    {day !== today() && <Btn onClick={() => onChange(today())}>Today</Btn>}
-  </div>
-);
+const DayBar = ({ day, onChange }) => {
+  const safeDay = isBookableDay(day) ? day : pickBookableDay(day || today());
+  const jump = (delta) => onChange(shiftBookableDay(safeDay, delta));
+  const choose = (value) => onChange(isBookableDay(value) ? value : pickBookableDay(value));
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Btn c="w" onClick={() => jump(-1)}><ChevronLeft className="h-4 w-4" aria-hidden="true" />Previous day</Btn>
+      <Inp type="date" aria-label="Choose a day" value={safeDay} onChange={(e) => e.target.value && choose(e.target.value)} className="!w-40" />
+      <Btn c="w" onClick={() => jump(1)}>Next day<ChevronRight className="h-4 w-4" aria-hidden="true" /></Btn>
+      {safeDay !== today() && <Btn onClick={() => onChange(pickBookableDay(today()))}>Today</Btn>}
+    </div>
+  );
+};
 const Avatar = ({ name, picture, gid, className = 'h-10 w-10 text-xs' }) => {
   const srcs = [directImg(picture), gravatar(gid), cartoon(name)].filter(Boolean);
   const [i, setI] = useState(0);
@@ -738,7 +762,7 @@ function LabCard({ lab, index, day, past, onLogin }) {
 }
 
 function LabBoard({ onLogin }) {
-  const [day, setDay] = useState(today());
+  const [day, setDay] = useState(() => pickBookableDay(today()));
   const { data, err, loading } = useOverview(day);
   return (
     <div>
@@ -1098,7 +1122,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
   const isStudent = user.role === 'student';
   const [labPhoto, setLabPhoto] = useState(null);
   const [ready, setReady] = useState(false);
-  const [day, setDay] = useState(intent?.date || today());
+  const [day, setDay] = useState(() => pickBookableDay(intent?.date || today()));
   const [sessions, setSessions] = useState([]);
   const [apps, setApps] = useState([]);
   const [labsList, setLabsList] = useState([]);
@@ -1110,6 +1134,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
   const [picked, setPicked] = useState([]);
   const [sid, setSid] = useState('');
   const [note, setNote] = useState(null);
+  const [approvalWelcome, setApprovalWelcome] = useState(null);
   const { busy, run } = useBusy();
   const sent = useRef(false);
 
@@ -1141,6 +1166,10 @@ function Booker({ user, opts, intent, onIntentDone }) {
     try {
       const body = names ? { sessionId: id, reason, students: names } : { sessionId: id, reason };
       const r = await api('/api/apply', 'POST', body);
+      if (r.approved > 0) {
+        const session = sessions.find((s) => s.id === id);
+        setApprovalWelcome({ lab: session?.lab || intent?.lab || 'the lab', count: r.approved });
+      }
       const parts = [`${r.created} booking${r.created === 1 ? '' : 's'} sent`];
       if (r.approved) parts.push(`${r.approved} approved at once`);
       if (r.queued) parts.push(`${r.queued} in the waiting list`);
@@ -1188,6 +1217,19 @@ function Booker({ user, opts, intent, onIntentDone }) {
 
   return (
     <div className="space-y-6">
+      {approvalWelcome && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="approval-welcome-title">
+          <div className="w-full max-w-4xl rounded-3xl border border-white/15 bg-[#050505] px-6 py-10 text-center text-white shadow-2xl sm:px-14 sm:py-16">
+            <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-full border border-emerald-400/40 bg-emerald-400/10 text-4xl font-bold text-emerald-300" aria-hidden="true">✓</div>
+            <p className="text-sm font-bold uppercase tracking-[0.25em] text-emerald-300">Booking approved</p>
+            <h2 id="approval-welcome-title" className="mt-4 text-4xl font-black leading-tight sm:text-6xl">Congratulations!</h2>
+            <p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-white/80 sm:text-2xl">
+              Welcome to <strong className="text-white">{approvalWelcome.lab}</strong>! {approvalWelcome.count === 1 ? 'Your booking has' : `${approvalWelcome.count} bookings have`} been approved.
+            </p>
+            <button type="button" autoFocus onClick={() => setApprovalWelcome(null)} className="mt-9 rounded-lg bg-white px-9 py-3 text-base font-bold text-black transition hover:bg-white/85 focus:outline-none focus:ring-2 focus:ring-emerald-300">Continue</button>
+          </div>
+        </div>
+      )}
       {note && <Alert ok={note.ok}>{note.text}</Alert>}
       <div className="grid grid-cols-3 gap-4">
         <Stat v={count('approved')} t="Approved" tone="gr" />
@@ -1440,7 +1482,7 @@ function StudentsModal({ lab, s, onClose }) {
 // Labs page: only PUBLISHED lab times. For each lab: its picture, status, how many applied and the students.
 // Click "View all students" to go through everyone, "Open lab" to mark attendance, or "Print" for the list.
 function LabsPage({ onOpenLab }) {
-  const [day, setDay] = useState(today());
+  const [day, setDay] = useState(() => pickBookableDay(today()));
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [viewer, setViewer] = useState(null);
@@ -1714,13 +1756,13 @@ const PERIOD_CHOICES = [['before', 'Before lunch', Sunrise], ['after', 'After lu
 
 // Schedule: prepare lab times (for lunch periods, one or many labs, a class, a group or chosen students) and manage the ones that exist.
 function SchedulePage() {
-  const [day, setDay] = useState(today());
+  const [day, setDay] = useState(() => pickBookableDay(today()));
   const [labs, setLabs] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
   const [opts, setOpts] = useState({});
-  const [f, setF] = useState({ date: today(), period: 'both', from: '14:00', to: '16:00', labIds: [], places: '', auto: 'true' });
+  const [f, setF] = useState({ date: pickBookableDay(today()), period: 'both', from: '14:00', to: '16:00', labIds: [], places: '', auto: 'true' });
   const [aud, setAud] = useState({ ...BLANK_AUD });
   const [edit, setEdit] = useState(null);
   const [selS, setSelS] = useState([]);
