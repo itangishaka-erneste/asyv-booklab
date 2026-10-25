@@ -1,6 +1,26 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { CalendarDays, CalendarCheck2, UserRound, LayoutDashboard, FlaskConical, CalendarClock, UsersRound, MessageCircle, Settings2, PackageSearch, Sun, Moon, Send, Users, ChevronLeft, ChevronRight, X, Trash2, Printer, Plus, LogOut, Sunrise, Sunset, Eye, Radio, ArrowLeft, CheckCheck } from 'lucide-react';
+const icon = (d) => function Icon({ className = '', ...props }) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}><path d={d} /></svg>; };
+const CalendarDays = icon('M8 2v4m8-4v4M3 10h18M5 4h14v18H3V6a2 2 0 0 1 2-2zm2 10h3m4 0h3m-10 4h3');
+const CalendarCheck2 = icon('M8 2v4m8-4v4M3 10h18M5 4h14v18H3V6a2 2 0 0 1 2-2zm4 10 2 2 4-4');
+const UserRound = icon('M20 21a8 8 0 0 0-16 0m8-10a5 5 0 1 0 0-10 5 5 0 0 0 0 10z');
+const LayoutDashboard = icon('M3 3h8v8H3zm10 0h8v5h-8zm0 7h8v11h-8zm-10 3h8v8H3z');
+const FlaskConical = icon('M9 3h6m-5 0v7L4 20a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1l-6-10V3m-8 12h12');
+const CalendarClock = icon('M8 2v4m8-4v4M3 10h13M5 4h14v9M3 6v14h11m4-5v4l3 2');
+const UsersRound = icon('M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2m6-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm6-7a4 4 0 0 1 0 8m2 3a4 4 0 0 1 3 4v2');
+const MessageCircle = icon('M21 11.5a8.5 8.5 0 0 1-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1 1 21 11.5z');
+const Settings2 = icon('M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M2 14h4m4-6h4m4 8h4');
+const PackageSearch = icon('M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4m-9 4v10');
+const Sun = icon('M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4m0-12.8L17 7M7 17l-1.4 1.4M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z');
+const Moon = icon('M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5z');
+const Send = icon('m22 2-7 20-4-9-9-4 20-7zM22 2 11 13'); const Users = UsersRound;
+const ChevronLeft = icon('m15 18-6-6 6-6'); const ChevronRight = icon('m9 18 6-6-6-6');
+const X = icon('M18 6 6 18M6 6l12 12'); const Trash2 = icon('M3 6h18m-2 0-1 14H6L5 6m4 0V4h6v2');
+const Printer = icon('M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2m-12-4h12v8H6z');
+const Plus = icon('M12 5v14m-7-7h14'); const LogOut = icon('M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9');
+const Sunrise = icon('M12 2v7m-4-3 4 3 4-3M3 18h18M5 14a7 7 0 0 1 14 0m-17 8h20'); const Sunset = icon('M12 22v-7m-4 3 4-3 4 3M3 6h18M5 10a7 7 0 0 1 14 0m-17-8h20');
+const Eye = icon('M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'); const Radio = icon('M4 8h16a2 2 0 0 1 2 2v10H2V10a2 2 0 0 1 2-2zm4 4h.01');
+const ArrowLeft = icon('m12 19-7-7 7-7m-7 7h14'); const CheckCheck = icon('m2 12 4 4L16 6m-4 6 4 4 6-10');
 import logo from './assets/as.png';
 
 /* ================================================================== */
