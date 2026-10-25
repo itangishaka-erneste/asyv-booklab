@@ -1,5 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import lab3 from './assets/lab3.jpeg';
+import lab33 from './assets/lab33.jpeg';
+import lab11 from './assets/lab11.jpeg';
+import lab22 from './assets/lab22.jpeg';
+import lab4 from './assets/lab4.jpeg';
+import c7 from './assets/c7.jpeg';
+import c8 from './assets/c8.jpeg';
+
 const icon = (d) => function Icon({ className = '', ...props }) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}><path d={d} /></svg>; };
 const CalendarDays = icon('M8 2v4m8-4v4M3 10h18M5 4h14v18H3V6a2 2 0 0 1 2-2zm2 10h3m4 0h3m-10 4h3');
 const CalendarCheck2 = icon('M8 2v4m8-4v4M3 10h18M5 4h14v18H3V6a2 2 0 0 1 2-2zm4 10 2 2 4-4');
@@ -59,6 +67,7 @@ const unsplash = (id, w = 900) => `https://images.unsplash.com/${id}?auto=format
 // Pictures used when a lab has no image of its own, and on the landing and login pages.
 const LAB_PICS = ['photo-1498050108023-c5249f4df085', 'photo-1517694712202-14dd9538aa97', 'photo-1519389950473-47ba0277781c', 'photo-1522202176988-66273c2fd55f', 'photo-1531482615713-2afd69097998', 'photo-1497366754035-f200968a6e72'];
 const defaultLabPic = (i, w = 900) => unsplash(LAB_PICS[Math.abs(+i || 0) % LAB_PICS.length], w);
+const LAB_IMAGE_SETS = [[lab3, lab33], [lab11, lab22], [lab4], [c7, c8]];
 const LOGIN_SLIDES = [
   { id: 'photo-1498050108023-c5249f4df085', t: 'Your next idea starts here.', s: 'Book a computer lab place before you arrive.' },
   { id: 'photo-1522202176988-66273c2fd55f', t: 'Study together, work smarter.', s: 'Pick a lab time and press Apply.' },
@@ -389,7 +398,17 @@ const Photo = ({ src, alt = '', className = '', fallback = null }) => {
 // The picture of a lab: its own image (uploaded or a link), or a nice default one.
 const LabImg = ({ lab, index = 0, className = '', w = 900 }) => {
   const def = defaultLabPic(lab?.id ?? index, w);
-  return <Photo src={lab?.image ? labSrc(lab.image) : def} alt={lab?.name || 'Computer lab'} className={className}
+  const key = Math.abs(Number(lab?.id ?? index) || 0) % LAB_IMAGE_SETS.length;
+  const localImages = LAB_IMAGE_SETS[key];
+  const [imageIndex, setImageIndex] = useState(0);
+  useEffect(() => {
+    setImageIndex(0);
+    if (lab?.image || localImages.length < 2) return undefined;
+    const timer = setInterval(() => setImageIndex((i) => (i + 1) % localImages.length), 2000);
+    return () => clearInterval(timer);
+  }, [lab?.image, key, localImages.length]);
+  const src = lab?.image ? labSrc(lab.image) : localImages[imageIndex];
+  return <Photo src={src || def} alt={lab?.name || 'Computer lab'} className={className}
     fallback={<img src={def} alt={lab?.name || 'Computer lab'} className={className} />} />;
 };
 const ThemeBtn = ({ dark, onToggle, className = '' }) => (
@@ -1759,7 +1778,7 @@ function LabPicker({ labs, value, onChange }) {
   );
 }
 
-const PERIOD_CHOICES = [['before', 'Before lunch', Sunrise], ['after', 'After lunch', Sunset], ['both', 'Both periods', Sun], ['custom', 'Custom time', CalendarClock]];
+const PERIOD_CHOICES = [['before', 'Morning · before lunch', Sunrise], ['after', 'After lunch', Sunset], ['both', 'Morning + after lunch', Sun], ['custom', 'Custom time', CalendarClock]];
 
 // Schedule: prepare lab times (for lunch periods, one or many labs, a class, a group or chosen students) and manage the ones that exist.
 function SchedulePage() {
@@ -1783,6 +1802,15 @@ function SchedulePage() {
   const students = users.filter((u) => u.role === 'student');
   const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
   const P = periodsOf(opts);
+  const scheduleWeekday = f.date ? new Date(`${f.date}T12:00:00`).getDay() : -1;
+  const scheduleDayName = scheduleWeekday === 5 ? 'Friday' : scheduleWeekday === 6 ? 'Saturday' : '';
+  const schedulePeriodDescription = f.period === 'before'
+    ? `Morning (before lunch): ${P.before.from}–${P.before.to}${scheduleWeekday === 6 ? ' · after farm' : ''}`
+    : f.period === 'after'
+      ? `After lunch: ${P.after.from}–${P.after.to}`
+      : f.period === 'both'
+        ? `Morning (before lunch): ${P.before.from}–${P.before.to}${scheduleWeekday === 6 ? ' · after farm' : ''}; after lunch: ${P.after.from}–${P.after.to}`
+        : `Custom time: ${f.from}–${f.to}`;
   const slots = f.period === 'before' ? [P.before] : f.period === 'after' ? [P.after] : f.period === 'both' ? [P.before, P.after] : [{ from: f.from, to: f.to }];
   const timeOk = !!f.date && slots.every((s) => s.from && s.to && s.from < s.to);
   const labsOk = f.labIds.length > 0;
@@ -1833,7 +1861,7 @@ function SchedulePage() {
                 </button>
               ))}
             </div>
-            <p className="mt-1.5 text-[11px] text-black/50">The lunch times can be changed in Settings.{periodHint && ` This will create ${periodHint}.`}</p>
+            <p className="mt-1.5 text-[11px] text-black/60">{scheduleDayName && `${scheduleDayName}: `}{schedulePeriodDescription}. Lunch times can be changed in Settings.</p>
           </div>
           {f.period === 'custom' && (
             <div className="grid gap-4 md:grid-cols-3">
