@@ -65,19 +65,10 @@ const combosFor = (o, g) => o.gradeCombos?.[g] ?? [];
 const catsOf = (o) => (o?.trendCategories?.length ? o.trendCategories : DEFAULT_CATS);
 const unsplash = (id, w = 900) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=${w}&q=80`;
 // Pictures used when a lab has no image of its own, and on the landing and login pages.
+const LAB_PICS = ['photo-1498050108023-c5249f4df085', 'photo-1517694712202-14dd9538aa97', 'photo-1519389950473-47ba0277781c', 'photo-1522202176988-66273c2fd55f', 'photo-1531482615713-2afd69097998', 'photo-1497366754035-f200968a6e72'];
+const defaultLabPic = (i, w = 900) => unsplash(LAB_PICS[Math.abs(+i || 0) % LAB_PICS.length], w);
 const LAB_IMAGES_BY_NAME = {
-  'lab 1': lab11,
-  'lab 2': lab22,
-  'lab 3': lab33,
-  'lab 4': lab4,
-  'lab 7': c7,
-  'lab 8': c8,
-  lab1: lab11,
-  lab2: lab22,
-  lab3: lab33,
-  lab4,
-  lab7: c7,
-  lab8: c8,
+  lab1: lab11, lab2: lab22, lab3, lab33, lab11, lab22, lab4, c7, c8,
 };
 const LOGIN_SLIDES = [
   { id: 'photo-1498050108023-c5249f4df085', t: 'Your next idea starts here.', s: 'Book a computer lab place before you arrive.' },
