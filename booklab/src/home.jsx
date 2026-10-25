@@ -4,7 +4,6 @@ import lab3 from './assets/lab3.jpeg';
 import lab33 from './assets/lab33.jpeg';
 import lab11 from './assets/lab11.jpeg';
 import lab22 from './assets/lab22.jpeg';
-import lab4 from './assets/lab4.jpeg';
 import c7 from './assets/c7.jpeg';
 import c8 from './assets/c8.jpeg';
 
@@ -67,7 +66,9 @@ const unsplash = (id, w = 900) => `https://images.unsplash.com/${id}?auto=format
 // Pictures used when a lab has no image of its own, and on the landing and login pages.
 const LAB_PICS = ['photo-1498050108023-c5249f4df085', 'photo-1517694712202-14dd9538aa97', 'photo-1519389950473-47ba0277781c', 'photo-1522202176988-66273c2fd55f', 'photo-1531482615713-2afd69097998', 'photo-1497366754035-f200968a6e72'];
 const defaultLabPic = (i, w = 900) => unsplash(LAB_PICS[Math.abs(+i || 0) % LAB_PICS.length], w);
-const LAB_IMAGE_SETS = [[lab3, lab33], [lab11, lab22], [lab4], [c7, c8]];
+const LAB_IMAGES_BY_NAME = {
+  lab3, lab33, lab11, lab22, c7, c8,
+};
 const LOGIN_SLIDES = [
   { id: 'photo-1498050108023-c5249f4df085', t: 'Your next idea starts here.', s: 'Book a computer lab place before you arrive.' },
   { id: 'photo-1522202176988-66273c2fd55f', t: 'Study together, work smarter.', s: 'Pick a lab time and press Apply.' },
@@ -398,16 +399,9 @@ const Photo = ({ src, alt = '', className = '', fallback = null }) => {
 // The picture of a lab: its own image (uploaded or a link), or a nice default one.
 const LabImg = ({ lab, index = 0, className = '', w = 900 }) => {
   const def = defaultLabPic(lab?.id ?? index, w);
-  const key = Math.abs(Number(lab?.id ?? index) || 0) % LAB_IMAGE_SETS.length;
-  const localImages = LAB_IMAGE_SETS[key];
-  const [imageIndex, setImageIndex] = useState(0);
-  useEffect(() => {
-    setImageIndex(0);
-    if (lab?.image || localImages.length < 2) return undefined;
-    const timer = setInterval(() => setImageIndex((i) => (i + 1) % localImages.length), 2000);
-    return () => clearInterval(timer);
-  }, [lab?.image, key, localImages.length]);
-  const src = lab?.image ? labSrc(lab.image) : localImages[imageIndex];
+  const nameKey = String(lab?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const namedImage = LAB_IMAGES_BY_NAME[nameKey];
+  const src = lab?.image ? labSrc(lab.image) : namedImage || def;
   return <Photo src={src || def} alt={lab?.name || 'Computer lab'} className={className}
     fallback={<img src={def} alt={lab?.name || 'Computer lab'} className={className} />} />;
 };
