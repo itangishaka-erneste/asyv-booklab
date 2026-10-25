@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { CalendarDays, CalendarCheck2, UserRound, LayoutDashboard, FlaskConical, CalendarClock, UsersRound, MessageCircle, Settings2, PackageSearch } from 'lucide-react';
+import {
+  CalendarDays, CalendarCheck2, UserRound, LayoutDashboard, FlaskConical, CalendarClock, UsersRound, MessageCircle, Settings2, PackageSearch,
+  Sun, Moon, Send, Smile, ThumbsUp, Users, ChevronLeft, ChevronRight, X, Trash2, Printer, Plus, LogOut, Sunrise, Sunset, Eye, Radio, ArrowLeft, CheckCheck,
+} from 'lucide-react';
 import logo from './assets/as.png';
 
 /* ================================================================== */
@@ -18,6 +21,16 @@ const ADMIN_TABS = ['Overview', 'Labs', 'Schedule', 'People', 'Chat', 'Settings'
 const gradesOf = (o) => (o.grades?.length ? o.grades : DEFAULT_GRADES);
 const combosFor = (o, g) => o.gradeCombos?.[g] ?? [];
 const catsOf = (o) => (o?.trendCategories?.length ? o.trendCategories : DEFAULT_CATS);
+const unsplash = (id, w = 900) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=${w}&q=80`;
+// Pictures used when a lab has no image of its own, and on the landing and login pages.
+const LAB_PICS = ['photo-1498050108023-c5249f4df085', 'photo-1517694712202-14dd9538aa97', 'photo-1519389950473-47ba0277781c', 'photo-1522202176988-66273c2fd55f', 'photo-1531482615713-2afd69097998', 'photo-1497366754035-f200968a6e72'];
+const defaultLabPic = (i, w = 900) => unsplash(LAB_PICS[Math.abs(+i || 0) % LAB_PICS.length], w);
+const LOGIN_SLIDES = [
+  { id: 'photo-1498050108023-c5249f4df085', t: 'Your next idea starts here.', s: 'Book a computer lab place before you arrive.' },
+  { id: 'photo-1522202176988-66273c2fd55f', t: 'Study together, work smarter.', s: 'Pick a lab time and press Apply.' },
+  { id: 'photo-1519389950473-47ba0277781c', t: 'Free places are approved at once.', s: 'When a lab time is full, join the waiting list.' },
+  { id: 'photo-1517694712202-14dd9538aa97', t: 'Every lab, live.', s: 'See free places update in real time.' },
+];
 
 let token = localStorage.getItem('lms_token') || '';
 const getToken = () => token;
@@ -124,6 +137,11 @@ const labStatus = (sessions) => {
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 // The people who really hold a place or wait for one (released and rejected are left out).
 const liveOf = (s) => s.people.filter((a) => a.status !== 'rejected');
+// Lunch periods are kept in the settings. Defaults are used until the settings are loaded.
+const periodsOf = (o = {}) => ({
+  before: { from: o.beforeFrom || '08:00', to: o.beforeTo || '12:30' },
+  after: { from: o.afterFrom || '13:30', to: o.afterTo || '17:00' },
+});
 
 /* Printing: admin only. Students never see print buttons. */
 const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -167,7 +185,7 @@ const BTN = {
   dk: 'bg-[#111827] text-white', am: 'bg-[#f59e0b] text-white', w: 'bg-white text-[#111827] border border-black/20 hover:bg-black/5',
 };
 const Btn = ({ c = 'ink', className = '', ...p }) => (
-  <button type="button" className={`px-4 py-2 text-xs font-semibold rounded-[6px] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed ${BTN[c]} ${className}`} {...p} />
+  <button type="button" className={`inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-[6px] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed ${BTN[c]} ${className}`} {...p} />
 );
 const ActBtn = ({ busy, label, doing = 'Working…', c = 'ink', disabled, className = '', ...p }) => (
   <Btn c={c} className={className} disabled={busy || disabled} {...p}>
@@ -251,7 +269,7 @@ const Modal = ({ title, onClose, wide, children }) => (
       onClick={(e) => e.stopPropagation()}>
       <div className="mb-5 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold">{title}</h3>
-        <button type="button" aria-label="Close" onClick={onClose} className="text-xl leading-none text-black/50 hover:text-black">×</button>
+        <button type="button" aria-label="Close" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full text-black/50 hover:bg-black/5 hover:text-black"><X className="h-4 w-4" aria-hidden="true" /></button>
       </div>
       {children}
     </div>
@@ -272,9 +290,9 @@ const Pills = ({ value, onChange, items }) => (
 );
 const DayBar = ({ day, onChange }) => (
   <div className="flex flex-wrap items-center gap-2">
-    <Btn c="w" onClick={() => onChange(shiftDay(day, -1))}>← Previous day</Btn>
+    <Btn c="w" onClick={() => onChange(shiftDay(day, -1))}><ChevronLeft className="h-4 w-4" aria-hidden="true" />Previous day</Btn>
     <Inp type="date" aria-label="Choose a day" value={day} onChange={(e) => e.target.value && onChange(e.target.value)} className="!w-40" />
-    <Btn c="w" onClick={() => onChange(shiftDay(day, 1))}>Next day →</Btn>
+    <Btn c="w" onClick={() => onChange(shiftDay(day, 1))}>Next day<ChevronRight className="h-4 w-4" aria-hidden="true" /></Btn>
     {day !== today() && <Btn onClick={() => onChange(today())}>Today</Btn>}
   </div>
 );
@@ -295,6 +313,49 @@ const Person = ({ p, sub, className = 'h-9 w-9 text-xs' }) => (
       <span className="block truncate text-xs text-black/55">{sub ?? (p.email || 'No email')}</span>
     </span>
   </span>
+);
+// An image that falls back to something else when it cannot load (broken link, blocked host).
+const Photo = ({ src, alt = '', className = '', fallback = null }) => {
+  const [bad, setBad] = useState(false);
+  useEffect(() => setBad(false), [src]);
+  if (!src || bad) return fallback;
+  return <img src={src} alt={alt} loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} className={className} />;
+};
+// The picture of a lab: its own image, or a nice default one.
+const LabImg = ({ lab, index = 0, className = '', w = 900 }) => {
+  const def = defaultLabPic(lab?.id ?? index, w);
+  return <Photo src={lab?.image ? directImg(lab.image) : def} alt={lab?.name || 'Computer lab'} className={className}
+    fallback={<img src={def} alt={lab?.name || 'Computer lab'} className={className} />} />;
+};
+const ThemeBtn = ({ dark, onToggle, className = '' }) => (
+  <button type="button" aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} onClick={onToggle}
+    className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border border-black/15 bg-white text-[#111827] hover:bg-black/5 ${className}`}>
+    {dark ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
+  </button>
+);
+// Previous / Next controls for long lists.
+const Pager = ({ page, pages, onChange, label }) => (pages > 1 ? (
+  <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-black/10 pt-3">
+    <span className="text-xs text-black/55">{label}</span>
+    <div className="flex items-center gap-2">
+      <Btn c="w" disabled={page <= 0} onClick={() => onChange(page - 1)}><ChevronLeft className="h-4 w-4" aria-hidden="true" />Previous</Btn>
+      <span className="text-xs font-semibold">{page + 1} / {pages}</span>
+      <Btn c="w" disabled={page >= pages - 1} onClick={() => onChange(page + 1)}>Next<ChevronRight className="h-4 w-4" aria-hidden="true" /></Btn>
+    </div>
+  </div>
+) : null);
+// "Select all" bar used above lists that can be deleted in bulk.
+const SelectBar = ({ total, selected, onAll, onNone, children }) => (
+  <div className="mb-3 flex flex-wrap items-center gap-3 rounded-[6px] bg-black/[0.03] px-3 py-2">
+    <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold">
+      <input type="checkbox" className="h-4 w-4 accent-[#16a34a]" checked={total > 0 && selected === total}
+        ref={(el) => { if (el) el.indeterminate = selected > 0 && selected < total; }}
+        onChange={(e) => (e.target.checked ? onAll() : onNone())} />
+      Select all ({total})
+    </label>
+    {selected > 0 && <span className="text-xs text-black/55">{selected} selected</span>}
+    <span className="ml-auto flex flex-wrap items-center gap-2">{children}</span>
+  </div>
 );
 
 // Waits for one action at a time. A second click does nothing while busy.
@@ -375,7 +436,7 @@ function StudentPicker({ students, value, onChange }) {
       </div>
       <div className="mt-3 max-h-56 divide-y divide-black/10 overflow-y-auto rounded-[6px] border border-black/10">
         {shown.map((s) => (
-          <label key={s.id} className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-black/[0.02]">
+          <label key={s.id ?? s.name} className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-black/[0.02]">
             <input type="checkbox" className="h-4 w-4 accent-[#16a34a]" checked={has(s.name)} onChange={() => toggle(s.name)} />
             <Person p={s} className="h-7 w-7 text-[10px]" />
             <span className="ml-auto text-xs text-black/55">{s.className || 'No class'}</span>
@@ -472,7 +533,7 @@ function ChipList({ items, placeholder, onAdd, onRemove, onEdit }) {
           <span key={x} className="inline-flex items-center gap-2 rounded-[6px] border border-black/15 bg-white py-1.5 pl-3 pr-2 text-xs font-medium">
             {x}
             {onEdit && <button type="button" aria-label={`Rename ${x}`} onClick={() => setEd({ old: x, val: x })} className="text-[#2563eb] hover:underline">Edit</button>}
-            <button type="button" aria-label={`Remove ${x}`} onClick={() => onRemove(x)} className="grid h-4 w-4 place-items-center text-[#ff4500]">×</button>
+            <button type="button" aria-label={`Remove ${x}`} onClick={() => onRemove(x)} className="grid h-4 w-4 place-items-center text-[#ff4500]"><X className="h-3.5 w-3.5" aria-hidden="true" /></button>
           </span>
         )))}
       </div>
@@ -493,7 +554,7 @@ const Logo = ({ light }) => (
     <span className="text-base sm:text-lg" aria-label="Asyv_lms">
       {LOGO_LETTERS.map(([ch, tone], i) => (
         <span key={i} aria-hidden="true" className="lb-bounce"
-          style={{ animationDelay: `${i * 0.12}s`, color: tone === 'or' ? '#ff4500' : tone === 'green' ? (light ? '#ffffff' : '#16a34a') : (light ? '#ffffff' : '#111827') }}>
+          style={{ animationDelay: `${i * 0.12}s`, color: tone === 'or' ? '#ff4500' : tone === 'green' ? (light ? '#ffffff' : '#16a34a') : (light ? '#ffffff' : 'var(--ink, #111827)') }}>
           {ch}
         </span>
       ))}
@@ -501,6 +562,7 @@ const Logo = ({ light }) => (
   </div>
 );
 
+// Light and dark mode. Everything is wrapped in .lms-dark when dark mode is on.
 const GLOBAL_CSS = `
 @property --p { syntax: '<number>'; inherits: false; initial-value: 0; }
 @keyframes lbIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
@@ -509,14 +571,36 @@ const GLOBAL_CSS = `
 @keyframes lbDot{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-3px);opacity:1}}
 @keyframes lbFloat{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-10px) rotate(1deg)}}
 @keyframes lbGlow{0%,100%{box-shadow:0 12px 30px rgba(22,163,74,.12)}50%{box-shadow:0 18px 45px rgba(22,163,74,.3)}}
+@keyframes lbZoom{from{transform:scale(1)}to{transform:scale(1.12)}}
+@keyframes lbRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes lbPing{0%{transform:scale(1);opacity:.7}100%{transform:scale(2.4);opacity:0}}
 .lb-float{animation:lbFloat 5s ease-in-out infinite}.lb-glow{animation:lbGlow 4s ease-in-out infinite}
 .lb-in{animation:lbIn .6s ease both}
+.lb-zoom{animation:lbZoom 9s ease-out both}
+.lb-rise{animation:lbRise .45s ease both}
+.lb-ping{animation:lbPing 1.6s ease-out infinite}
 .lb-bounce{display:inline-block;animation:lbBounce 2.2s ease-in-out infinite}
 .lb-pulse{animation:lbPulse 1.6s ease-in-out infinite}
 .lb-dot{display:inline-block;width:6px;height:6px;border-radius:9999px;background:#9ca3af;animation:lbDot 1.2s infinite}
 /* Border fills up as places are taken. --p is 0 to 100. */
 .lb-ring{padding:3px;border-radius:8px;background:conic-gradient(var(--c,#16a34a) calc(var(--p) * 1%),#e5e7eb 0);transition:--p 1.2s ease}
-@media (prefers-reduced-motion:reduce){.lb-bounce,.lb-pulse,.lb-in,.lb-dot,.lb-float,.lb-glow{animation:none!important}.lb-ring{transition:none}}
+@media (prefers-reduced-motion:reduce){.lb-bounce,.lb-pulse,.lb-in,.lb-dot,.lb-float,.lb-glow,.lb-zoom,.lb-rise,.lb-ping{animation:none!important}.lb-ring{transition:none}}
+
+/* Dark mode */
+.lms-dark{--ink:#f1f5f9;background:#0f172a;color:#e5e7eb;color-scheme:dark}
+.lms-dark .bg-white{background-color:#1e293b!important}
+.lms-dark [class~="bg-[#f7f8f7]"],.lms-dark [class~="bg-[#f0f2f5]"]{background-color:#0f172a!important}
+.lms-dark [class~="bg-[#e8f5ec]"]{background-color:#14301f!important}
+.lms-dark [class*="bg-white/"]{background-color:rgba(30,41,59,.92)!important}
+.lms-dark [class~="text-[#111827]"]{color:#e5e7eb!important}
+.lms-dark [class*="text-black/"]{color:#94a3b8!important}
+.lms-dark [class*="border-black/"]{border-color:#334155!important}
+.lms-dark [class*="divide-black/"]>*+*{border-color:#334155!important}
+.lms-dark input,.lms-dark select,.lms-dark textarea{background-color:#0f172a!important;color:#e5e7eb!important;border-color:#475569!important}
+.lms-dark [class*="hover:bg-black/"]:hover{background-color:#334155!important}
+.lms-dark [class*="bg-black/["]{background-color:#243247!important}
+.lms-dark .lb-ring{background:conic-gradient(var(--c,#16a34a) calc(var(--p) * 1%),#334155 0)}
+.lms-dark [class~="bg-[#111827]"]{background-color:#475569!important}
 `;
 
 /* ================================================================== */
@@ -567,13 +651,14 @@ function SessionPick({ s, day, past, onLogin }) {
   return <div className="lb-ring" style={{ '--c': color, '--p': p }}>{inner}</div>;
 }
 
-function LabCard({ lab, day, past, onLogin }) {
+function LabCard({ lab, index, day, past, onLogin }) {
   const status = labStatus(lab.sessions.map((s) => ({ ...s, state: past ? 'over' : s.state })));
   const text = { open: 'Places open', full: 'Full', over: 'Closed', none: 'No lab time', draft: 'Not open' }[status];
   return (
     <article className={`flex flex-col overflow-hidden rounded-[8px] border bg-white ${status === 'over' ? 'border-[#dc2626]/50' : 'border-black/10'}`}>
-      <div className="relative h-32 overflow-hidden bg-[#e8f5ec]">
-        <img src="https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=900&q=80" alt="Computer lab" className="lb-float h-full w-full object-cover" />
+      <div className="relative h-36 overflow-hidden bg-[#e8f5ec]">
+        <LabImg lab={lab} index={index} className="lb-float h-full w-full object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
         <span className="absolute bottom-3 left-3 rounded-full bg-white/95 px-3 py-1 text-[11px] font-semibold text-[#15803d] shadow">{text}</span>
       </div>
       <div className="flex items-center justify-between gap-3 border-b border-black/10 p-4">
@@ -604,7 +689,83 @@ function LabBoard({ onLogin }) {
       {loading && !err && <div className="mt-8"><Loader full label="Loading the labs" /></div>}
       {!loading && data?.labs.length === 0 && <Empty>No labs have been added yet.</Empty>}
       <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-        {!loading && data?.labs.map((l) => <LabCard key={l.id} lab={l} day={day} past={day < today()} onLogin={onLogin} />)}
+        {!loading && data?.labs.map((l, i) => <LabCard key={l.id} lab={l} index={i} day={day} past={day < today()} onLogin={onLogin} />)}
+      </div>
+    </div>
+  );
+}
+
+// Animated live status of the labs, shown next to the headline on the landing page.
+const LIVE = {
+  available: ['#16a34a', 'Places open'], limited: ['#f59e0b', 'Few places left'], requested: ['#2563eb', 'Waiting list'],
+  full: ['#ff4500', 'Full'], none: ['#9ca3af', 'No lab time'],
+};
+const DEMO_LABS = [
+  { id: 'd1', name: 'Lab A', seats: 24 }, { id: 'd2', name: 'Lab B', seats: 20 }, { id: 'd3', name: 'Lab C', seats: 16 },
+];
+function LiveLabs() {
+  const { data } = useOverview(today());
+  const [tick, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 2600); return () => clearInterval(t); }, []);
+  const real = (data?.labs || []).slice(0, 4);
+  const demo = !real.length;
+  const labs = demo
+    ? DEMO_LABS.map((l, i) => {
+      const taken = Math.round(l.seats * (0.45 + 0.45 * Math.sin(tick / 1.7 + i * 1.9) ** 2));
+      const free = l.seats - taken;
+      return { ...l, taken, free, status: free < 1 ? 'full' : free / l.seats <= 0.3 ? 'limited' : 'available', sessions: [{ from: '14:00', to: '16:00', seats: l.seats, left: free }] };
+    })
+    : real;
+  const hot = labs.length ? tick % labs.length : 0;
+  const free = labs.reduce((n, l) => n + (l.free || 0), 0);
+  return (
+    <div className="lb-glow relative overflow-hidden rounded-2xl bg-[#e8f5ec] shadow-lg">
+      <div className="absolute inset-0">
+        {labs.slice(0, 3).map((l, i) => (
+          <div key={l.id} className="absolute inset-0 transition-opacity duration-1000" style={{ opacity: i === hot % Math.min(labs.length, 3) ? 1 : 0 }}>
+            <LabImg lab={demo ? { id: i } : l} index={i} w={1200} className="lb-zoom h-full w-full object-cover" />
+          </div>
+        ))}
+        {!labs.length && <img src={defaultLabPic(0, 1200)} alt="Computer lab" className="h-full w-full object-cover" />}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#052e16]/55 via-[#052e16]/25 to-[#052e16]/80" />
+      </div>
+      <div className="relative flex min-h-[380px] flex-col justify-between p-5 text-white">
+        <div className="flex items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-semibold backdrop-blur">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="lb-ping absolute inline-flex h-full w-full rounded-full bg-[#4ade80]" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#4ade80]" />
+            </span>
+            {demo ? 'Live preview' : 'Live now'}
+          </span>
+          <span className="rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-semibold backdrop-blur"><Radio className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />{free} free places today</span>
+        </div>
+        <div className="space-y-2.5">
+          {labs.map((l, i) => {
+            const [color, text] = LIVE[l.status] || LIVE.none;
+            const seats = l.seats || 0;
+            const pct = seats ? Math.round(((l.taken || 0) / seats) * 100) : 0;
+            const ss = l.sessions || [];
+            const cur = ss.length ? ss[(tick + i) % ss.length] : null;
+            const on = i === hot;
+            return (
+              <div key={l.id} className={`rounded-xl bg-white/92 p-3 text-[#111827] shadow transition-all duration-500 ${on ? 'scale-[1.02] ring-2 ring-white' : 'opacity-90'}`} style={{ background: 'rgba(255,255,255,.93)' }}>
+                <div className="flex items-center justify-between gap-3">
+                  <b className="truncate text-sm">{l.name}</b>
+                  <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-bold" style={{ color }}>
+                    <span className="h-2 w-2 rounded-full" style={{ background: color }} />{text}
+                  </span>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-black/10">
+                  <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${pct}%`, background: color }} />
+                </div>
+                <div key={tick + '-' + i} className="lb-rise mt-1.5 text-[11px] text-black/60">
+                  {cur ? `${cur.from}–${cur.to} · ${cur.left} of ${cur.seats} places free` : 'No lab time today'}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -614,6 +775,7 @@ function TrendDetail({ item, onClose }) {
   const digits = (item.phone || '').replace(/[^\d]/g, '');
   const subject = encodeURIComponent(`Lost item: ${item.title}`);
   const photos = item.media.map(itemPhoto).filter(Boolean);
+  const [pi, setPi] = useState(0);
   return (
     <Modal title={item.title} onClose={onClose} wide>
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -621,7 +783,19 @@ function TrendDetail({ item, onClose }) {
         <span className="text-black/55">Posted {ago(item.postedAt)}</span>
         {item.foundAt && <span className="text-black/55">· Found at {item.foundAt}</span>}
       </div>
-      {photos[0] && <img src={photos[0]} alt={item.title} referrerPolicy="no-referrer" className="mt-4 max-h-[400px] w-full rounded-[6px] bg-black/5 object-contain" />}
+      {photos[pi] && (
+        <Photo src={photos[pi]} alt={item.title} className="mt-4 max-h-[400px] w-full rounded-[6px] bg-black/5 object-contain"
+          fallback={<div className="mt-4 grid h-48 place-items-center rounded-[6px] bg-black/5 text-xs text-black/50">The photo could not be loaded.</div>} />
+      )}
+      {photos.length > 1 && (
+        <div className="mt-3 flex gap-2 overflow-x-auto">
+          {photos.map((p, i) => (
+            <button key={p + i} type="button" onClick={() => setPi(i)} className={`h-14 w-14 shrink-0 overflow-hidden rounded-[6px] border-2 ${i === pi ? 'border-[#16a34a]' : 'border-transparent'}`}>
+              <Photo src={p} className="h-full w-full object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
       {item.description && <p className="mt-4 whitespace-pre-line text-xs leading-relaxed text-black/70">{item.description}</p>}
       <div className="mt-6 rounded-[8px] border border-[#16a34a]/40 bg-[#16a34a]/5 p-4">
         <h4 className="text-xs font-bold text-[#15803d]">Is this yours?</h4>
@@ -636,6 +810,10 @@ function TrendDetail({ item, onClose }) {
     </Modal>
   );
 }
+
+const NoPhoto = ({ label }) => (
+  <div className="flex flex-col items-center gap-2"><PackageSearch className="h-10 w-10 text-[#16a34a]/70" aria-hidden="true" /><span>{label}</span></div>
+);
 
 function TrendsBoard() {
   const [items, setItems] = useState(null);
@@ -664,20 +842,21 @@ function TrendsBoard() {
           {items !== null && list.length === 0 && <Empty>Nothing is waiting for an owner right now.</Empty>}
           {list.length > 0 && shown.length === 0 && <Empty>No item matches your search.</Empty>}
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {shown.map((t) => (
-              <button key={t.id} type="button" onClick={() => setOpen(t)} className="flex flex-col overflow-hidden rounded-[8px] border border-black/10 bg-white text-left hover:shadow-lg">
-                <div className="flex aspect-[4/3] items-center justify-center overflow-hidden bg-gradient-to-br from-[#e8f5ec] via-[#f4f6f8] to-[#fff0e9] text-xs text-black/40">
-                  {t.media?.map(itemPhoto).find(Boolean)
-                    ? <img src={t.media.map(itemPhoto).find(Boolean)} alt={t.title} referrerPolicy="no-referrer" className="h-full w-full object-cover" />
-                    : <div className="flex flex-col items-center gap-2"><PackageSearch className="h-10 w-10 text-[#16a34a]/70" aria-hidden="true" /><span>{t.category}</span></div>}
-                </div>
-                <div className="p-4">
-                  <h3 className="text-sm font-semibold">{t.title}</h3>
-                  <p className="mt-2 text-[11px] text-black/50">{t.foundAt ? `Found at ${t.foundAt}` : `Posted ${ago(t.postedAt)}`}</p>
-                  <p className="mt-2 text-xs font-semibold text-[#ff4500]">View and contact</p>
-                </div>
-              </button>
-            ))}
+            {shown.map((t) => {
+              const ph = t.media?.map(itemPhoto).find(Boolean);
+              return (
+                <button key={t.id} type="button" onClick={() => setOpen(t)} className="flex flex-col overflow-hidden rounded-[8px] border border-black/10 bg-white text-left hover:shadow-lg">
+                  <div className="flex aspect-[4/3] items-center justify-center overflow-hidden bg-gradient-to-br from-[#e8f5ec] via-[#f4f6f8] to-[#fff0e9] text-xs text-black/40">
+                    <Photo src={ph} alt={t.title} className="h-full w-full object-cover" fallback={<NoPhoto label={t.category} />} />
+                  </div>
+                  <div className="p-4">
+                    <h3 className="text-sm font-semibold">{t.title}</h3>
+                    <p className="mt-2 text-[11px] text-black/50">{t.foundAt ? `Found at ${t.foundAt}` : `Posted ${ago(t.postedAt)}`}</p>
+                    <p className="mt-2 text-xs font-semibold text-[#ff4500]">View and contact</p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -686,7 +865,7 @@ function TrendsBoard() {
   );
 }
 
-function Landing({ onLogin }) {
+function Landing({ onLogin, dark, onToggleDark }) {
   return (
     <div className="bg-white text-[#111827] antialiased text-sm">
       <header className="sticky top-0 z-20 border-b border-black/10 bg-white/95 backdrop-blur">
@@ -696,23 +875,23 @@ function Landing({ onLogin }) {
             <a href="#labs" className="rounded-[6px] px-3 py-2 text-black/70 hover:bg-black/5">Labs</a>
             <a href="#trends" className="rounded-[6px] px-3 py-2 text-black/70 hover:bg-black/5">Lost and found</a>
           </nav>
-          <Btn onClick={() => onLogin()}>Log in</Btn>
+          <div className="flex items-center gap-2">
+            <ThemeBtn dark={dark} onToggle={onToggleDark} />
+            <Btn onClick={() => onLogin()}>Log in</Btn>
+          </div>
         </div>
       </header>
       <section className="mx-auto grid max-w-6xl items-center gap-8 px-6 pt-14 pb-6 md:grid-cols-[1.05fr_.95fr]">
         <div>
-        <span className="lb-in inline-block rounded-[6px] border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[11px] font-semibold text-[#15803d]">Live places, updated automatically</span>
-        <h1 className="lb-in mt-5 max-w-2xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
-        <p className="mt-5 max-w-md text-sm leading-relaxed text-black/65">Pick a lab time and press Apply. Free places are approved at once. When a lab time is full you join the waiting list.</p>
-        <div className="mt-7 flex flex-wrap gap-3">
-          <a href="#labs" className="rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white">See the labs</a>
-          <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
+          <span className="lb-in inline-block rounded-[6px] border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[11px] font-semibold text-[#15803d]">Live places, updated automatically</span>
+          <h1 className="lb-in mt-5 max-w-2xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
+          <p className="mt-5 max-w-md text-sm leading-relaxed text-black/65">Pick a lab time and press Apply. Free places are approved at once. When a lab time is full you join the waiting list.</p>
+          <div className="mt-7 flex flex-wrap gap-3">
+            <a href="#labs" className="rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white">See the labs</a>
+            <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
+          </div>
         </div>
-        </div>
-        <div className="lb-glow relative overflow-hidden rounded-2xl bg-[#e8f5ec] shadow-lg">
-          <img src="https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1200&q=85" alt="A bright computer lab for student study" className="h-64 w-full object-cover md:h-[340px]" />
-          <div className="absolute bottom-4 left-4 rounded-xl bg-white/95 px-4 py-3 shadow-md"><p className="text-xs font-bold text-[#15803d]">Make room for your next idea</p><p className="mt-1 text-[11px] text-black/60">Find and book an available lab session.</p></div>
-        </div>
+        <LiveLabs />
       </section>
       <section id="labs" className="mx-auto max-w-6xl scroll-mt-16 px-6 py-12">
         <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Labs and free places</h2>
@@ -731,7 +910,7 @@ function Landing({ onLogin }) {
 }
 
 /* ================================================================== */
-/* 4. SIGN IN (Google only)                                            */
+/* 4. SIGN IN (Google only): moving pictures on one side, form on the other */
 /* ================================================================== */
 
 function GoogleBtn({ onResult, onError }) {
@@ -769,7 +948,32 @@ function GoogleBtn({ onResult, onError }) {
   return <div className="flex min-h-[44px] justify-center"><div ref={ref} /></div>;
 }
 
-function Auth({ onDone, onBack, intent }) {
+// Pictures that fade into each other, slowly zooming. Used on the sign-in page.
+function Slideshow({ className = '' }) {
+  const [i, setI] = useState(0);
+  useEffect(() => { const t = setInterval(() => setI((n) => (n + 1) % LOGIN_SLIDES.length), 4500); return () => clearInterval(t); }, []);
+  return (
+    <div className={`relative overflow-hidden bg-[#e8f5ec] ${className}`}>
+      {LOGIN_SLIDES.map((s, k) => (
+        <div key={s.id} className="absolute inset-0 transition-opacity duration-[1400ms]" style={{ opacity: k === i ? 1 : 0 }} aria-hidden={k !== i}>
+          <img src={unsplash(s.id, 1200)} alt="" className={`h-full w-full object-cover ${k === i ? 'lb-zoom' : ''}`} />
+        </div>
+      ))}
+      <div className="absolute inset-0 bg-gradient-to-t from-[#052e16]/85 via-[#052e16]/10 to-[#052e16]/20" />
+      <div className="absolute bottom-6 left-6 right-6 text-white">
+        <div key={i} className="lb-rise">
+          <p className="text-xl font-bold md:text-2xl">{LOGIN_SLIDES[i].t}</p>
+          <p className="mt-1.5 text-xs text-white/80 md:text-sm">{LOGIN_SLIDES[i].s}</p>
+        </div>
+        <div className="mt-4 flex gap-1.5">
+          {LOGIN_SLIDES.map((s, k) => <span key={s.id} className={`h-1.5 rounded-full transition-all duration-500 ${k === i ? 'w-6 bg-white' : 'w-1.5 bg-white/50'}`} />)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Auth({ onDone, onBack, intent, dark, onToggleDark }) {
   const [err, setErr] = useState('');
   const [signing, setSigning] = useState(false);
   const hasGoogle = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -778,26 +982,25 @@ function Auth({ onDone, onBack, intent }) {
     try { await onDone(t); } catch (e) { setSigning(false); setErr(e.message); }
   };
   return (
-    <div className="fixed inset-0 grid place-items-center overflow-y-auto bg-white p-6 text-[13px] text-[#111827]">
+    <div className="fixed inset-0 grid place-items-center overflow-y-auto bg-[#f7f8f7] p-4 text-[13px] text-[#111827] sm:p-6">
       <div className="grid w-full max-w-5xl overflow-hidden rounded-2xl border border-black/10 bg-white shadow-xl md:grid-cols-2">
-       <div className="relative hidden min-h-[560px] overflow-hidden bg-[#e8f5ec] md:block">
-        <img src="https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=1200&q=85" alt="Bright school computer lab" className="lb-float absolute inset-0 h-full w-full object-cover" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#052e16]/80 via-transparent to-[#052e16]/10" />
-        <div className="absolute bottom-8 left-8 right-8 text-white"><p className="text-2xl font-bold">Your next idea starts here.</p><p className="mt-2 text-sm text-white/80">Book a computer lab place before you arrive.</p></div>
-       </div>
-       <div className="w-full max-w-md p-7 md:mx-auto md:py-12">
-        <button type="button" onClick={onBack} className="mb-8 text-xs font-medium text-[#2563eb] hover:underline">← Back to home</button>
-        <Logo />
-        <h1 className="mt-8 text-xl font-bold tracking-tight">Welcome back</h1>
-        <p className="mb-6 mt-1.5 text-black/60">Sign in with the Google account your school has on record for you.</p>
-        {intent && <Alert ok>You chose <b>{intent.lab}</b> on <b>{intent.date}</b> at <b>{intent.from}–{intent.to}</b>. Sign in and we send your booking.</Alert>}
-        {err && <div className="mt-4"><Alert>{err}</Alert></div>}
-        <div className="mt-6">
-          {hasGoogle ? <GoogleBtn onResult={finish} onError={setErr} /> : <Alert>Google sign-in is not set up yet. Add VITE_GOOGLE_CLIENT_ID to the frontend .env file.</Alert>}
+        <Slideshow className="h-44 md:h-auto md:min-h-[600px]" />
+        <div className="w-full p-7 md:py-12 md:px-10">
+          <div className="mb-8 flex items-center justify-between">
+            <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-medium text-[#2563eb] hover:underline"><ArrowLeft className="h-4 w-4" aria-hidden="true" />Back to home</button>
+            <ThemeBtn dark={dark} onToggle={onToggleDark} />
+          </div>
+          <Logo />
+          <h1 className="mt-8 text-xl font-bold tracking-tight">Welcome back</h1>
+          <p className="mb-6 mt-1.5 text-black/60">Sign in with the Google account your school has on record for you.</p>
+          {intent && <Alert ok>You chose <b>{intent.lab}</b> on <b>{intent.date}</b> at <b>{intent.from}–{intent.to}</b>. Sign in and we send your booking.</Alert>}
+          {err && <div className="mt-4"><Alert>{err}</Alert></div>}
+          <div className="mt-6">
+            {hasGoogle ? <GoogleBtn onResult={finish} onError={setErr} /> : <Alert>Google sign-in is not set up yet. Add VITE_GOOGLE_CLIENT_ID to the frontend .env file.</Alert>}
+          </div>
+          <p className="mt-8 text-center text-xs text-black/50">Account not recognised? Ask your school admin to add your email.</p>
         </div>
-        <p className="mt-8 text-center text-xs text-black/50">Account not recognised? Ask your school admin to add your email.</p>
-        </div>
-            </div>
+      </div>
       {signing && <div className="fixed inset-0 z-50 grid place-items-center bg-white/85"><Loader label="Signing you in" /></div>}
     </div>
   );
@@ -983,27 +1186,48 @@ function Booker({ user, opts, intent, onIntentDone }) {
 /* 6. ADMIN: Overview, Labs, Schedule, People, Chat, Settings          */
 /* ================================================================== */
 
-// Live presence: which admin is on which page, and recent activity.
+const ACT_FILTERS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['date', 'Pick a day']];
+
+// Live presence: which admin is on which page, and recent activity (filtered by day and by admin).
 function OverviewPage({ me }) {
   const [stats, setStats] = useState(null);
   const [presence, setPresence] = useState([]);
   const [acts, setActs] = useState([]);
   const [chart, setChart] = useState([]);
   const [days, setDays] = useState(7);
+  const [mode, setMode] = useState('today');
+  const [pickDate, setPickDate] = useState(today());
+  const [actor, setActor] = useState('');
+  const [many, setMany] = useState(15);
   const load = useCallback(() => {
+    const p = new URLSearchParams();
+    if (mode === 'today') p.set('date', today());
+    else if (mode === 'yesterday') p.set('date', dayOffset(-1));
+    else if (mode === 'date') p.set('date', pickDate);
+    else p.set('days', mode);
+    if (actor) p.set('actor', actor);
     api('/api/stats/overview').then(setStats).catch(() => {});
-    api('/api/activity').then(setActs).catch(() => {});
+    api(`/api/activity?${p}`).then(setActs).catch(() => {});
     api(`/api/activity/chart?days=${days}`).then(setChart).catch(() => {});
-  }, [days]);
+  }, [days, mode, pickDate, actor]);
   useEffect(load, [load]);
+  useEffect(() => setMany(15), [mode, pickDate, actor]);
   useLive({ 'activity:update': load, presence: (p) => setPresence(p) });
 
   const t = stats?.totals || {};
   const att = stats?.attendance || {};
   const dayList = Array.from({ length: days }, (_, i) => shiftDay(today(), i - days + 1));
-  const actors = [...new Set([...presence.map((p) => p.name), ...chart.map((c) => c.actor)])].sort();
+  const actors = [...new Set([...presence.map((p) => p.name), ...chart.map((c) => c.actor), ...acts.map((a) => a.actor)])].sort();
   const maxDay = Math.max(1, ...chart.map((c) => c.n));
   const total = (name) => chart.filter((c) => c.actor === name).reduce((n, c) => n + c.n, 0);
+  const visible = acts.slice(0, many);
+  const groups = [];
+  visible.forEach((a) => {
+    const h = dayHead(a.at);
+    const g = groups[groups.length - 1];
+    if (g && g.h === h) g.items.push(a); else groups.push({ h, items: [a] });
+  });
+  const periodText = mode === 'today' ? 'today' : mode === 'yesterday' ? 'yesterday' : mode === 'date' ? niceDay(pickDate) : `the last ${mode} days`;
 
   return (
     <div className="space-y-6">
@@ -1019,7 +1243,8 @@ function OverviewPage({ me }) {
           {presence.length === 0 && <Empty>No admin is online.</Empty>}
           {presence.map((p) => (
             <div key={p.email || p.name} className="flex items-center justify-between gap-3 border-t border-black/10 py-3 first:border-t-0">
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-3">
+                <Avatar name={p.name} picture={p.picture} className="h-8 w-8 text-[10px]" />
                 <span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />
                 <b className="text-xs">{p.name}{p.name === me.name && ' (you)'}</b>
               </span>
@@ -1053,27 +1278,73 @@ function OverviewPage({ me }) {
         </Card>
       </div>
 
-      <Card t="Recent activity" sub="Every change made by admins, newest first.">
-        {acts.length === 0 && <Empty>Nothing yet.</Empty>}
-        <div className="divide-y divide-black/10">
-          {acts.map((a) => (
-            <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-xs">
-              <span><b>{a.actor}</b> <span className="text-black/70">{a.action}</span>{a.detail && <span className="text-black/55"> · {a.detail}</span>}</span>
-              <span className="text-black/45">{ago(a.at)}</span>
-            </div>
-          ))}
+      <Card t="Recent activity" sub={`Changes made by admins ${periodText}, newest first.`}>
+        <div className="mb-4 flex flex-wrap items-end gap-3">
+          <Pills value={mode} onChange={setMode} items={ACT_FILTERS} />
+          {mode === 'date' && <Inp type="date" aria-label="Choose a day" className="!w-40" value={pickDate} max={today()} onChange={(e) => e.target.value && setPickDate(e.target.value)} />}
+          <Sel className="!w-48" value={actor} onChange={setActor} options={[{ value: '', label: 'All admins' }, ...actors.map((a) => ({ value: a, label: a }))]} aria-label="Admin" />
+          <span className="ml-auto text-xs text-black/55">{plural(acts.length, 'action')}</span>
         </div>
+        {acts.length === 0 && <Empty>No activity for this choice.</Empty>}
+        {groups.map((g) => (
+          <div key={g.h} className="mb-3">
+            <div className="mb-1 rounded-[4px] bg-black/[0.04] px-3 py-1.5 text-[11px] font-bold text-black/60">{g.h}</div>
+            <div className="divide-y divide-black/10">
+              {g.items.map((a) => (
+                <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-1 py-2.5 text-xs">
+                  <span><b>{a.actor}</b> <span className="text-black/70">{a.action}</span>{a.detail && <span className="text-black/55"> · {a.detail}</span>}</span>
+                  <span className="text-black/45">{clock(a.at)} · {ago(a.at)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        {acts.length > many && <div className="pt-2 text-center"><Btn c="w" onClick={() => setMany((n) => n + 15)}>Show more ({acts.length - many} left)</Btn></div>}
       </Card>
     </div>
   );
 }
 
-// Labs page: only PUBLISHED lab times. For each lab: its status, how many applied and the names of the students.
-// No filters. Click "Open lab" to mark attendance, or "Print" for the list of the lab.
+// All students of a lab time, one page at a time, with their profile pictures.
+function StudentsModal({ lab, s, onClose }) {
+  const PER = 6;
+  const list = liveOf(s);
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(list.length / PER));
+  const slice = list.slice(page * PER, page * PER + PER);
+  return (
+    <Modal title={`${lab.name} · ${s.from}–${s.to}`} onClose={onClose} wide>
+      <p className="mb-4 text-xs text-black/55">{plural(list.length, 'student')} · {s.seats - s.left} of {s.seats} places taken · {audText(s)}</p>
+      {list.length === 0 && <Empty>Nobody has applied yet.</Empty>}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {slice.map((a, i) => (
+          <div key={a.id} className="flex items-center gap-4 rounded-[8px] border border-black/10 p-3">
+            <Avatar name={a.name} picture={a.picture} gid={a.gid} className="h-16 w-16 text-lg" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] text-black/40">#{page * PER + i + 1}</div>
+              <b className="block truncate text-sm">{a.name}</b>
+              <span className="block truncate text-xs text-black/55">{a.cls || 'No class'}{a.reason ? ` · ${a.reason}` : ''}</span>
+              <span className="block truncate text-xs text-black/45">{a.email || 'No email'}</span>
+              <span className="mt-1.5 flex flex-wrap gap-1.5">
+                <Badge s={statusKey(a, s)}>{STATUS_LABEL[statusKey(a, s)]}</Badge>
+                {attKey(a) && <Badge s={attKey(a)}>{attLabel(a)}</Badge>}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <Pager page={page} pages={pages} onChange={setPage} label={`Showing ${page * PER + 1}–${Math.min(list.length, page * PER + PER)} of ${list.length}`} />
+    </Modal>
+  );
+}
+
+// Labs page: only PUBLISHED lab times. For each lab: its picture, status, how many applied and the students.
+// Click "View all students" to go through everyone, "Open lab" to mark attendance, or "Print" for the list.
 function LabsPage({ onOpenLab }) {
   const [day, setDay] = useState(today());
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  const [viewer, setViewer] = useState(null);
   const load = useCallback(() => api(`/api/board?date=${day}`).then((d) => { setData(d); setErr(''); }).catch((e) => setErr(e.message)), [day]);
   useEffect(() => { setData(null); load(); }, [load]);
   useLive({ 'applications:update': load, seats: load });
@@ -1095,7 +1366,7 @@ function LabsPage({ onOpenLab }) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <DayBar day={day} onChange={setDay} />
-            <Btn c="w" disabled={!withTime.length} onClick={() => printLabs(withTime, day)}>Print all labs</Btn>
+            <Btn c="w" disabled={!withTime.length} onClick={() => printLabs(withTime, day)}><Printer className="h-4 w-4" aria-hidden="true" />Print all labs</Btn>
           </div>
         </div>
       </Card>
@@ -1109,16 +1380,20 @@ function LabsPage({ onOpenLab }) {
 
       {labs.length === 0 && <Card><Empty>No labs have been added yet. Add one in Settings.</Empty></Card>}
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-        {labs.map((l) => {
+        {labs.map((l, li) => {
           const status = labStatus(l.sessions);
           return (
-            <article key={l.id} className={`flex flex-col rounded-[8px] border bg-white ${status === 'over' ? 'border-[#dc2626]/40' : 'border-black/10'}`}>
-              <div className="flex items-start justify-between gap-3 border-b border-black/10 p-4">
-                <div>
-                  <h3 className="text-base font-bold">{l.name}</h3>
-                  <p className="text-xs text-black/55">{l.pcs} computers · {plural(l.sessions.length, 'lab time')}</p>
+            <article key={l.id} className={`flex flex-col overflow-hidden rounded-[8px] border bg-white ${status === 'over' ? 'border-[#dc2626]/40' : 'border-black/10'}`}>
+              <div className="relative h-28 overflow-hidden bg-[#e8f5ec]">
+                <LabImg lab={l} index={li} w={700} className="h-full w-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/55 to-transparent" />
+                <div className="absolute bottom-2.5 left-4 right-4 flex items-end justify-between gap-3 text-white">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-base font-bold">{l.name}</h3>
+                    <p className="text-xs text-white/80">{l.pcs} computers · {plural(l.sessions.length, 'lab time')}</p>
+                  </div>
+                  <Badge s={status}>{LAB_STATUS_TEXT[status]}</Badge>
                 </div>
-                <Badge s={status}>{LAB_STATUS_TEXT[status]}</Badge>
               </div>
               <div className="flex-1 space-y-4 p-4">
                 {l.sessions.length === 0 && <p className="py-4 text-center text-xs text-black/50">No lab time on this day.</p>}
@@ -1145,13 +1420,16 @@ function LabsPage({ onOpenLab }) {
                         ))}
                         {list.length > shown.length && <span className="py-1 text-[11px] font-semibold text-black/55">+{list.length - shown.length} more</span>}
                       </div>
+                      {list.length > 0 && (
+                        <Btn c="w" className="mt-3 w-full" onClick={() => setViewer({ lab: l, s })}><Eye className="h-4 w-4" aria-hidden="true" />View all students ({list.length})</Btn>
+                      )}
                     </div>
                   );
                 })}
               </div>
               <div className="flex gap-2 border-t border-black/10 p-3">
                 <Btn onClick={() => onOpenLab(l.id, day, l.name)}>Open lab</Btn>
-                <Btn c="w" disabled={!l.sessions.length} onClick={() => printLabs([l], day)}>Print this lab</Btn>
+                <Btn c="w" disabled={!l.sessions.length} onClick={() => printLabs([l], day)}><Printer className="h-4 w-4" aria-hidden="true" />Print this lab</Btn>
               </div>
             </article>
           );
@@ -1161,35 +1439,45 @@ function LabsPage({ onOpenLab }) {
         <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#16a34a]" />Approved student</span>
         <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#2563eb]" />In the waiting list</span>
       </p>
+      {viewer && <StudentsModal lab={viewer.lab} s={data.labs.find((x) => x.id === viewer.lab.id)?.sessions.find((x) => x.id === viewer.s.id) || viewer.s} onClose={() => setViewer(null)} />}
     </div>
   );
 }
 
-// One lab on one day: its lab times, the students of each, attendance and printing.
+// One lab on one day: its lab times, the students of each (a page at a time), attendance, selection and printing.
 function LabDetail({ labId, day, onBack }) {
+  const PER = 8;
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  const [pages, setPages] = useState({});
+  const [sel, setSel] = useState([]);
   const load = useCallback(() => api(`/api/board?date=${day}`).then((d) => { setData(d); setErr(''); }).catch((e) => setErr(e.message)), [day]);
   useEffect(() => { load(); }, [load]);
   useLive({ 'applications:update': load, seats: load });
   const { busy, act, sure, note } = useAct(load);
 
   if (!data) return err ? <Alert>{err}</Alert> : <Loader full label="Loading lab" />;
-  const lab = data.labs.find((l) => l.id === labId);
+  const labIndex = data.labs.findIndex((l) => l.id === labId);
+  const lab = data.labs[labIndex];
   if (!lab) return <Card><Empty>This lab was not found.</Empty></Card>;
   const started = (s) => s.date < today() || (s.date === today() && s.from <= new Date().toTimeString().slice(0, 5));
   const setAtt = (a, v) => act('att' + a.id, () => api(`/api/apps/${a.id}/attendance`, 'PATCH', { att: attKey(a) === v ? null : v }));
+  const toggle = (id) => setSel((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]));
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Btn c="w" onClick={onBack}>← All labs</Btn>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="text-right">
-            <h2 className="text-lg font-bold">{lab.name}</h2>
-            <p className="text-xs text-black/55">{niceDay(day)}</p>
+      <div className="relative overflow-hidden rounded-[10px] bg-[#e8f5ec]">
+        <LabImg lab={lab} index={labIndex} w={1200} className="h-36 w-full object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/30 to-transparent" />
+        <div className="absolute inset-0 flex flex-wrap items-center justify-between gap-3 p-5 text-white">
+          <div>
+            <h2 className="text-xl font-bold">{lab.name}</h2>
+            <p className="text-xs text-white/80">{niceDay(day)} · {lab.pcs} computers</p>
           </div>
-          <Btn c="w" disabled={!lab.sessions.length} onClick={() => printLabs([lab], day)}>Print this lab</Btn>
+          <div className="flex gap-2">
+            <Btn c="w" onClick={onBack}><ArrowLeft className="h-4 w-4" aria-hidden="true" />All labs</Btn>
+            <Btn c="w" disabled={!lab.sessions.length} onClick={() => printLabs([lab], day)}><Printer className="h-4 w-4" aria-hidden="true" />Print this lab</Btn>
+          </div>
         </div>
       </div>
       {note && <Alert ok={note.ok}>{note.text}</Alert>}
@@ -1202,13 +1490,18 @@ function LabDetail({ labId, day, onBack }) {
         const waiting = list.filter((a) => a.status !== 'approved');
         const gone = s.people.filter((a) => a.status === 'rejected');
         const present = approved.filter((a) => a.att === 'present').length;
+        const pageCount = Math.max(1, Math.ceil(list.length / PER));
+        const page = Math.min(pages[s.id] || 0, pageCount - 1);
+        const slice = list.slice(page * PER, page * PER + PER);
+        const ids = list.map((a) => a.id);
+        const chosen = ids.filter((id) => sel.includes(id));
         return (
           <Card key={s.id} t={`${s.from}–${s.to}`}
             sub={`${audText(s)} · ${s.seats - s.left} of ${s.seats} places taken`}
             action={(
               <div className="flex flex-wrap items-center gap-2">
                 <Badge s={s.state}>{STATE_LABEL[s.state]}</Badge>
-                <Btn c="w" disabled={!list.length} onClick={() => printSession(lab, s)}>Print list</Btn>
+                <Btn c="w" disabled={!list.length} onClick={() => printSession(lab, s)}><Printer className="h-4 w-4" aria-hidden="true" />Print list</Btn>
                 {waiting.length > 0 && started(s) && s.state !== 'over' && (
                   <ActBtn c="bl" busy={busy === 'rel' + s.id} doing="Releasing…" label="Release no-shows"
                     onClick={() => act('rel' + s.id, () => api(`/api/sessions/${s.id}/release-noshows`, 'POST'),
@@ -1223,12 +1516,29 @@ function LabDetail({ labId, day, onBack }) {
               <Stat v={present} t="Present" tone="gr" />
             </div>
             {list.length === 0 && <Empty>Nobody has applied to this lab time yet.</Empty>}
+            {list.length > 0 && (
+              <SelectBar total={list.length} selected={chosen.length}
+                onAll={() => setSel((x) => [...new Set([...x, ...ids])])} onNone={() => setSel((x) => x.filter((id) => !ids.includes(id)))}>
+                {chosen.length > 0 && (
+                  <>
+                    <ActBtn busy={busy === 'bap' + s.id} doing="Approving…" label={`Approve ${chosen.length}`}
+                      onClick={() => act('bap' + s.id, () => api('/api/apps/bulk', 'POST', { ids: chosen, action: 'approve' }),
+                        (r) => `${r.done} approved${r.skipped ? `, ${r.skipped} skipped because the lab time is full` : ''}.`)} />
+                    <Btn c="or" onClick={() => sure({ message: `Remove ${chosen.length} student(s) from this lab time?`, ok: 'Remove', danger: true }, 'bx' + s.id,
+                      async () => { await api('/api/apps/bulk', 'POST', { ids: chosen, action: 'delete' }); setSel((x) => x.filter((id) => !chosen.includes(id))); }, `${chosen.length} removed.`)}>
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />Remove {chosen.length}
+                    </Btn>
+                  </>
+                )}
+              </SelectBar>
+            )}
             <div className="divide-y divide-black/10">
-              {list.map((a, i) => (
+              {slice.map((a, i) => (
                 <div key={a.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                   <span className="flex min-w-0 items-center gap-3">
-                    <span className="w-5 text-right text-xs text-black/40">{i + 1}</span>
-                    <Person p={a} sub={`${a.cls || 'No class'}${a.reason ? ` · ${a.reason}` : ''}`} className="h-8 w-8 text-[10px]" />
+                    <input type="checkbox" aria-label={`Select ${a.name}`} className="h-4 w-4 accent-[#16a34a]" checked={sel.includes(a.id)} onChange={() => toggle(a.id)} />
+                    <span className="w-5 text-right text-xs text-black/40">{page * PER + i + 1}</span>
+                    <Person p={a} sub={`${a.cls || 'No class'}${a.reason ? ` · ${a.reason}` : ''}`} className="h-12 w-12 text-sm" />
                   </span>
                   <span className="flex flex-wrap items-center gap-2">
                     {a.status !== 'approved' && <Badge s={statusKey(a, s)}>{STATUS_LABEL[statusKey(a, s)]}</Badge>}
@@ -1252,6 +1562,8 @@ function LabDetail({ labId, day, onBack }) {
                 </div>
               ))}
             </div>
+            <Pager page={page} pages={pageCount} onChange={(n) => setPages((p) => ({ ...p, [s.id]: n }))}
+              label={`Students ${page * PER + 1}–${Math.min(list.length, page * PER + PER)} of ${list.length}`} />
             {waiting.some((a) => a.status === 'pending') && (
               <div className="mt-4 border-t border-black/10 pt-4">
                 <ActBtn busy={busy === 'apw' + s.id} doing="Approving…" label={`Approve all waiting (${waiting.length})`}
@@ -1274,82 +1586,158 @@ function LabDetail({ labId, day, onBack }) {
   );
 }
 
-// Schedule: prepare lab times (with a class, a group or chosen students) and manage the ones that exist.
+// Choose one lab, two or three labs, or all of them.
+function LabPicker({ labs, value, onChange }) {
+  const all = labs.length > 0 && value.length === labs.length;
+  const toggle = (id) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" aria-pressed={all} onClick={() => onChange(all ? [] : labs.map((l) => String(l.id)))}
+          className={`rounded-[6px] border px-3 py-2 text-xs font-bold ${all ? 'border-[#16a34a] bg-[#16a34a] text-white' : 'border-black/15 bg-white hover:bg-black/5'}`}>All labs</button>
+        {labs.map((l) => {
+          const on = value.includes(String(l.id));
+          return (
+            <button key={l.id} type="button" aria-pressed={on} onClick={() => toggle(String(l.id))}
+              className={`flex items-center gap-2 rounded-[6px] border py-1.5 pl-1.5 pr-3 text-xs font-semibold ${on ? 'border-[#16a34a] bg-[#16a34a]/10 text-[#15803d]' : 'border-black/15 bg-white hover:bg-black/5'}`}>
+              <span className="h-7 w-9 overflow-hidden rounded-[4px] bg-black/10"><LabImg lab={l} index={l.id} w={120} className="h-full w-full object-cover" /></span>
+              {l.name}<span className="font-normal text-black/50">· {l.pcs}</span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-[11px] text-black/50">{value.length === 0 ? 'Choose at least one lab.' : value.length === labs.length ? `All ${labs.length} labs get the same schedule.` : `${plural(value.length, 'lab')} chosen.`}</p>
+    </div>
+  );
+}
+
+const PERIOD_CHOICES = [['before', 'Before lunch', Sunrise], ['after', 'After lunch', Sunset], ['both', 'Both periods', Sun], ['custom', 'Custom time', CalendarClock]];
+
+// Schedule: prepare lab times (for lunch periods, one or many labs, a class, a group or chosen students) and manage the ones that exist.
 function SchedulePage() {
   const [day, setDay] = useState(today());
   const [labs, setLabs] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
-  const [f, setF] = useState({ date: today(), from: '14:00', to: '16:00', labId: '', places: '', auto: 'true' });
+  const [opts, setOpts] = useState({});
+  const [f, setF] = useState({ date: today(), period: 'both', from: '14:00', to: '16:00', labIds: [], places: '', auto: 'true' });
   const [aud, setAud] = useState({ ...BLANK_AUD });
   const [edit, setEdit] = useState(null);
+  const [selS, setSelS] = useState([]);
   const loadAll = useCallback(() => Promise.all([
-    api('/api/labs'), api('/api/sessions'), api('/api/users'), api('/api/groups'),
-  ]).then(([l, s, u, g]) => { setLabs(l); setSessions(s); setUsers(u); setGroups(g); }).catch(() => {}), []);
+    api('/api/labs'), api('/api/sessions'), api('/api/users'), api('/api/groups'), api('/api/options'),
+  ]).then(([l, s, u, g, o]) => { setLabs(l); setSessions(s); setUsers(u); setGroups(g); setOpts(o); }).catch(() => {}), []);
   useEffect(() => { loadAll(); }, []);
   useLive({ seats: loadAll, 'applications:update': loadAll });
   const { busy, act, sure, note } = useAct(loadAll);
 
   const students = users.filter((u) => u.role === 'student');
   const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
-  const timeOk = f.date && f.from && f.to && f.from < f.to;
+  const P = periodsOf(opts);
+  const slots = f.period === 'before' ? [P.before] : f.period === 'after' ? [P.after] : f.period === 'both' ? [P.before, P.after] : [{ from: f.from, to: f.to }];
+  const timeOk = !!f.date && slots.every((s) => s.from && s.to && s.from < s.to);
+  const labsOk = f.labIds.length > 0;
+  const audMulti = !!aud.kind && f.labIds.length > 1;
+  const canCreate = timeOk && labsOk && audOk(aud) && !audMulti;
 
   const create = (published) => act(published ? 'pub' : 'draft', async () => {
     const r = await api('/api/sessions', 'POST', {
-      date: f.date, from: f.from, to: f.to, published, audience: aud, autoApprove: f.auto === 'true',
-      labIds: f.labId === 'all' ? labs.map((l) => +l.id) : [+f.labId], places: f.places === '' ? undefined : +f.places,
+      date: f.date, slots, published, audience: aud, autoApprove: f.auto === 'true',
+      labIds: f.labIds.map(Number), places: f.places === '' ? undefined : +f.places,
     });
     setAud({ ...BLANK_AUD });
     setDay(f.date);
     return r;
-  }, (r) => `${published ? 'Published' : 'Saved as a draft'}.${r.assigned ? ` ${plural(r.assigned, 'student')} booked automatically.` : ''}${r.notFound?.length ? ` Not found: ${r.notFound.join(', ')}.` : ''}`);
+  }, (r) => `${published ? 'Published' : 'Saved as a draft'}: ${plural(r.created, 'lab time')}.${r.assigned ? ` ${plural(r.assigned, 'student')} booked automatically.` : ''}${r.notFound?.length ? ` Not found: ${r.notFound.join(', ')}.` : ''}`);
 
   const dayList = sessions.filter((s) => s.date === day).sort(byTime);
+  const dayIds = dayList.map((s) => s.id);
+  const chosen = dayIds.filter((id) => selS.includes(id));
+  const toggleS = (id) => setSelS((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]));
+  const periodHint = f.period === 'custom' ? '' : slots.map((s) => `${s.from}–${s.to}`).join(' and ');
 
   return (
     <div className="space-y-6">
       {note && <Alert ok={note.ok}>{note.text}</Alert>}
-      <Card t="Prepare a lab time" sub="Choose the lab and the time. You can give it to a class, a group or chosen students now, so they are already booked when you publish.">
-        <div className="grid gap-4 md:grid-cols-3">
-          <Field l="Day"><Inp type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
-          <Field l="From"><Inp type="time" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
-          <Field l="To"><Inp type="time" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
-          <Field l="Lab">
-            <Sel value={f.labId} onChange={(v) => setF({ ...f, labId: v })} options={[{ value: '', label: 'Choose a lab…' }, { value: 'all', label: 'All labs — same schedule for every lab' }, ...labs.map((l) => ({ value: String(l.id), label: `${l.name} (${l.pcs} computers)` }))]} />
-            <p className="mt-1.5 text-[11px] text-black/50">Choose a single lab to prepare it individually, or select All labs to create this schedule for every lab.</p>
-          </Field>
-          <Field l="Places open" hint="Empty = every computer."><Inp type="number" min="1" value={f.places} onChange={(e) => setF({ ...f, places: e.target.value })} /></Field>
-          <Field l="How students are approved">
-            <Sel value={f.auto} onChange={(v) => setF({ ...f, auto: v })} options={[
-              { value: 'true', label: 'Approve at once (waiting list when full)' }, { value: 'false', label: 'Admin approves each student' },
-            ]} />
-          </Field>
+      <Card t="Prepare a lab time" sub="Choose the labs and the time. You can give it to a class, a group or chosen students now, so they are already booked when you publish.">
+        <div className="space-y-5">
+          <Field l="Labs"><LabPicker labs={labs} value={f.labIds} onChange={(labIds) => setF({ ...f, labIds })} /></Field>
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field l="Day"><Inp type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+            <Field l="Places open" hint="Empty = every computer."><Inp type="number" min="1" value={f.places} onChange={(e) => setF({ ...f, places: e.target.value })} /></Field>
+            <Field l="How students are approved">
+              <Sel value={f.auto} onChange={(v) => setF({ ...f, auto: v })} options={[
+                { value: 'true', label: 'Approve at once (waiting list when full)' }, { value: 'false', label: 'Admin approves each student' },
+              ]} />
+            </Field>
+          </div>
+          <div>
+            <span className="mb-1.5 block text-xs font-medium">Time of the day</span>
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+              {PERIOD_CHOICES.map(([v, label, Icon]) => (
+                <button key={v} type="button" aria-pressed={f.period === v} onClick={() => setF({ ...f, period: v })}
+                  className={`flex items-center gap-2 rounded-[8px] border px-3 py-2.5 text-left text-xs font-semibold ${f.period === v ? 'border-[#16a34a] bg-[#16a34a]/10 text-[#15803d]' : 'border-black/15 bg-white hover:bg-black/5'}`}>
+                  <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+                  <span>{label}
+                    {v !== 'custom' && <span className="block font-normal text-black/50">{v === 'both' ? `${P.before.from}–${P.before.to} + ${P.after.from}–${P.after.to}` : `${P[v].from}–${P[v].to}`}</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] text-black/50">The lunch times can be changed in Settings.{periodHint && ` This will create ${periodHint}.`}</p>
+          </div>
+          {f.period === 'custom' && (
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field l="From"><Inp type="time" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
+              <Field l="To"><Inp type="time" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
+            </div>
+          )}
         </div>
         <div className="mt-6 rounded-[8px] border border-black/10 bg-black/[0.02] p-4">
           <AudiencePicker value={aud} onChange={setAud} classes={classes} groups={groups} students={students} />
         </div>
         <div className="mt-5 flex flex-wrap items-center gap-3">
-          <ActBtn c="w" busy={busy === 'draft'} doing="Saving…" label="Save as draft" disabled={!audOk(aud) || !f.labId || !timeOk} onClick={() => create(false)} />
-          <ActBtn busy={busy === 'pub'} doing="Publishing…" label="Publish now" disabled={!audOk(aud) || !f.labId || !timeOk} onClick={() => create(true)} />
-          {!f.labId && <span className="text-xs text-black/55">Choose a lab to continue.</span>}
-          {f.labId && !timeOk && <span className="text-xs text-[#c2310a]">The start time must be before the end time.</span>}
+          <ActBtn c="w" busy={busy === 'draft'} doing="Saving…" label="Save as draft" disabled={!canCreate} onClick={() => create(false)} />
+          <ActBtn busy={busy === 'pub'} doing="Publishing…" label="Publish now" disabled={!canCreate} onClick={() => create(true)} />
+          {!labsOk && <span className="text-xs text-black/55">Choose a lab to continue.</span>}
+          {labsOk && !timeOk && <span className="text-xs text-[#c2310a]">The start time must be before the end time.</span>}
+          {audMulti && <span className="text-xs text-[#c2310a]">Choose only one lab when you give the lab time to a class, a group or chosen students.</span>}
         </div>
       </Card>
 
-      <Card t="Lab times on this day" sub="Drafts are only visible to admins. Publish them when they are ready."
-        action={<DayBar day={day} onChange={setDay} />}>
+      <Card t="Lab times on this day" sub="Drafts are only visible to admins. Select several to publish, hide or delete them together."
+        action={<DayBar day={day} onChange={(d) => { setDay(d); setSelS([]); }} />}>
         {dayList.length === 0 && <Empty>No lab time on this day.</Empty>}
+        {dayList.length > 0 && (
+          <SelectBar total={dayList.length} selected={chosen.length} onAll={() => setSelS(dayIds)} onNone={() => setSelS([])}>
+            {chosen.length > 0 && (
+              <>
+                <ActBtn busy={busy === 'bpub'} doing="Publishing…" label={`Publish ${chosen.length}`}
+                  onClick={() => act('bpub', () => api('/api/sessions/publish-all', 'POST', { ids: chosen }), (r) => `${plural(r.published, 'lab time')} published.`)} />
+                <ActBtn c="w" busy={busy === 'bhide'} doing="Hiding…" label={`Hide ${chosen.length}`}
+                  onClick={() => act('bhide', () => api('/api/sessions/hide-many', 'POST', { ids: chosen }), (r) => `${plural(r.hidden, 'lab time')} hidden.`)} />
+                <Btn c="or" onClick={() => sure({ message: `Remove ${chosen.length} lab time(s)? Their bookings are removed too.`, ok: 'Remove', danger: true }, 'bdel',
+                  async () => { await api('/api/sessions/bulk-delete', 'POST', { ids: chosen }); setSelS([]); }, `${chosen.length} lab time(s) removed.`)}>
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />Delete {chosen.length}
+                </Btn>
+              </>
+            )}
+          </SelectBar>
+        )}
         <div className="divide-y divide-black/10">
           {dayList.map((s) => (
             <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 py-3.5">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge s={s.state}>{STATE_LABEL[s.state]}</Badge>
-                  <b>{s.lab} · {s.from}–{s.to}</b>
-                </div>
-                <p className="mt-1 text-xs text-black/55">{s.seats - s.left} of {s.seats} taken · {audText(s)} · {s.autoApprove !== false ? 'Approved at once' : 'Admin approves'}</p>
-              </div>
+              <label className="flex min-w-0 cursor-pointer items-start gap-3">
+                <input type="checkbox" aria-label={`Select ${s.lab} ${s.from}`} className="mt-1 h-4 w-4 accent-[#16a34a]" checked={selS.includes(s.id)} onChange={() => toggleS(s.id)} />
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <Badge s={s.state}>{STATE_LABEL[s.state]}</Badge>
+                    <b>{s.lab} · {s.from}–{s.to}</b>
+                  </span>
+                  <span className="mt-1 block text-xs text-black/55">{s.seats - s.left} of {s.seats} taken · {audText(s)} · {s.autoApprove !== false ? 'Approved at once' : 'Admin approves'}</span>
+                </span>
+              </label>
               <span className="flex flex-wrap gap-2">
                 <ActBtn c={s.published ? 'w' : 'ink'} busy={busy === 'p' + s.id} doing="…" label={s.published ? 'Hide' : 'Publish'}
                   onClick={() => act('p' + s.id, () => api(`/api/sessions/${s.id}/publish`, 'PATCH', { published: !s.published }), s.published ? 'Hidden from students.' : 'Published.')} />
@@ -1369,6 +1757,10 @@ function SchedulePage() {
             <Field l="Places open"><Inp type="number" min="1" value={edit.places} onChange={(e) => setEdit({ ...edit, places: e.target.value })} /></Field>
             <Field l="From"><Inp type="time" value={edit.from} onChange={(e) => setEdit({ ...edit, from: e.target.value })} /></Field>
             <Field l="To"><Inp type="time" value={edit.to} onChange={(e) => setEdit({ ...edit, to: e.target.value })} /></Field>
+            <div className="flex flex-wrap gap-2 md:col-span-2">
+              <Btn c="w" onClick={() => setEdit({ ...edit, from: P.before.from, to: P.before.to })}><Sunrise className="h-4 w-4" aria-hidden="true" />Before lunch</Btn>
+              <Btn c="w" onClick={() => setEdit({ ...edit, from: P.after.from, to: P.after.to })}><Sunset className="h-4 w-4" aria-hidden="true" />After lunch</Btn>
+            </div>
             <div className="md:col-span-2">
               <Field l="How students are approved">
                 <Sel value={edit.auto} onChange={(v) => setEdit({ ...edit, auto: v })} options={[
@@ -1403,6 +1795,7 @@ function PeoplePage() {
   const [q, setQ] = useState('');
   const [role, setRole] = useState('');
   const [sel, setSel] = useState([]);
+  const [limit, setLimit] = useState(100);
   const [target, setTarget] = useState({ grade: '', combo: '', section: '' });
   const [edit, setEdit] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -1412,11 +1805,14 @@ function PeoplePage() {
   const load = useCallback(() => Promise.all([api('/api/users'), api('/api/groups'), api('/api/options')])
     .then(([u, g, o]) => { setUsers(u); setGroups(g); setOpts({ ...EMPTY_OPTS, ...o }); }).catch(() => {}), []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => setLimit(100), [q, role]);
   useLive({ 'me:update': load, 'applications:update': load, seats: load });
   const { busy, act, sure, note } = useAct(load);
 
   const students = users.filter((u) => u.role === 'student');
   const shown = users.filter((u) => (!role || u.role === role) && match(q, u.name, u.email || '', u.className || '', ROLE_LABEL[u.role]));
+  const shownIds = shown.map((u) => u.id);
+  const shownSel = shownIds.filter((id) => sel.includes(id));
   const selStudents = sel.filter((id) => users.find((u) => u.id === id)?.role === 'student');
   const count = (r) => users.filter((u) => u.role === r).length;
   const targetLabel = [target.grade, target.combo, target.section].filter(Boolean).join(' ');
@@ -1427,7 +1823,7 @@ function PeoplePage() {
       {note && <Alert ok={note.ok}>{note.text}</Alert>}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Pills value={role} onChange={setRole} items={[['', 'Everyone', users.length], ...ROLE_CHOICES.map((r) => [r, ROLE_LABEL[r] + 's', count(r)])]} />
-        <Btn onClick={() => setAdding(true)}>+ Add person</Btn>
+        <Btn onClick={() => setAdding(true)}><Plus className="h-4 w-4" aria-hidden="true" />Add person</Btn>
       </div>
       <SearchBox value={q} onChange={setQ} placeholder="Search by name, email or class" />
 
@@ -1455,8 +1851,12 @@ function PeoplePage() {
 
       <Card t={`People (${shown.length})`}>
         {shown.length === 0 && <Empty>No one matches.</Empty>}
+        {shown.length > 0 && (
+          <SelectBar total={shown.length} selected={shownSel.length}
+            onAll={() => setSel((x) => [...new Set([...x, ...shownIds])])} onNone={() => setSel((x) => x.filter((id) => !shownIds.includes(id)))} />
+        )}
         <div className="divide-y divide-black/10">
-          {shown.slice(0, 100).map((u) => (
+          {shown.slice(0, limit).map((u) => (
             <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
               <span className="flex min-w-0 items-center gap-3">
                 <input type="checkbox" aria-label={`Select ${u.name}`} className="h-4 w-4 accent-[#ff4500]" checked={sel.includes(u.id)} onChange={() => toggle(u.id)} />
@@ -1476,7 +1876,12 @@ function PeoplePage() {
             </div>
           ))}
         </div>
-        {shown.length > 100 && <p className="pt-3 text-center text-xs text-black/50">Showing 100 of {shown.length}. Search to narrow the list.</p>}
+        {shown.length > limit && (
+          <div className="pt-4 text-center">
+            <p className="mb-2 text-xs text-black/50">Showing {limit} of {shown.length}. Search to narrow the list.</p>
+            <Btn c="w" onClick={() => setLimit((n) => n + 100)}>Show 100 more</Btn>
+          </div>
+        )}
       </Card>
 
       <Card t="Groups" sub="A group can mix students from any class. In Schedule you can give a lab time to a whole group.">
@@ -1565,10 +1970,11 @@ function GroupRow({ g, students, open, onToggle, act, sure, busy }) {
           <div className="flex flex-wrap gap-1.5">
             {members.length === 0 && <span className="text-xs text-black/50">No students yet.</span>}
             {members.map((m) => (
-              <span key={m.id} className="inline-flex items-center gap-1.5 rounded-full bg-[#ff4500]/10 py-1 pl-2 pr-1.5 text-xs font-medium text-[#c2310a]">
+              <span key={m.id} className="inline-flex items-center gap-1.5 rounded-full bg-[#ff4500]/10 py-1 pl-1 pr-1.5 text-xs font-medium text-[#c2310a]">
+                <Avatar name={m.name} picture={m.picture} gid={m.gid} className="h-5 w-5 text-[8px]" />
                 {m.name}<span className="text-black/50">· {m.className}</span>
                 <button type="button" aria-label={`Remove ${m.name}`} onClick={() => act('rm' + m.id, () => api(`/api/groups/${g.id}/members/${m.id}`, 'DELETE'), 'Removed from group.')}
-                  className="px-1 text-sm leading-none text-[#ff4500]">×</button>
+                  className="px-1 text-[#ff4500]"><X className="h-3.5 w-3.5" aria-hidden="true" /></button>
               </span>
             ))}
           </div>
@@ -1581,12 +1987,22 @@ function GroupRow({ g, students, open, onToggle, act, sure, busy }) {
   );
 }
 
-/* ---------- Admin chat: like Messenger. A group chat for all admins and private chats. ---------- */
+/* ---------- Admin chat: like Messenger. A group chat for all admins and private chats. Shows real profile pictures. ---------- */
 
 const EMOJIS = ['👍', '😊', '😂', '❤️', '🙏', '🎉', '👏', '😮'];
-const GroupIcon = ({ className = 'h-11 w-11 text-lg' }) => (
-  <span className={`grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#16a34a] to-[#2563eb] text-white ${className}`} aria-hidden="true">👥</span>
-);
+// Group picture: the profile pictures of the admins, side by side.
+const GroupIcon = ({ people = [], className = 'h-11 w-11' }) => {
+  const list = people.slice(0, 2);
+  if (list.length < 2) {
+    return <span className={`grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#16a34a] to-[#2563eb] text-white ${className}`} aria-hidden="true"><Users className="h-1/2 w-1/2" /></span>;
+  }
+  return (
+    <span className={`relative shrink-0 ${className}`} aria-hidden="true">
+      <Avatar name={list[0].name} picture={list[0].picture} className="absolute left-0 top-0 h-[68%] w-[68%] text-[8px] ring-2 ring-white" />
+      <Avatar name={list[1].name} picture={list[1].picture} className="absolute bottom-0 right-0 h-[68%] w-[68%] text-[8px] ring-2 ring-white" />
+    </span>
+  );
+};
 const Presence = ({ on, children }) => (
   <span className="relative shrink-0">
     {children}
@@ -1595,7 +2011,7 @@ const Presence = ({ on, children }) => (
 );
 
 function ChatPage({ me, onUnread }) {
-  const [sum, setSum] = useState({ people: [], unread: {}, last: {} });
+  const [sum, setSum] = useState({ people: [], unread: {}, last: {}, myPicture: '' });
   const [active, setActive] = useState('all');
   const [msgs, setMsgs] = useState(null);
   const [text, setText] = useState('');
@@ -1645,7 +2061,9 @@ function ChatPage({ me, onUnread }) {
     presence: (list) => setOnline(new Set(list.map((p) => p.email))),
   });
 
+  const myPic = sum.myPicture || me.picture || '';
   const people = sum.people.map((p) => ({ ...p, on: online ? online.has(p.email) : p.online }));
+  const everyone = [{ name: me.name, picture: myPic }, ...people];
   const lastAt = (k) => sum.last[k]?.at || '';
   const sorted = [...people].sort((a, b) => (sum.unread[b.email] || 0) - (sum.unread[a.email] || 0)
     || lastAt(b.email).localeCompare(lastAt(a.email)) || (+b.on - +a.on) || a.name.localeCompare(b.name));
@@ -1701,7 +2119,7 @@ function ChatPage({ me, onUnread }) {
         <div className="flex-1 overflow-y-auto pb-2">
           {showGroup && (
             <Row k="all" name="All admins" unread={sum.unread.all || 0} time={sum.last.all?.at}
-              sub={preview('all')} avatar={<GroupIcon />} />
+              sub={preview('all')} avatar={<GroupIcon people={everyone} />} />
           )}
           {list.map((p) => (
             <Row key={p.email} k={p.email} name={p.name} unread={sum.unread[p.email] || 0} time={sum.last[p.email]?.at} on={p.on}
@@ -1716,9 +2134,9 @@ function ChatPage({ me, onUnread }) {
       {/* Right: the conversation */}
       <section className={`${showList ? 'hidden' : 'flex'} min-w-0 flex-1 flex-col md:flex`}>
         <header className="flex items-center gap-3 border-b border-black/10 px-4 py-3">
-          <button type="button" aria-label="Back to chats" onClick={() => setShowList(true)} className="grid h-8 w-8 place-items-center rounded-full text-lg text-[#16a34a] hover:bg-black/5 md:hidden">←</button>
+          <button type="button" aria-label="Back to chats" onClick={() => setShowList(true)} className="grid h-8 w-8 place-items-center rounded-full text-[#16a34a] hover:bg-black/5 md:hidden"><ChevronLeft className="h-5 w-5" aria-hidden="true" /></button>
           {active === 'all'
-            ? <GroupIcon className="h-10 w-10 text-base" />
+            ? <GroupIcon people={everyone} className="h-10 w-10" />
             : <Presence on={!!other?.on}><Avatar name={other?.name || active} picture={other?.picture} className="h-10 w-10 text-xs" /></Presence>}
           <div className="min-w-0">
             <b className="block truncate text-sm">{active === 'all' ? 'All admins' : other?.name || active}</b>
@@ -1735,7 +2153,7 @@ function ChatPage({ me, onUnread }) {
           {msgs && msgs.length === 0 && (
             <div className="grid h-full place-items-center text-center">
               <div>
-                {active === 'all' ? <GroupIcon className="mx-auto h-16 w-16 text-3xl" /> : <Avatar name={other?.name || active} picture={other?.picture} className="mx-auto h-16 w-16 text-lg" />}
+                {active === 'all' ? <GroupIcon people={everyone} className="mx-auto h-16 w-16" /> : <Avatar name={other?.name || active} picture={other?.picture} className="mx-auto h-16 w-16 text-lg" />}
                 <p className="mt-3 text-sm font-semibold">{active === 'all' ? 'All admins' : other?.name}</p>
                 <p className="mt-1 text-xs text-black/50">No messages yet. Say hello 👋</p>
               </div>
@@ -1756,8 +2174,8 @@ function ChatPage({ me, onUnread }) {
                 )}
                 <div className={`flex items-end gap-2 ${mine ? 'justify-end' : 'justify-start'} ${first ? 'mt-2' : 'mt-0.5'}`}>
                   {!mine && (
-                    <span className="w-7 shrink-0">
-                      {last && <Avatar name={m.fromName} picture={sender?.picture} className="h-7 w-7 text-[9px]" />}
+                    <span className="w-8 shrink-0">
+                      {last && <Avatar name={m.fromName} picture={sender?.picture} className="h-8 w-8 text-[9px]" />}
                     </span>
                   )}
                   <div className={`flex max-w-[78%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
@@ -1768,13 +2186,18 @@ function ChatPage({ me, onUnread }) {
                     </div>
                     {last && <span className="mx-2 mt-0.5 text-[10px] text-black/40">{clock(m.at)}</span>}
                   </div>
+                  {mine && (
+                    <span className="w-8 shrink-0">
+                      {last && <Avatar name={me.name} picture={myPic} className="h-8 w-8 text-[9px]" />}
+                    </span>
+                  )}
                 </div>
               </div>
             );
           })}
           {typing && (
             <div className="mt-2 flex items-end gap-2">
-              <span className="w-7 shrink-0" />
+              <span className="w-8 shrink-0" />
               <div className="flex items-center gap-1 rounded-[18px] bg-white px-3.5 py-3 shadow-sm" aria-label={`${typing} is typing`}>
                 <span className="lb-dot" /><span className="lb-dot" style={{ animationDelay: '.15s' }} /><span className="lb-dot" style={{ animationDelay: '.3s' }} />
               </div>
@@ -1790,16 +2213,16 @@ function ChatPage({ me, onUnread }) {
             </div>
           )}
           <div className="flex items-end gap-2">
-            <button type="button" aria-label="Emoji" onClick={() => setEmoji((v) => !v)} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-xl hover:bg-black/5">☺</button>
+            <button type="button" aria-label="Emoji" onClick={() => setEmoji((v) => !v)} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#16a34a] hover:bg-black/5"><Smile className="h-5 w-5" aria-hidden="true" /></button>
             <textarea rows={1} value={text} onChange={(e) => onType(e.target.value)} placeholder="Write a message"
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
               className="max-h-28 min-h-[40px] flex-1 resize-none rounded-[20px] bg-[#f0f2f5] px-4 py-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
             {text.trim() ? (
               <button type="button" aria-label="Send" disabled={busy === 'send'} onClick={() => send()}
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#16a34a] text-white hover:opacity-90 disabled:opacity-40">➤</button>
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#16a34a] text-white hover:opacity-90 disabled:opacity-40"><Send className="h-4 w-4" aria-hidden="true" /></button>
             ) : (
               <button type="button" aria-label="Send a thumbs up" disabled={busy === 'send'} onClick={() => send('👍')}
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-xl hover:bg-black/5">👍</button>
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#16a34a] hover:bg-black/5"><ThumbsUp className="h-5 w-5" aria-hidden="true" /></button>
             )}
           </div>
         </footer>
@@ -1812,12 +2235,12 @@ function SettingsPage() {
   const [opts, setOpts] = useState(EMPTY_OPTS);
   const [labs, setLabs] = useState([]);
   const [newGrade, setNewGrade] = useState('');
-  const [newLab, setNewLab] = useState({ name: '', pcs: 10 });
+  const [newLab, setNewLab] = useState({ name: '', pcs: 10, image: '' });
   const [rules, setRules] = useState(null);
   const load = useCallback(() => Promise.all([api('/api/options'), api('/api/labs')]).then(([o, l]) => {
     setOpts({ ...EMPTY_OPTS, ...o });
     setLabs(l);
-    setRules((cur) => cur ?? { maxConsecutive: String(o.maxConsecutive ?? 1), graceMinutes: String(o.graceMinutes ?? 15), autoRelease: String(o.autoRelease !== false) });
+    setRules((cur) => cur ?? { maxConsecutive: String(o.maxConsecutive ?? 1), graceMinutes: String(o.graceMinutes ?? 15), autoRelease: String(o.autoRelease !== false), ...Object.fromEntries(Object.entries({ beforeFrom: '08:00', beforeTo: '12:30', afterFrom: '13:30', afterTo: '17:00' }).map(([k, d]) => [k, o[k] || d])) });
   }).catch(() => {}), []);
   useEffect(() => { load(); }, [load]);
   const { busy, act, sure, note } = useAct(load);
@@ -1827,10 +2250,39 @@ function SettingsPage() {
   const clean = (s) => s.trim().toUpperCase().replace(/\s+/g, ' ');
   const putOpts = (body) => api('/api/options', 'PUT', body).then((o) => setOpts({ ...EMPTY_OPTS, ...o }));
   const saveOpts = (body, done) => act('opts', () => putOpts(body), done);
+  const lunchOk = rules && rules.beforeFrom < rules.beforeTo && rules.afterFrom < rules.afterTo && rules.beforeTo <= rules.afterFrom;
 
   return (
     <div className="space-y-6">
       {note && <Alert ok={note.ok}>{note.text}</Alert>}
+      <Card t="Lunch times" sub="Lab times can be prepared before lunch, after lunch, or both. Set the hours of each period here.">
+        {rules && (
+          <>
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className="rounded-[8px] border border-black/10 p-4">
+                <h4 className="mb-3 flex items-center gap-2 text-xs font-bold"><Sunrise className="h-4 w-4 text-[#f59e0b]" aria-hidden="true" />Before lunch</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field l="From"><Inp type="time" value={rules.beforeFrom} onChange={(e) => setRules({ ...rules, beforeFrom: e.target.value })} /></Field>
+                  <Field l="To"><Inp type="time" value={rules.beforeTo} onChange={(e) => setRules({ ...rules, beforeTo: e.target.value })} /></Field>
+                </div>
+              </div>
+              <div className="rounded-[8px] border border-black/10 p-4">
+                <h4 className="mb-3 flex items-center gap-2 text-xs font-bold"><Sunset className="h-4 w-4 text-[#ff4500]" aria-hidden="true" />After lunch</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field l="From"><Inp type="time" value={rules.afterFrom} onChange={(e) => setRules({ ...rules, afterFrom: e.target.value })} /></Field>
+                  <Field l="To"><Inp type="time" value={rules.afterTo} onChange={(e) => setRules({ ...rules, afterTo: e.target.value })} /></Field>
+                </div>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <ActBtn busy={busy === 'opts'} doing="Saving…" label="Save lunch times" disabled={!lunchOk}
+                onClick={() => saveOpts({ beforeFrom: rules.beforeFrom, beforeTo: rules.beforeTo, afterFrom: rules.afterFrom, afterTo: rules.afterTo }, 'Lunch times saved.')} />
+              {!lunchOk && <span className="text-xs text-[#c2310a]">Each period must start before it ends, and lunch must come between them.</span>}
+            </div>
+          </>
+        )}
+      </Card>
+
       <Card t="Booking rules" sub="These keep the labs fair and free places of students who do not come.">
         {rules && (
           <>
@@ -1852,15 +2304,16 @@ function SettingsPage() {
         )}
       </Card>
 
-      <Card t="Labs" sub="Name and number of computers of each room.">
-        <div className="mb-5 flex flex-wrap gap-3">
-          <Inp className="!w-56" placeholder="Lab name" value={newLab.name} onChange={(e) => setNewLab({ ...newLab, name: e.target.value })} />
-          <Inp type="number" min="1" className="!w-28" value={newLab.pcs} onChange={(e) => setNewLab({ ...newLab, pcs: e.target.value })} />
+      <Card t="Labs" sub="Name, number of computers and picture of each room. Without a picture link a nice default picture is shown.">
+        <div className="mb-5 grid gap-3 md:grid-cols-[14rem_7rem_1fr_auto]">
+          <Inp placeholder="Lab name" value={newLab.name} onChange={(e) => setNewLab({ ...newLab, name: e.target.value })} />
+          <Inp type="number" min="1" value={newLab.pcs} onChange={(e) => setNewLab({ ...newLab, pcs: e.target.value })} />
+          <Inp placeholder="Picture link (optional)" value={newLab.image} onChange={(e) => setNewLab({ ...newLab, image: e.target.value })} />
           <ActBtn busy={busy === 'lab'} doing="Adding…" label="Add lab" disabled={!newLab.name.trim()}
-            onClick={async () => { if (await act('lab', () => api('/api/labs', 'POST', newLab), 'Lab added.')) setNewLab({ name: '', pcs: 10 }); }} />
+            onClick={async () => { if (await act('lab', () => api('/api/labs', 'POST', newLab), 'Lab added.')) setNewLab({ name: '', pcs: 10, image: '' }); }} />
         </div>
         <div className="divide-y divide-black/10">
-          {labs.map((l) => <LabRow key={l.id} l={l} busy={busy} act={act} sure={sure} />)}
+          {labs.map((l, i) => <LabRow key={l.id} l={l} index={i} busy={busy} act={act} sure={sure} />)}
         </div>
         {labs.length === 0 && <Empty>No labs yet.</Empty>}
       </Card>
@@ -1902,18 +2355,22 @@ function SettingsPage() {
   );
 }
 
-function LabRow({ l, busy, act, sure }) {
+function LabRow({ l, index, busy, act, sure }) {
   const [name, setName] = useState(l.name);
   const [pcs, setPcs] = useState(l.pcs);
-  const changed = name.trim() !== l.name || +pcs !== l.pcs;
+  const [image, setImage] = useState(l.image || '');
+  const changed = name.trim() !== l.name || +pcs !== l.pcs || image.trim() !== (l.image || '');
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 py-3">
-      <Inp className="!w-56 font-bold" value={name} onChange={(e) => setName(e.target.value)} aria-label="Lab name" />
+    <div className="flex flex-wrap items-center gap-3 py-3">
+      <span className="h-14 w-20 shrink-0 overflow-hidden rounded-[6px] bg-black/10">
+        <LabImg lab={{ ...l, image: image.trim() }} index={index} w={240} className="h-full w-full object-cover" />
+      </span>
+      <Inp className="!w-48 font-bold" value={name} onChange={(e) => setName(e.target.value)} aria-label="Lab name" />
+      <Inp type="number" min="1" className="!w-20" value={pcs} onChange={(e) => setPcs(e.target.value)} aria-label="Computers" />
+      <Inp className="min-w-[180px] flex-1" placeholder="Picture link (empty = default picture)" value={image} onChange={(e) => setImage(e.target.value)} aria-label="Picture link" />
       <span className="flex flex-wrap items-center gap-2">
-        <Inp type="number" min="1" className="!w-24" value={pcs} onChange={(e) => setPcs(e.target.value)} />
-        <span className="text-xs text-black/55">computers</span>
         <ActBtn busy={busy === 'lab' + l.id} doing="Saving…" label="Save" disabled={!changed || !name.trim() || !(+pcs >= 1)}
-          onClick={() => act('lab' + l.id, () => api(`/api/labs/${l.id}`, 'PUT', { name: name.trim(), pcs: +pcs }), 'Saved.')} />
+          onClick={() => act('lab' + l.id, () => api(`/api/labs/${l.id}`, 'PUT', { name: name.trim(), pcs: +pcs, image: image.trim() }), 'Saved.')} />
         <Btn c="or" onClick={() => sure({ message: `Delete ${l.name}? Its lab times and bookings are removed.`, ok: 'Delete lab', danger: true },
           'ld' + l.id, () => api(`/api/labs/${l.id}`, 'DELETE'), 'Lab deleted.')}>Delete</Btn>
       </span>
@@ -1932,6 +2389,7 @@ function TrendsManager({ user, opts }) {
   const [formOpen, setFormOpen] = useState(false);
   const [f, setF] = useState({ title: '', category: '', foundAt: '', description: '', phone: '', email: user.email || '' });
   const [files, setFiles] = useState([]);
+  const [sel, setSel] = useState([]);
   const [err, setErr] = useState('');
   const { busy, run } = useBusy();
   const load = () => api('/api/trends/manage').then(setItems).catch((e) => setErr(e.message));
@@ -1962,6 +2420,9 @@ function TrendsManager({ user, opts }) {
   const list = items || [];
   const shown = list.filter((t) => view === 'all' || t.status === view);
   const n = (s) => list.filter((t) => t.status === s).length;
+  // Only posts that are already off the board can be deleted.
+  const deletable = shown.filter((t) => t.status !== 'active').map((t) => t.id);
+  const chosen = deletable.filter((id) => sel.includes(id));
   if (items === null) return err ? <Alert>{err}</Alert> : <Loader full label="Loading" />;
 
   return (
@@ -1969,7 +2430,7 @@ function TrendsManager({ user, opts }) {
       {err && <Alert>{err}</Alert>}
       {note && <Alert ok={note.ok}>{note.text}</Alert>}
       <Card t="Post a found item" sub="A post can be removed 7 days after it was posted, and reposted later."
-        action={!formOpen && <Btn onClick={() => setFormOpen(true)}>+ New post</Btn>}>
+        action={!formOpen && <Btn onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" aria-hidden="true" />New post</Btn>}>
         {formOpen ? (
           <div className="grid gap-4 md:grid-cols-2">
             <Field l="What was found?"><Inp value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="Black jacket with a red zip" /></Field>
@@ -1984,6 +2445,17 @@ function TrendsManager({ user, opts }) {
                 <input type="file" multiple className="sr-only" onChange={pick} disabled={busy === 'pick'} accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" />
               </label>
               <p className="mt-2 text-xs text-black/55">{files.length} file{files.length === 1 ? '' : 's'} ready</p>
+              {files.some((x) => x.mime.startsWith('image/')) && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {files.map((x, i) => x.mime.startsWith('image/') && (
+                    <span key={x.name + i} className="relative h-16 w-16 overflow-hidden rounded-[6px] border border-black/10">
+                      <img src={`data:${x.mime};base64,${x.data}`} alt={x.name} className="h-full w-full object-cover" />
+                      <button type="button" aria-label={`Remove ${x.name}`} onClick={() => setFiles((p) => p.filter((_, k) => k !== i))}
+                        className="absolute right-0.5 top-0.5 grid h-5 w-5 place-items-center rounded-full bg-black/60 text-white"><X className="h-3 w-3" aria-hidden="true" /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex gap-3 md:col-span-2">
               <ActBtn busy={busy === 'submit'} doing="Posting…" label="Post item" disabled={!f.title.trim() || busy === 'pick'} onClick={submit} />
@@ -1993,35 +2465,56 @@ function TrendsManager({ user, opts }) {
         ) : <p className="text-xs text-black/55">Add a photo, a category and a way to contact you.</p>}
       </Card>
 
-      <Card t="Posts" action={<Pills value={view} onChange={setView} items={[['active', 'On the board', n('active')], ['returned', 'Returned', n('returned')], ['removed', 'Removed', n('removed')], ['all', 'All', list.length]]} />}>
+      <Card t="Posts" action={<Pills value={view} onChange={(v) => { setView(v); setSel([]); }} items={[['active', 'On the board', n('active')], ['returned', 'Returned', n('returned')], ['removed', 'Removed', n('removed')], ['all', 'All', list.length]]} />}>
         {shown.length === 0 && <Empty>No posts here.</Empty>}
+        {deletable.length > 0 && (
+          <SelectBar total={deletable.length} selected={chosen.length} onAll={() => setSel(deletable)} onNone={() => setSel([])}>
+            {chosen.length > 0 && (
+              <Btn c="or" onClick={() => sure({ message: `Delete ${chosen.length} post(s) for good?`, ok: 'Delete', danger: true }, 'bdel',
+                async () => { await api('/api/trends/bulk-delete', 'POST', { ids: chosen }); setSel([]); }, `${chosen.length} post(s) deleted.`)}>
+                <Trash2 className="h-4 w-4" aria-hidden="true" />Delete {chosen.length}
+              </Btn>
+            )}
+          </SelectBar>
+        )}
         <div className="divide-y divide-black/10">
-          {shown.map((t) => (
-            <div key={t.id} className="flex flex-wrap items-center justify-between gap-4 py-4">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <b>{t.title}</b><Badge s={t.status} /><span className="rounded-[4px] bg-black/5 px-2 py-0.5 text-[11px] font-semibold">{t.category}</span>
+          {shown.map((t) => {
+            const ph = t.media?.map(itemPhoto).find(Boolean);
+            return (
+              <div key={t.id} className="flex flex-wrap items-center justify-between gap-4 py-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  {t.status !== 'active'
+                    ? <input type="checkbox" aria-label={`Select ${t.title}`} className="h-4 w-4 accent-[#16a34a]" checked={sel.includes(t.id)} onChange={() => setSel((x) => (x.includes(t.id) ? x.filter((y) => y !== t.id) : [...x, t.id]))} />
+                    : <span className="w-4" />}
+                  <span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[6px] bg-black/5">
+                    <Photo src={ph} alt={t.title} className="h-full w-full object-cover" fallback={<PackageSearch className="h-6 w-6 text-black/30" aria-hidden="true" />} />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <b>{t.title}</b><Badge s={t.status} /><span className="rounded-[4px] bg-black/5 px-2 py-0.5 text-[11px] font-semibold">{t.category}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-black/55">
+                      Posted {ago(t.postedAt)}
+                      {t.status === 'active' && (t.daysLeft ? ` · can be removed in ${t.daysLeft} day(s)` : ' · ready to remove or repost')}
+                    </p>
+                  </div>
                 </div>
-                <p className="mt-1 text-xs text-black/55">
-                  Posted {ago(t.postedAt)}
-                  {t.status === 'active' && (t.daysLeft ? ` · can be removed in ${t.daysLeft} day(s)` : ' · ready to remove or repost')}
-                </p>
+                <div className="flex flex-wrap gap-2">
+                  {t.status === 'active' ? (
+                    <>
+                      <Btn c="bl" onClick={() => sure({ message: 'Mark this item as returned to its owner?', ok: 'Yes, returned' }, 'ret' + t.id, () => api(`/api/trends/${t.id}/returned`, 'PATCH'), 'Marked as returned.')}>Returned</Btn>
+                      <Btn c="or" disabled={t.daysLeft > 0} onClick={() => sure({ message: 'Take this post off the board? You can repost it later.', ok: 'Remove', danger: true }, 'rm' + t.id, () => api(`/api/trends/${t.id}/remove`, 'PATCH'), 'Removed from the board.')}>Remove</Btn>
+                    </>
+                  ) : (
+                    <>
+                      <Btn onClick={() => act('rp' + t.id, () => api(`/api/trends/${t.id}/repost`, 'PATCH'), 'Reposted.')}>Repost</Btn>
+                      <Btn c="or" onClick={() => sure({ message: 'Delete this post for good?', ok: 'Delete', danger: true }, 'del' + t.id, () => api(`/api/trends/${t.id}`, 'DELETE'), 'Deleted.')}>Delete</Btn>
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {t.status === 'active' ? (
-                  <>
-                    <Btn c="bl" onClick={() => sure({ message: 'Mark this item as returned to its owner?', ok: 'Yes, returned' }, 'ret' + t.id, () => api(`/api/trends/${t.id}/returned`, 'PATCH'), 'Marked as returned.')}>Returned</Btn>
-                    <Btn c="or" disabled={t.daysLeft > 0} onClick={() => sure({ message: 'Take this post off the board? You can repost it later.', ok: 'Remove', danger: true }, 'rm' + t.id, () => api(`/api/trends/${t.id}/remove`, 'PATCH'), 'Removed from the board.')}>Remove</Btn>
-                  </>
-                ) : (
-                  <>
-                    <Btn onClick={() => act('rp' + t.id, () => api(`/api/trends/${t.id}/repost`, 'PATCH'), 'Reposted.')}>Repost</Btn>
-                    <Btn c="or" onClick={() => sure({ message: 'Delete this post for good?', ok: 'Delete', danger: true }, 'del' + t.id, () => api(`/api/trends/${t.id}`, 'DELETE'), 'Deleted.')}>Delete</Btn>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </Card>
 
@@ -2103,9 +2596,7 @@ const NAV_ICON = { 'My labs': CalendarDays, Bookings: CalendarCheck2, 'Lost & Fo
 
 const NavBadge = ({ n }) => (n > 0 ? <span className="ml-auto grid h-5 min-w-[20px] place-items-center rounded-full bg-[#ff4500] px-1.5 text-[10px] font-bold text-white">{n > 99 ? '99+' : n}</span> : null);
 
-function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) {
-  const [dark, setDark] = useState(() => localStorage.getItem('lms_dark') === 'true');
-  useEffect(() => { localStorage.setItem('lms_dark', String(dark)); }, [dark]);
+function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, dark, onToggleDark }) {
   const isAdmin = user.role === 'admin';
   const items = isAdmin
     ? [...ADMIN_TABS, 'Lost & Found', 'Profile']
@@ -2146,17 +2637,19 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
   const badgeOf = (x) => (x === 'Chat' ? unread : 0);
 
   return (
-    <div className={dark ? 'lms-dark min-h-screen bg-[#f7f8f7] text-[13px] text-[#111827] lg:flex' : 'min-h-screen bg-[#f7f8f7] text-[13px] text-[#111827] lg:flex'}>
-      <style>{`.lms-dark{background:#111827!important;color:#e5e7eb!important;color-scheme:dark}.lms-dark .bg-white{background:#1f2937!important}.lms-dark .bg-\\[\\#f7f8f7\\]{background:#111827!important}.lms-dark .text-\\[\\#111827\\]{color:#e5e7eb!important}.lms-dark [class*=\"text-black/\"]{color:#9ca3af!important}.lms-dark [class*=\"border-black/\"]{border-color:#374151!important}.lms-dark [class*=\"divide-black/\"]>*+*{border-color:#374151!important}.lms-dark input,.lms-dark select,.lms-dark textarea{background:#111827!important;color:#e5e7eb!important;border-color:#4b5563!important}.lms-dark .hover\\:bg-black\\/5:hover{background:#374151!important}.lms-dark .bg-black\\/\\[0\\.04\\],.lms-dark .bg-black\\/\\[0\\.02\\]{background:#273449!important}`}</style>
+    <div className="min-h-screen bg-[#f7f8f7] text-[13px] text-[#111827] lg:flex">
       <aside className="hidden flex-col border-r border-black/10 bg-white p-5 lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-64 lg:shrink-0">
         <Logo />
         <nav className="mt-8 flex-1 space-y-1 overflow-y-auto" aria-label="Main">
-          {items.map((x) => (
-            <button key={x} type="button" onClick={() => go(x)} aria-current={page === x ? 'page' : undefined}
-              className={`flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
-              {(() => { const Icon = NAV_ICON[x] || UserRound; return <Icon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />; })()}{x}<NavBadge n={badgeOf(x)} />
-            </button>
-          ))}
+          {items.map((x) => {
+            const Icon = NAV_ICON[x] || UserRound;
+            return (
+              <button key={x} type="button" onClick={() => go(x)} aria-current={page === x ? 'page' : undefined}
+                className={`flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
+                <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={2} aria-hidden="true" />{x}<NavBadge n={badgeOf(x)} />
+              </button>
+            );
+          })}
         </nav>
         <div className="mt-4 rounded-[8px] bg-black/[0.04] p-3">
           <div className="flex items-center gap-3">
@@ -2166,8 +2659,12 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
               <div className="text-[11px] text-black/55">{user.comm && user.role !== 'admin' ? 'Minister of Communication' : ROLE_LABEL[user.role] || user.role}</div>
             </div>
           </div>
-          <button type="button" onClick={onLogout} className="mt-3 w-full rounded-[6px] px-2 py-2 text-left text-xs font-semibold text-[#ff4500] hover:bg-[#ff4500]/10">Log out</button>
-          <button type="button" onClick={() => setDark((value) => !value)} className="mt-1 w-full rounded-[6px] px-2 py-2 text-left text-xs font-semibold hover:bg-black/5">{dark ? '☀️ Light mode' : '🌙 Dark mode'}</button>
+          <button type="button" onClick={onToggleDark} className="mt-3 flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-left text-xs font-semibold hover:bg-black/5">
+            {dark ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}{dark ? 'Light mode' : 'Dark mode'}
+          </button>
+          <button type="button" onClick={onLogout} className="mt-1 flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-left text-xs font-semibold text-[#ff4500] hover:bg-[#ff4500]/10">
+            <LogOut className="h-4 w-4" aria-hidden="true" />Log out
+          </button>
         </div>
       </aside>
 
@@ -2175,15 +2672,21 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe }) 
         <header className="border-b border-black/10 bg-white lg:hidden">
           <div className="flex h-14 items-center justify-between px-4">
             <Logo />
-            <div className="flex items-center gap-2"><button type="button" aria-label="Toggle dark mode" onClick={() => setDark((value) => !value)} className="rounded px-2 py-1">{dark ? '☀️' : '🌙'}</button><Btn c="w" onClick={onLogout}>Log out</Btn></div>
+            <div className="flex items-center gap-2">
+              <ThemeBtn dark={dark} onToggle={onToggleDark} />
+              <Btn c="w" onClick={onLogout}><LogOut className="h-4 w-4" aria-hidden="true" />Log out</Btn>
+            </div>
           </div>
           <nav className="flex gap-2 overflow-x-auto px-4 pb-3" aria-label="Main">
-            {items.map((x) => (
-              <button key={x} type="button" onClick={() => go(x)}
-                className={`flex shrink-0 items-center gap-2 rounded-[6px] px-3 py-2 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
-                {(() => { const Icon = NAV_ICON[x] || UserRound; return <Icon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />; })()}{x}{badgeOf(x) > 0 && <span className="grid h-4 min-w-[16px] place-items-center rounded-full bg-[#ff4500] px-1 text-[9px] font-bold text-white">{badgeOf(x)}</span>}
-              </button>
-            ))}
+            {items.map((x) => {
+              const Icon = NAV_ICON[x] || UserRound;
+              return (
+                <button key={x} type="button" onClick={() => go(x)}
+                  className={`flex shrink-0 items-center gap-2 rounded-[6px] px-3 py-2 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
+                  <Icon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />{x}{badgeOf(x) > 0 && <span className="grid h-4 min-w-[16px] place-items-center rounded-full bg-[#ff4500] px-1 text-[9px] font-bold text-white">{badgeOf(x)}</span>}
+                </button>
+              );
+            })}
           </nav>
         </header>
         <main className="mx-auto max-w-6xl px-5 py-8 lg:px-8">
@@ -2204,6 +2707,13 @@ export default function Home() {
   const [opts, setOpts] = useState(EMPTY_OPTS);
   const [booting, setBooting] = useState(!!getToken());
   const [intent, setIntent] = useState(null);
+  // Light and dark mode for the whole site (landing, sign in and dashboard). Remembered on this device.
+  const [dark, setDark] = useState(() => localStorage.getItem('lms_dark') === 'true');
+  useEffect(() => {
+    localStorage.setItem('lms_dark', String(dark));
+    document.body.style.background = dark ? '#0f172a' : '';
+  }, [dark]);
+  const toggleDark = () => setDark((v) => !v);
 
   const loadOpts = () => api('/api/options').then((o) => setOpts({ ...EMPTY_OPTS, ...o })).catch(() => {});
   const refreshMe = () => api('/api/me').then(setUser).catch(() => {});
@@ -2230,14 +2740,14 @@ export default function Home() {
 
   let page;
   if (booting) page = <Loader full label="Loading" />;
-  else if (view === 'app' && user) page = <Dashboard user={user} opts={opts} intent={intent} onIntentDone={() => setIntent(null)} onLogout={logout} onRefreshMe={refreshMe} />;
-  else if (view === 'login') page = <Auth onDone={handleAuth} onBack={() => setView('home')} intent={intent} />;
-  else page = <Landing onLogin={goLogin} />;
+  else if (view === 'app' && user) page = <Dashboard user={user} opts={opts} intent={intent} onIntentDone={() => setIntent(null)} onLogout={logout} onRefreshMe={refreshMe} dark={dark} onToggleDark={toggleDark} />;
+  else if (view === 'login') page = <Auth onDone={handleAuth} onBack={() => setView('home')} intent={intent} dark={dark} onToggleDark={toggleDark} />;
+  else page = <Landing onLogin={goLogin} dark={dark} onToggleDark={toggleDark} />;
 
   return (
-    <>
+    <div className={dark ? 'lms-dark min-h-screen' : 'min-h-screen'}>
       <style>{GLOBAL_CSS}</style>
       <ConfirmProvider>{page}</ConfirmProvider>
-    </>
+    </div>
   );
 }

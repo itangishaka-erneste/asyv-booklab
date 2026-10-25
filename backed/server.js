@@ -2,10 +2,11 @@
 // Everyone signs in with Google. Admins get live presence, an activity log and a private admin chat.
 //
 // What is new in this version
-//  - Admin chat (like Messenger): one group chat for all admins and one private chat between any two admins,
-//    unread counters, "typing..." signal and online status. Tables: admin_people, admin_chat, admin_chat_reads.
-//  - /api/board only returns PUBLISHED lab times (drafts stay in Schedule), with the students of each lab time.
-//  - /api/sessions keeps the "people" list for the admin, so the Edit screen can show who a lab time is assigned to.
+//  - Lunch periods: settings keep "before lunch" and "after lunch" times. A lab time can be created for
+//    both periods at once (POST /api/sessions accepts "slots": [{from,to}, ...]).
+//  - Labs have an image (labs.image). It is returned by /api/labs, /api/overview and /api/board.
+//  - Activity log can be filtered by day / number of days / admin.
+//  - Bulk delete for lost-and-found posts.
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -23,12 +24,18 @@ const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const DEFAULT_GRADE_COMBOS = { S4: ['INGABE'], S5: ['INGABO'], S6: ['IJABO'] };
 const DEFAULT_TREND_CATEGORIES = ['Clothes', 'Shoes', 'Keys', 'Bags', 'Phones and electronics', 'Books and stationery', 'Documents and IDs', 'Water bottles and lunch boxes', 'Jewelry and watches', 'Other'];
-const DEFAULT_SETTINGS = { maxConsecutive: 1, graceMinutes: 15, autoRelease: true };
+const DEFAULT_SETTINGS = {
+  maxConsecutive: 1, graceMinutes: 15, autoRelease: true,
+  beforeFrom: '08:00', beforeTo: '12:30', afterFrom: '13:30', afterTo: '17:00',
+};
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.floor(+v) || 0));
+const timeP = def => v => (/^\d{2}:\d{2}$/.test(String(v || '')) ? String(v) : def);
 const SETTING_PARSERS = {
   maxConsecutive: v => clampInt(v, 0, 7),
   graceMinutes: v => clampInt(v, 0, 120),
   autoRelease: v => v === true || v === 'true',
+  beforeFrom: timeP(DEFAULT_SETTINGS.beforeFrom), beforeTo: timeP(DEFAULT_SETTINGS.beforeTo),
+  afterFrom: timeP(DEFAULT_SETTINGS.afterFrom), afterTo: timeP(DEFAULT_SETTINGS.afterTo),
 };
 const DEFAULTS = { grades: ['S4', 'S5', 'S6'], gradeCombos: DEFAULT_GRADE_COMBOS, trendCategories: DEFAULT_TREND_CATEGORIES, ...DEFAULT_SETTINGS };
 const SECTION_RE = /^[A-Z0-9]{1,2}$/;
@@ -260,7 +267,7 @@ io.on('connection', socket => {
     socket.join('admins');
     socket.join(`admin:${me.email}`);
     upsertAdmin(me);
-    presence.set(socket.id, { name: me.name, email: me.email, page: 'Overview', since: Date.now() });
+    presence.set(socket.id, { name: me.name, email: me.email, picture: me.picture || '', page: 'Overview', since: Date.now() });
     pushPresence();
     socket.on('page', p => {
       const cur = presence.get(socket.id);
@@ -605,27 +612,36 @@ app.delete('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
   res.sendStatus(204);
 }));
 
-/* ---------- Labs ---------- */
+/* ---------- Labs (with an image each) ---------- */
 
-app.get('/api/labs', auth(), wrap(async (_, res) => res.json(await query('SELECT id, name, pcs FROM labs ORDER BY name'))));
+const labImage = v => {
+  const u = directUrl(String(v || '').trim());
+  if (u && !/^https?:\/\/\S+$/i.test(u)) fail(400, 'The lab image must be a link that starts with http:// or https://');
+  return u.slice(0, 600);
+};
+
+app.get('/api/labs', auth(), wrap(async (_, res) => res.json(await query("SELECT id, name, pcs, COALESCE(image, '') AS image FROM labs ORDER BY name"))));
 app.post('/api/labs', auth('admin'), wrap(async (req, res) => {
   const { name, pcs } = req.body;
   if (!name?.trim() || !(+pcs >= 1)) fail(400, 'Enter a lab name and at least one computer.');
+  const image = labImage(req.body.image);
   try {
-    const row = await one('INSERT INTO labs(name, pcs) VALUES($1,$2) RETURNING id', [name.trim(), +pcs]);
+    const row = await one('INSERT INTO labs(name, pcs, image) VALUES($1,$2,$3) RETURNING id', [name.trim(), +pcs, image]);
     await logAct(req.user, 'Added lab', `${name.trim()} (${+pcs} computers)`);
+    pushSeats();
     res.json(row);
   } catch (e) { fail(e.code === '23505' ? 409 : 500, e.code === '23505' ? 'A lab with this name already exists.' : e.message); }
 }));
 app.put('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
   const { pcs } = req.body;
   const name = req.body.name == null ? null : String(req.body.name).trim();
+  const image = req.body.image === undefined ? null : labImage(req.body.image);
   if (name !== null && !name) fail(400, 'The lab name cannot be empty.');
   if (pcs != null && !(+pcs >= 1)) fail(400, 'A lab needs at least one computer.');
   if (pcs != null && (await listSessions(true)).some(s => s.labId == req.params.id && s.seats - s.left > +pcs)) fail(409, 'More students are approved than this many computers.');
   try {
     await tx(async q => {
-      await q('UPDATE labs SET name = COALESCE($1, name), pcs = COALESCE($2, pcs) WHERE id = $3', [name, pcs ?? null, req.params.id]);
+      await q('UPDATE labs SET name = COALESCE($1, name), pcs = COALESCE($2, pcs), image = COALESCE($4, image) WHERE id = $3', [name, pcs ?? null, req.params.id, image]);
       if (pcs != null) await q('UPDATE sessions SET places = LEAST(places, $1::int) WHERE lab_id = $2 AND places IS NOT NULL', [+pcs, req.params.id]);
     });
   } catch (e) { if (e.code === '23505') fail(409, 'A lab with this name already exists.'); throw e; }
@@ -699,31 +715,36 @@ const syncAssigned = async (q, sid) => {
 
 app.get('/api/sessions', auth(), wrap(async (req, res) => res.json(await listSessions(req.user.role === 'admin', req.user))));
 
+// Create lab times. "slots" = [{from,to}, ...] (for example before lunch and after lunch). "labIds" = one lab, two or three labs, or all.
 app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
-  const { date = nowLocal().date, from, to, labIds } = req.body;
+  const { date = nowLocal().date, labIds } = req.body;
+  const slots = (Array.isArray(req.body.slots) && req.body.slots.length ? req.body.slots : [{ from: req.body.from, to: req.body.to }])
+    .map(s => ({ from: HM(s.from), to: HM(s.to) }));
+  slots.forEach(s => { if (!s.from || !s.to || s.from >= s.to) fail(400, 'The start time must be before the end time.'); });
   const published = req.body.published === true;
   const autoApprove = req.body.autoApprove !== false;
-  if (!from || !to || from >= to) fail(400, 'The start time must be before the end time.');
   const wanted = req.body.places === undefined || req.body.places === null || req.body.places === '' ? null : Math.floor(+req.body.places);
   if (wanted !== null && !(wanted >= 1)) fail(400, 'Places open must be 1 or more.');
-  const labs = (await query('SELECT id, name, pcs FROM labs')).filter(l => !labIds?.length || labIds.includes(l.id));
+  const ids = toIds(labIds);
+  const labs = (await query('SELECT id, name, pcs FROM labs')).filter(l => !ids.length || ids.includes(l.id));
   if (!labs.length) fail(400, 'Choose a lab first.');
   if (wanted !== null && labs.length === 1 && wanted > labs[0].pcs) fail(400, `This lab has only ${labs[0].pcs} computers.`);
   const aud = await parseAudience(req.body.audience);
   if (aud.kind && labs.length > 1) fail(400, 'Choose one lab when you assign a class, a group or people.');
   const touched = [];
   await tx(async q => {
-    for (const l of labs) {
+    for (const l of labs) for (const sl of slots) {
       const row = (await q('INSERT INTO sessions(lab_id, date, starts_at, ends_at, places, published, for_class, for_group, exclusive, auto_approve) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
-        [l.id, date, from, to, wanted === null ? null : Math.min(wanted, l.pcs), published, aud.forClass, aud.forGroup, aud.exclusive, autoApprove]))[0];
+        [l.id, date, sl.from, sl.to, wanted === null ? null : Math.min(wanted, l.pcs), published, aud.forClass, aud.forGroup, aud.exclusive, autoApprove]))[0];
       await setPeople(q, row.id, aud.ids);
       if (aud.kind) touched.push(...await syncAssigned(q, row.id));
     }
   });
   const who = aud.kind ? (aud.kind === 'class' ? ` · for class ${aud.forClass}` : aud.kind === 'group' ? ' · for a group' : ` · for ${aud.ids.length} students`) : '';
-  await logAct(req.user, published ? 'Published lab time' : 'Saved lab time draft', `${labs[0].name} · ${date} ${from}–${to}${who}`);
+  const labText = labs.length === 1 ? labs[0].name : `${labs.length} labs`;
+  await logAct(req.user, published ? 'Published lab time' : 'Saved lab time draft', `${labText} · ${date} ${slots.map(s => `${s.from}–${s.to}`).join(' + ')}${who}`);
   pushApps(touched);
-  res.json({ created: labs.length, published, assigned: touched.length, notFound: aud.notFound });
+  res.json({ created: labs.length * slots.length, published, assigned: touched.length, notFound: aud.notFound });
 }));
 
 app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
@@ -763,11 +784,20 @@ app.patch('/api/sessions/:id/publish', auth('admin'), wrap(async (req, res) => {
   await logAct(req.user, req.body.published ? 'Published lab time' : 'Hid lab time', `#${req.params.id}`);
   pushApps(); res.json({ ok: true });
 }));
+// Publish chosen drafts (ids) or every draft (no ids).
 app.post('/api/sessions/publish-all', auth('admin'), wrap(async (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : null;
   const r = await query('UPDATE sessions SET published = true WHERE published = false AND ($1::int[] IS NULL OR id = ANY($1::int[])) RETURNING id', [ids]);
   await logAct(req.user, 'Published lab times', `${r.length}`);
   pushApps(); res.json({ published: r.length });
+}));
+// Hide chosen lab times (back to draft).
+app.post('/api/sessions/hide-many', auth('admin'), wrap(async (req, res) => {
+  const ids = toIds(req.body.ids);
+  if (!ids.length) fail(400, 'Choose at least one lab time.');
+  const r = await query('UPDATE sessions SET published = false WHERE id = ANY($1::int[]) RETURNING id', [ids]);
+  await logAct(req.user, 'Hid lab times', `${r.length}`);
+  pushApps(); res.json({ hidden: r.length });
 }));
 app.post('/api/sessions/bulk-delete', auth('admin'), wrap(async (req, res) => {
   const ids = toIds(req.body.ids);
@@ -829,7 +859,7 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 app.get('/api/overview', wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
   const [labRows, sessions, pend] = await Promise.all([
-    query('SELECT id, name, pcs FROM labs ORDER BY name'),
+    query("SELECT id, name, pcs, COALESCE(image, '') AS image FROM labs ORDER BY name"),
     listSessions(),
     query("SELECT sid, COUNT(*)::int AS n FROM application_details WHERE status = 'pending' GROUP BY sid"),
   ]);
@@ -847,7 +877,7 @@ app.get('/api/overview', wrap(async (req, res) => {
     const sum = k => list.reduce((n, s) => n + s[k], 0);
     const seats = sum('seats'), left = sum('left'), free = sum('open');
     const status = !list.length ? 'none' : left === 0 ? 'full' : free === 0 ? 'requested' : free / seats <= 0.3 ? 'limited' : 'available';
-    return { id: l.id, name: l.name, pcs: l.pcs, status, seats, free, taken: sum('taken'), waiting: sum('waiting'), sessions: list };
+    return { id: l.id, name: l.name, pcs: l.pcs, image: l.image, status, seats, free, taken: sum('taken'), waiting: sum('waiting'), sessions: list };
   });
   res.json({
     date,
@@ -866,7 +896,7 @@ app.get('/api/overview', wrap(async (req, res) => {
 app.get('/api/board', auth('admin'), wrap(async (req, res) => {
   const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
   const [labs, sessions, apps] = await Promise.all([
-    query('SELECT id, name, pcs FROM labs ORDER BY name'),
+    query("SELECT id, name, pcs, COALESCE(image, '') AS image FROM labs ORDER BY name"),
     listSessions(true),
     listApps('date = $1', [date]),
   ]);
@@ -876,7 +906,7 @@ app.get('/api/board', auth('admin'), wrap(async (req, res) => {
   res.json({
     date,
     labs: labs.map(l => ({
-      id: l.id, name: l.name, pcs: l.pcs,
+      id: l.id, name: l.name, pcs: l.pcs, image: l.image,
       sessions: day.filter(s => s.labId == l.id).map(s => ({
         id: s.id, from: s.from, to: s.to, date: s.date, lab: s.lab, seats: s.seats, left: s.left, published: s.published,
         state: s.state, autoApprove: s.autoApprove !== false, forClass: s.forClass, forGroup: s.forGroup,
@@ -887,16 +917,26 @@ app.get('/api/board', auth('admin'), wrap(async (req, res) => {
   });
 }));
 
-/* ---------- Activity log (admins) ---------- */
+/* ---------- Activity log (admins), filtered by day, number of days or admin ---------- */
 
-app.get('/api/activity', auth('admin'), wrap(async (_, res) =>
-  res.json(await query('SELECT id, actor, action, detail, created_at AS at FROM activity ORDER BY id DESC LIMIT 60'))));
+app.get('/api/activity', auth('admin'), wrap(async (req, res) => {
+  const where = [], p = [];
+  if (ISO_DAY.test(String(req.query.date || ''))) {
+    p.push(TZ, String(req.query.date));
+    where.push(`(created_at AT TIME ZONE $1::text)::date = $2::date`);
+  } else if (+req.query.days > 0) {
+    p.push(Math.min(+req.query.days, 90));
+    where.push(`created_at >= now() - ($${p.length}::int * interval '1 day')`);
+  }
+  if (req.query.actor) { p.push(String(req.query.actor)); where.push(`actor = $${p.length}`); }
+  res.json(await query(`SELECT id, actor, action, detail, created_at AS at FROM activity ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT 300`, p));
+}));
 
 app.get('/api/activity/chart', auth('admin'), wrap(async (req, res) => {
   const days = Math.min(Math.max(+req.query.days || 7, 1), 60);
-  res.json(await query(`SELECT actor, to_char(created_at::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
+  res.json(await query(`SELECT actor, to_char((created_at AT TIME ZONE $2::text)::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
     FROM activity WHERE created_at >= (now() - ($1::int * interval '1 day'))
-    GROUP BY actor, day ORDER BY day`, [days]));
+    GROUP BY actor, day ORDER BY day`, [days, TZ]));
 }));
 
 /* ---------- Admin chat ---------- */
@@ -916,11 +956,12 @@ const adminDirectory = async () => {
   return [...map.values()];
 };
 
-// People, last message and unread count of every chat, in one call.
+// People, last message and unread count of every chat, in one call. "me" carries your own picture for the chat screen.
 app.get('/api/chat/summary', auth('admin'), wrap(async (req, res) => {
   const me = req.user.email;
   const on = new Set(presenceList().map(p => p.email));
-  const people = (await adminDirectory()).filter(p => p.email !== me)
+  const dir = await adminDirectory();
+  const people = dir.filter(p => p.email !== me)
     .map(p => ({ ...p, online: on.has(p.email) }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const unreadRows = await query(`SELECT CASE WHEN m.room = 'all' THEN 'all' ELSE m.from_email END AS key, COUNT(*)::int AS n
@@ -931,7 +972,8 @@ app.get('/api/chat/summary', auth('admin'), wrap(async (req, res) => {
     FROM admin_chat WHERE room = 'all' OR from_email = $1 OR to_email = $1 ORDER BY room, id DESC`, [me]);
   const last = {};
   lastRows.forEach(m => { last[m.room === 'all' ? 'all' : (m.fromEmail === me ? m.to : m.fromEmail)] = { body: m.body, at: m.at, fromMe: m.fromEmail === me, fromName: m.fromName }; });
-  res.json({ me, people, unread: Object.fromEntries(unreadRows.map(r => [r.key, r.n])), last });
+  const mine = dir.find(p => p.email === me);
+  res.json({ me, myPicture: mine?.picture || req.user.picture || '', people, unread: Object.fromEntries(unreadRows.map(r => [r.key, r.n])), last });
 }));
 
 app.get('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
@@ -1226,12 +1268,13 @@ const trendFields = b => {
 
 app.get('/api/trends', wrap(async (_, res) => res.json(await trendRows("status = 'active'"))));
 
+// Stored photos and files. Open to every site so the landing page can show them (images were blocked before).
 app.get('/api/trends/files/:id', wrap(async (req, res) => {
   const f = (Number.isInteger(+req.params.id) && await one('SELECT name, mime, data FROM trend_media WHERE id = $1 AND data IS NOT NULL', [+req.params.id])) || fail(404, 'File not found.');
   const size = f.data.length;
   res.set({
     'Content-Type': f.mime, 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=86400',
-    'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox', 'Cross-Origin-Resource-Policy': 'cross-origin',
+    'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*',
     'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`,
   });
   const r = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
@@ -1275,6 +1318,15 @@ app.put('/api/trends/categories', comm, wrap(async (req, res) => {
   await saveOption(query, 'trendCategories', list);
   io.emit('trends:update');
   res.json({ list });
+}));
+
+// Delete many posts that are already off the board (returned or removed).
+app.post('/api/trends/bulk-delete', comm, wrap(async (req, res) => {
+  const ids = toIds(req.body.ids);
+  if (!ids.length) fail(400, 'Choose at least one post.');
+  const r = await query("DELETE FROM trends WHERE id = ANY($1::int[]) AND status <> 'active' RETURNING id", [ids]);
+  await logAct(req.user, 'Deleted lost items', `${r.length}`);
+  io.emit('trends:update'); res.json({ deleted: r.length });
 }));
 
 app.put('/api/trends/:id', comm, wrap(async (req, res) => {
@@ -1367,6 +1419,7 @@ const ensureTables = async () => {
     PRIMARY KEY (group_id, user_id))`);
   await query('CREATE INDEX IF NOT EXISTS student_group_members_user_idx ON student_group_members (user_id)');
 
+  await query("ALTER TABLE labs ADD COLUMN IF NOT EXISTS image text NOT NULL DEFAULT ''");
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS published boolean NOT NULL DEFAULT true');
   await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS places integer CHECK (places IS NULL OR places >= 1)');
   await query("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_class text NOT NULL DEFAULT ''");
