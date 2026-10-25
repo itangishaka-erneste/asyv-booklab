@@ -1168,7 +1168,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
       const r = await api('/api/apply', 'POST', body);
       if (r.approved > 0) {
         const session = sessions.find((s) => s.id === id);
-        setApprovalWelcome({ lab: session?.lab || intent?.lab || 'the lab', count: r.approved });
+        setApprovalWelcome({ lab: session?.lab || intent?.lab || 'the lab', labId: session?.labId, count: r.approved });
       }
       const parts = [`${r.created} booking${r.created === 1 ? '' : 's'} sent`];
       if (r.approved) parts.push(`${r.approved} approved at once`);
@@ -1222,19 +1222,19 @@ function Booker({ user, opts, intent, onIntentDone }) {
   return (
     <div className="space-y-6">
       {approvalWelcome && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="approval-welcome-title">
-          <div className="w-full max-w-3xl rounded-3xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-green-100 px-6 py-10 text-center text-slate-900 shadow-2xl sm:px-14 sm:py-16">
-            <div className="mb-6 flex items-center justify-center gap-4">
-              <img src={logo} alt="System logo" className="h-14 w-14 rounded-xl object-contain" />
-              <img src={imgOf(approvalWelcome.labId)} alt={`${approvalWelcome.lab} lab`} className="h-14 w-20 rounded-xl object-cover" />
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="approval-welcome-title">
+          <div className="w-full max-w-md rounded-2xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-green-100 px-6 py-7 text-center text-slate-900 shadow-2xl">
+            <div className="mb-4 flex items-center justify-center gap-3">
+              <img src={logo} alt="System logo" className="h-10 w-10 rounded-lg object-contain" />
+              <img src={imgOf(approvalWelcome.labId)} alt={`${approvalWelcome.lab} lab`} className="h-10 w-14 rounded-lg object-cover" />
             </div>
-            <div className="mx-auto mb-6 grid h-20 w-20 place-items-center rounded-full bg-emerald-600 text-4xl font-bold text-white shadow-lg shadow-emerald-900/20" aria-hidden="true">✓</div>
-            <p className="text-sm font-bold uppercase tracking-[0.25em] text-emerald-700">Booking approved</p>
-            <h2 id="approval-welcome-title" className="mt-4 text-4xl font-black leading-tight tracking-tight text-slate-900 sm:text-6xl">{'Congratulations!'.split('').map((letter, i) => <span key={i} className="inline-block animate-bounce" style={{ animationDelay: `${i * 0.06}s` }}>{letter === ' ' ? '\u00a0' : letter}</span>)}</h2>
-            <p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-slate-700 sm:text-2xl">
+            <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-emerald-600 text-2xl font-bold text-white shadow-md" aria-hidden="true">✓</div>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Booking approved</p>
+            <h2 id="approval-welcome-title" className="mt-2 text-2xl font-black leading-tight tracking-tight text-slate-900">Congratulations!</h2>
+            <p className="mx-auto mt-3 text-base leading-relaxed text-slate-700">
               Welcome to <strong className="text-emerald-800">{approvalWelcome.lab}</strong>! {approvalWelcome.count === 1 ? 'Your booking has' : `${approvalWelcome.count} bookings have`} been approved.
             </p>
-            <button type="button" autoFocus onClick={() => setApprovalWelcome(null)} className="mt-9 rounded-xl bg-emerald-700 px-9 py-3 text-base font-bold text-white shadow-md transition hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">Continue</button>
+            <button type="button" autoFocus onClick={() => setApprovalWelcome(null)} className="mt-5 rounded-xl bg-emerald-700 px-7 py-2.5 text-sm font-bold text-white shadow-md transition hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">Continue</button>
           </div>
         </div>
       )}
