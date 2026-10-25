@@ -2,11 +2,9 @@
 // Everyone signs in with Google. Admins get live presence, an activity log and a private admin chat.
 //
 // What is new in this version
-//  - Lunch periods: settings keep "before lunch" and "after lunch" times. A lab time can be created for
-//    both periods at once (POST /api/sessions accepts "slots": [{from,to}, ...]).
-//  - Labs have an image (labs.image). It is returned by /api/labs, /api/overview and /api/board.
-//  - Activity log can be filtered by day / number of days / admin.
-//  - Bulk delete for lost-and-found posts.
+//  - GET /api/roster: teachers, psychosocial workers and admins see every student of every lab time of a day in one call.
+//  - Upload limit raised to 40 MB (24 MB of files becomes about 32 MB of base64), so lost-item photos are not rejected.
+//  - Lunch periods, lab images, activity filters and bulk delete work as before.
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -67,7 +65,7 @@ const stateOf = s => (!s.published ? 'draft' : isOver(s) ? 'over' : s.left < 1 ?
 
 const app = express(), server = http.createServer(app);
 const io = new Server(server, { cors: { origin: CLIENT } });
-app.use(cors({ origin: CLIENT }), express.json({ limit: '30mb' }));
+app.use(cors({ origin: CLIENT }), express.json({ limit: '40mb' }));
 
 const sign = p => jwt.sign(p, SECRET, { expiresIn: '7d' });
 const fail = (code, msg) => { const e = new Error(msg); e.code = code; throw e; };
@@ -888,6 +886,27 @@ app.get('/api/overview', wrap(async (req, res) => {
       waiting: labs.reduce((n, l) => n + l.waiting, 0),
     },
     labs,
+  });
+}));
+
+/* ---------- Roster for staff: every published lab time of a day with all its students, in one call ---------- */
+
+app.get('/api/roster', auth('teacher', 'psychosocial', 'admin'), wrap(async (req, res) => {
+  const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
+  const [sessions, apps] = await Promise.all([
+    listSessions(),
+    listApps('date = $1 AND sid IN (SELECT id FROM session_places WHERE published)', [date]),
+  ]);
+  const by = new Map();
+  apps.filter(a => a.status !== 'rejected').forEach(a => {
+    if (!by.has(a.sid)) by.set(a.sid, []);
+    by.get(a.sid).push({ id: a.id, name: a.name, cls: a.cls || '', picture: a.picture, gid: a.gid, status: a.status, att: a.att || null, late: !!a.late, reason: a.reason || '' });
+  });
+  res.json({
+    date,
+    sessions: sessions.filter(s => String(s.date).slice(0, 10) === date)
+      .sort((a, b) => `${a.from} ${a.lab}`.localeCompare(`${b.from} ${b.lab}`))
+      .map(s => ({ id: s.id, labId: s.labId, lab: s.lab, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, state: s.state, for: forText(s), exclusive: !!s.exclusive, people: by.get(s.id) || [] })),
   });
 }));
 
