@@ -2195,8 +2195,14 @@ function ChatPage({ me, onUnread }) {
   const [typing, setTyping] = useState(null);
   const [showList, setShowList] = useState(true);
   const [err, setErr] = useState('');
+  const [callStatus, setCallStatus] = useState('');
+  const [callMode, setCallMode] = useState('');
   const { busy, run } = useBusy();
   const box = useRef(null);
+  const fileInput = useRef(null);
+  const peerRef = useRef(null);
+  const streamRef = useRef(null);
+  const remoteAudio = useRef(null);
   const lastType = useRef(0);
   const typingTimer = useRef(null);
   const activeRef = useRef(active);
@@ -2233,7 +2239,62 @@ function ChatPage({ me, onUnread }) {
       typingTimer.current = setTimeout(() => setTyping(null), 3000);
     },
     presence: (list) => setOnline(new Set(list.map((p) => p.email))),
+    'call:signal': async (signal) => {
+      if (!signal || signal.from !== activeRef.current && signal.to !== me.email) return;
+      try {
+        if (signal.type === 'offer') {
+          const accept = window.confirm(`${signal.name || 'An admin'} is calling. Accept?`);
+          if (!accept) { liveSocket().emit('call:signal', { to: signal.from, type: 'decline' }); return; }
+          const pc = new RTCPeerConnection(); peerRef.current = pc;
+          pc.ontrack = (e) => { if (remoteAudio.current) remoteAudio.current.srcObject = e.streams[0]; };
+          pc.onicecandidate = (e) => e.candidate && liveSocket().emit('call:signal', { to: signal.from, type: 'candidate', candidate: e.candidate });
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: signal.mode === 'video' });
+          streamRef.current = stream; stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+          await pc.setRemoteDescription(signal.offer);
+          const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
+          liveSocket().emit('call:signal', { to: signal.from, type: 'answer', answer, mode: signal.mode });
+          setCallMode(signal.mode); setCallStatus('Connected');
+        } else if (signal.type === 'answer' && peerRef.current) {
+          await peerRef.current.setRemoteDescription(signal.answer); setCallStatus('Connected');
+        } else if (signal.type === 'candidate' && peerRef.current) {
+          await peerRef.current.addIceCandidate(signal.candidate);
+        } else if (['decline', 'hangup'].includes(signal.type)) {
+          streamRef.current?.getTracks().forEach((track) => track.stop()); peerRef.current?.close();
+          peerRef.current = null; streamRef.current = null; setCallMode(''); setCallStatus(signal.type === 'decline' ? 'Call declined' : '');
+        }
+      } catch (e) { setErr(e.message || 'Could not connect the call.'); }
+    },
   });
+
+  const endCall = () => {
+    if (other?.email) liveSocket().emit('call:signal', { to: other.email, type: 'hangup' });
+    streamRef.current?.getTracks().forEach((track) => track.stop()); peerRef.current?.close();
+    peerRef.current = null; streamRef.current = null; setCallMode(''); setCallStatus('');
+  };
+  const startCall = async (mode) => {
+    if (!other?.email || active === 'all') return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: mode === 'video' });
+      const pc = new RTCPeerConnection(); peerRef.current = pc; streamRef.current = stream;
+      pc.ontrack = (e) => { if (remoteAudio.current) remoteAudio.current.srcObject = e.streams[0]; };
+      pc.onicecandidate = (e) => e.candidate && liveSocket().emit('call:signal', { to: other.email, type: 'candidate', candidate: e.candidate });
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+      liveSocket().emit('call:signal', { to: other.email, type: 'offer', offer, mode, name: me.name });
+      setCallMode(mode); setCallStatus('Calling…');
+    } catch (e) { setErr(e.message || 'Could not start the call.'); }
+  };
+  const uploadChatFile = async (file) => {
+    if (!file) return;
+    setErr('');
+    try {
+      const form = new FormData(); form.append('file', file); form.append('with', active);
+      const result = await api('/api/chat/files', 'POST', form);
+      const message = result.message || result;
+      setMsgs((cur) => cur && !cur.some((x) => x.id === message.id) ? [...cur, message] : cur);
+      loadSum();
+    } catch (e) { setErr(e.message || 'File upload failed.'); }
+  };
 
   const myPic = sum.myPicture || me.picture || '';
   const people = sum.people.map((p) => ({ ...p, on: online ? online.has(p.email) : p.online }));
@@ -2319,7 +2380,14 @@ function ChatPage({ me, onUnread }) {
                 : other?.on ? 'Active now' : other?.lastSeen ? `Active ${ago(other.lastSeen)}` : 'Offline'}
             </span>
           </div>
+          {active !== 'all' && <span className="ml-auto flex gap-1">
+            <button type="button" aria-label="Start audio call" title="Audio call" onClick={() => startCall('audio')} className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5"><Phone className="h-4 w-4" /></button>
+            <button type="button" aria-label="Start video call" title="Video call" onClick={() => startCall('video')} className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5"><Video className="h-4 w-4" /></button>
+          </span>}
         </header>
+
+        {callMode && <div className="flex items-center justify-between bg-[#111827] px-4 py-2 text-xs text-white"><span>{callMode === 'video' ? 'Video' : 'Audio'} call · {callStatus}</span><button type="button" onClick={endCall} className="rounded bg-red-600 px-3 py-1 font-bold">End call</button></div>}
+        <audio ref={remoteAudio} autoPlay />
 
         <div ref={box} className="flex-1 overflow-y-auto bg-[#f0f2f5] px-3 py-4 sm:px-5">
           {err && <div className="mb-3"><Alert>{err}</Alert></div>}
@@ -2356,7 +2424,7 @@ function ChatPage({ me, onUnread }) {
                     {!mine && first && active === 'all' && <span className="mb-0.5 ml-3 text-[11px] font-medium text-black/50">{m.fromName}</span>}
                     <div title={`${dayHead(m.at)} ${clock(m.at)}`}
                       className={`whitespace-pre-wrap break-words rounded-[18px] px-3.5 py-2 text-[13px] leading-snug ${corner} ${mine ? 'bg-[#16a34a] text-white' : 'bg-white text-[#111827] shadow-sm'}`}>
-                      {m.body}
+                      {m.file ? <a href={chatFileUrl(m.file.id, true)} target="_blank" rel="noreferrer" className="underline">{m.file.name || 'Download attachment'} · {fileSize(m.file.size || 0)}</a> : m.body}
                     </div>
                     {last && <span className="mx-2 mt-0.5 text-[10px] text-black/40">{clock(m.at)}</span>}
                   </div>
@@ -2382,6 +2450,8 @@ function ChatPage({ me, onUnread }) {
 
         <footer className="relative border-t border-black/10 bg-white p-3">
           <div className="flex items-end gap-2">
+            <input ref={fileInput} type="file" className="hidden" onChange={(e) => { uploadChatFile(e.target.files?.[0]); e.target.value = ''; }} />
+            <button type="button" aria-label="Attach file" title="Attach file" onClick={() => fileInput.current?.click()} className="grid h-10 w-10 shrink-0 place-items-center rounded-full hover:bg-black/5"><Paperclip className="h-4 w-4" /></button>
             <textarea rows={1} value={text} onChange={(e) => onType(e.target.value)} placeholder="Write a message"
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
               className="max-h-28 min-h-[40px] flex-1 resize-none rounded-[20px] bg-[#f0f2f5] px-4 py-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
@@ -2403,7 +2473,7 @@ function SettingsPage() {
   const load = useCallback(() => Promise.all([api('/api/options'), api('/api/labs')]).then(([o, l]) => {
     setOpts({ ...EMPTY_OPTS, ...o });
     setLabs(l);
-    setRules((cur) => cur ?? { maxConsecutive: String(o.maxConsecutive ?? 1), graceMinutes: String(o.graceMinutes ?? 15), autoRelease: String(o.autoRelease !== false), ...Object.fromEntries(Object.entries({ beforeFrom: '08:00', beforeTo: '12:30', afterFrom: '13:30', afterTo: '17:00' }).map(([k, d]) => [k, o[k] || d])) });
+    setRules((cur) => cur ?? { maxConsecutive: String(o.maxConsecutive ?? 1), graceMinutes: String(o.graceMinutes ?? 15), autoRelease: String(o.autoRelease !== false), ...Object.fromEntries(Object.entries({ beforeFrom: '08:00', beforeTo: '12:30', afterFrom: '13:30', afterTo: '17:00' }).map(([k, d]) => [k, o[k] || d])), ...Object.fromEntries(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].flatMap((day) => Object.entries({ beforeFrom: '08:00', beforeTo: '12:30', afterFrom: '13:30', afterTo: '17:00' }).map(([part, d]) => { const key = `${day.toLowerCase()}${part[0].toUpperCase()}${part.slice(1)}`; return [key, o[key] || o[part] || d]; }))) });
   }).catch(() => {}), []);
   useEffect(() => { load(); }, [load]);
   const { busy, act, sure, note } = useAct(load);
@@ -2413,7 +2483,9 @@ function SettingsPage() {
   const clean = (s) => s.trim().toUpperCase().replace(/\s+/g, ' ');
   const putOpts = (body) => api('/api/options', 'PUT', body).then((o) => setOpts({ ...EMPTY_OPTS, ...o }));
   const saveOpts = (body, done) => act('opts', () => putOpts(body), done);
-  const lunchOk = rules && rules.beforeFrom < rules.beforeTo && rules.afterFrom < rules.afterTo && rules.beforeTo <= rules.afterFrom;
+  const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const dayKey = (day, part) => `${day.toLowerCase()}${part[0].toUpperCase()}${part.slice(1)}`;
+  const lunchOk = rules && weekdays.every((day) => rules[dayKey(day, 'beforeFrom')] < rules[dayKey(day, 'beforeTo')] && rules[dayKey(day, 'afterFrom')] < rules[dayKey(day, 'afterTo')] && rules[dayKey(day, 'beforeTo')] <= rules[dayKey(day, 'afterFrom')]);
 
   return (
     <div className="space-y-6">
@@ -2421,26 +2493,27 @@ function SettingsPage() {
       <Card t="Lunch times" sub="Lab times can be prepared before lunch, after lunch, or both. Set the hours of each period here.">
         {rules && (
           <>
-            <div className="grid gap-6 md:grid-cols-2">
-              <div className="rounded-[8px] border border-black/10 p-4">
-                <h4 className="mb-3 flex items-center gap-2 text-xs font-bold"><Sunrise className="h-4 w-4 text-[#f59e0b]" aria-hidden="true" />Before lunch</h4>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field l="From"><Inp type="time" value={rules.beforeFrom} onChange={(e) => setRules({ ...rules, beforeFrom: e.target.value })} /></Field>
-                  <Field l="To"><Inp type="time" value={rules.beforeTo} onChange={(e) => setRules({ ...rules, beforeTo: e.target.value })} /></Field>
+            <div className="space-y-4">
+              {weekdays.map((day) => (
+                <div key={day} className="rounded-[8px] border border-black/10 p-4">
+                  <h4 className="mb-3 text-xs font-bold">{day}</h4>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div><h5 className="mb-2 flex items-center gap-2 text-xs font-medium"><Sunrise className="h-4 w-4 text-[#f59e0b]" aria-hidden="true" />Before lunch</h5><div className="grid grid-cols-2 gap-3">
+                      <Field l="From"><Inp type="time" value={rules[dayKey(day, 'beforeFrom')]} onChange={(e) => setRules({ ...rules, [dayKey(day, 'beforeFrom')]: e.target.value })} /></Field>
+                      <Field l="To"><Inp type="time" value={rules[dayKey(day, 'beforeTo')]} onChange={(e) => setRules({ ...rules, [dayKey(day, 'beforeTo')]: e.target.value })} /></Field>
+                    </div></div>
+                    <div><h5 className="mb-2 flex items-center gap-2 text-xs font-medium"><Sunset className="h-4 w-4 text-[#ff4500]" aria-hidden="true" />After lunch</h5><div className="grid grid-cols-2 gap-3">
+                      <Field l="From"><Inp type="time" value={rules[dayKey(day, 'afterFrom')]} onChange={(e) => setRules({ ...rules, [dayKey(day, 'afterFrom')]: e.target.value })} /></Field>
+                      <Field l="To"><Inp type="time" value={rules[dayKey(day, 'afterTo')]} onChange={(e) => setRules({ ...rules, [dayKey(day, 'afterTo')]: e.target.value })} /></Field>
+                    </div></div>
+                  </div>
                 </div>
-              </div>
-              <div className="rounded-[8px] border border-black/10 p-4">
-                <h4 className="mb-3 flex items-center gap-2 text-xs font-bold"><Sunset className="h-4 w-4 text-[#ff4500]" aria-hidden="true" />After lunch</h4>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field l="From"><Inp type="time" value={rules.afterFrom} onChange={(e) => setRules({ ...rules, afterFrom: e.target.value })} /></Field>
-                  <Field l="To"><Inp type="time" value={rules.afterTo} onChange={(e) => setRules({ ...rules, afterTo: e.target.value })} /></Field>
-                </div>
-              </div>
+              ))}
             </div>
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <ActBtn busy={busy === 'opts'} doing="Saving…" label="Save lunch times" disabled={!lunchOk}
-                onClick={() => saveOpts({ beforeFrom: rules.beforeFrom, beforeTo: rules.beforeTo, afterFrom: rules.afterFrom, afterTo: rules.afterTo }, 'Lunch times saved.')} />
-              {!lunchOk && <span className="text-xs text-[#c2310a]">Each period must start before it ends, and lunch must come between them.</span>}
+                onClick={() => saveOpts(Object.fromEntries(weekdays.flatMap((day) => ['beforeFrom', 'beforeTo', 'afterFrom', 'afterTo'].map((part) => [dayKey(day, part), rules[dayKey(day, part)]]))), 'Lunch times saved.')} />
+              {!lunchOk && <span className="text-xs text-[#c2310a]">For each day, periods must start before they end, and lunch must come between them.</span>}
             </div>
           </>
         )}
