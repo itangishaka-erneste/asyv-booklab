@@ -1,11 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-// Inline icon fallback avoids requiring lucide-react at build time.
-const makeIcon = (glyph) => function Icon({ size = 20, color = 'currentColor', strokeWidth = 2, ...props }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}><text x="12" y="17" textAnchor="middle" fontSize="16" fill={color} stroke="none">{glyph}</text></svg>;
-};
-const CalendarDays = makeIcon('▦'), CalendarCheck2 = makeIcon('✓'), UserRound = makeIcon('◉'), LayoutDashboard = makeIcon('▦'), FlaskConical = makeIcon('⚗'), CalendarClock = makeIcon('◷'), UsersRound = makeIcon('♧'), MessageCircle = makeIcon('●'), Settings2 = makeIcon('⚙'), PackageSearch = makeIcon('⌕');
-const Sun = makeIcon('☼'), Moon = makeIcon('☾'), Send = makeIcon('➤'), Smile = makeIcon('☺'), ThumbsUp = makeIcon('＋'), Users = makeIcon('♧'), ChevronLeft = makeIcon('‹'), ChevronRight = makeIcon('›'), X = makeIcon('×'), Trash2 = makeIcon('▤'), Printer = makeIcon('▣'), Plus = makeIcon('+'), LogOut = makeIcon('↗'), Sunrise = makeIcon('↗'), Sunset = makeIcon('↘'), Eye = makeIcon('◉'), Radio = makeIcon('◉'), ArrowLeft = makeIcon('←'), CheckCheck = makeIcon('✓');
+import { CalendarDays, CalendarCheck2, UserRound, LayoutDashboard, FlaskConical, CalendarClock, UsersRound, MessageCircle, Settings2, PackageSearch, Sun, Moon, Send, Smile, ThumbsUp, Users, ChevronLeft, ChevronRight, X, Trash2, Printer, Plus, LogOut, Sunrise, Sunset, Eye, Radio, ArrowLeft, CheckCheck } from 'lucide-react';
 import logo from './assets/as.png';
 
 /* ================================================================== */
