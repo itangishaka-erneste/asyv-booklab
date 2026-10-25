@@ -71,10 +71,7 @@ const LAB_IMAGES_BY_NAME = {
   lab1: lab11, lab2: lab22, lab3, lab33, lab11, lab22, lab4, c7, c8,
 };
 const LOGIN_SLIDES = [
-  { id: 'photo-1498050108023-c5249f4df085', t: 'Your next idea starts here.', s: 'Book a computer lab place before you arrive.' },
-  { id: 'photo-1522202176988-66273c2fd55f', t: 'Study together, work smarter.', s: 'Pick a lab time and press Apply.' },
-  { id: 'photo-1519389950473-47ba0277781c', t: 'Free places are approved at once.', s: 'When a lab time is full, join the waiting list.' },
-  { id: 'photo-1517694712202-14dd9538aa97', t: 'Every lab, live.', s: 'See free places update in real time.' },
+  { id: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSPLrWxuPLWJQ6v6oUcHeQXk4Tjw6vnVZepDRUAfnRzWSErgiLehCu3Ww3z&s=10', t: 'Your next idea starts here.', s: 'Book a computer lab place before you arrive.' },
 ];
 
 let token = localStorage.getItem('lms_token') || '';
