@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { CalendarDays, CalendarCheck2, UserRound, LayoutDashboard, FlaskConical, CalendarClock, UsersRound, MessageCircle, Settings2, PackageSearch, Sun, Moon, Send, Smile, ThumbsUp, Users, ChevronLeft, ChevronRight, X, Trash2, Printer, Plus, LogOut, Sunrise, Sunset, Eye, Radio, ArrowLeft, CheckCheck } from 'lucide-react';
+import { CalendarDays, CalendarCheck2, UserRound, LayoutDashboard, FlaskConical, CalendarClock, UsersRound, MessageCircle, Settings2, PackageSearch, Sun, Moon, Send, Users, ChevronLeft, ChevronRight, X, Trash2, Printer, Plus, LogOut, Sunrise, Sunset, Eye, Radio, ArrowLeft, CheckCheck } from 'lucide-react';
 import logo from './assets/as.png';
 
 /* ================================================================== */
@@ -2019,7 +2019,6 @@ function GroupRow({ g, students, open, onToggle, act, sure, busy }) {
 
 /* ---------- Admin chat: like Messenger. A group chat for all admins and private chats. Shows real profile pictures. ---------- */
 
-const EMOJIS = ['👍', '😊', '😂', '❤️', '🙏', '🎉', '👏', '😮'];
 // Group picture: the profile pictures of the admins, side by side.
 const GroupIcon = ({ people = [], className = 'h-11 w-11' }) => {
   const list = people.slice(0, 2);
@@ -2049,7 +2048,6 @@ function ChatPage({ me, onUnread }) {
   const [online, setOnline] = useState(null);
   const [typing, setTyping] = useState(null);
   const [showList, setShowList] = useState(true);
-  const [emoji, setEmoji] = useState(false);
   const [err, setErr] = useState('');
   const { busy, run } = useBusy();
   const box = useRef(null);
@@ -2103,13 +2101,13 @@ function ChatPage({ me, onUnread }) {
   const other = people.find((p) => p.email === active);
   const preview = (k) => { const l = sum.last[k]; return l ? `${l.fromMe ? 'You: ' : (k === 'all' ? `${l.fromName.split(' ')[0]}: ` : '')}${l.body}` : 'No messages yet'; };
 
-  const open = (k) => { setActive(k); setShowList(false); setEmoji(false); };
+  const open = (k) => { setActive(k); setShowList(false); };
   const send = (body) => run('send', async () => {
     const b = String(body ?? text).trim();
     if (!b) return;
     try {
       const m = await api('/api/chat/messages', 'POST', { with: active, body: b });
-      setText(''); setEmoji(false);
+      setText('');
       setMsgs((cur) => (cur && !cur.some((x) => x.id === m.id) ? [...cur, m] : cur));
       loadSum();
     } catch (e) { setErr(e.message); }
@@ -2185,7 +2183,7 @@ function ChatPage({ me, onUnread }) {
               <div>
                 {active === 'all' ? <GroupIcon people={everyone} className="mx-auto h-16 w-16" /> : <Avatar name={other?.name || active} picture={other?.picture} className="mx-auto h-16 w-16 text-lg" />}
                 <p className="mt-3 text-sm font-semibold">{active === 'all' ? 'All admins' : other?.name}</p>
-                <p className="mt-1 text-xs text-black/50">No messages yet. Say hello 👋</p>
+                <p className="mt-1 text-xs text-black/50">No messages yet. Say hello.</p>
               </div>
             </div>
           )}
@@ -2237,23 +2235,12 @@ function ChatPage({ me, onUnread }) {
         </div>
 
         <footer className="relative border-t border-black/10 bg-white p-3">
-          {emoji && (
-            <div className="absolute bottom-full left-3 mb-2 flex gap-1 rounded-full border border-black/10 bg-white p-1.5 shadow-lg">
-              {EMOJIS.map((e) => <button key={e} type="button" className="h-8 w-8 rounded-full text-lg hover:bg-black/5" onClick={() => { setText((t) => t + e); setEmoji(false); }}>{e}</button>)}
-            </div>
-          )}
           <div className="flex items-end gap-2">
-            <button type="button" aria-label="Emoji" onClick={() => setEmoji((v) => !v)} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#16a34a] hover:bg-black/5"><Smile className="h-5 w-5" aria-hidden="true" /></button>
             <textarea rows={1} value={text} onChange={(e) => onType(e.target.value)} placeholder="Write a message"
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
               className="max-h-28 min-h-[40px] flex-1 resize-none rounded-[20px] bg-[#f0f2f5] px-4 py-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
-            {text.trim() ? (
-              <button type="button" aria-label="Send" disabled={busy === 'send'} onClick={() => send()}
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#16a34a] text-white hover:opacity-90 disabled:opacity-40"><Send className="h-4 w-4" aria-hidden="true" /></button>
-            ) : (
-              <button type="button" aria-label="Send a thumbs up" disabled={busy === 'send'} onClick={() => send('👍')}
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[#16a34a] hover:bg-black/5"><ThumbsUp className="h-5 w-5" aria-hidden="true" /></button>
-            )}
+            <button type="button" aria-label="Send" disabled={busy === 'send' || !text.trim()} onClick={() => send()}
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#16a34a] text-white hover:opacity-90 disabled:opacity-40"><Send className="h-4 w-4" aria-hidden="true" /></button>
           </div>
         </footer>
       </section>
