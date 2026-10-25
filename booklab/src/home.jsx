@@ -1208,6 +1208,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
   const dayLabs = sessions.filter((s) => s.date === day);
   const mine = (id) => apps.find((a) => a.sid === id && a.status !== 'rejected');
   const myApps = apps.filter((a) => a.name === user.name || a.bookedBy === user.name).sort((a, b) => `${b.date} ${b.from}`.localeCompare(`${a.date} ${a.from}`));
+  const hasAppliedToday = isStudent && myApps.some((a) => a.date === day && a.status !== 'rejected');
   const sessionById = new Map(sessions.map((s) => [s.id, s]));
   const imgOf = (labId) => labsList.find((x) => x.id === labId)?.image || '';
   const count = (k) => myApps.filter((a) => a.status === k).length;
@@ -1245,8 +1246,9 @@ function Booker({ user, opts, intent, onIntentDone }) {
           <DayBar day={day} onChange={setDay} />
           <Field l="Reason"><Sel value={reason} onChange={setReason} options={reasonOpts.length ? reasonOpts : [{ value: 'Other', label: 'Other' }]} /></Field>
         </div>
-        {dayLabs.length === 0 && <Empty>No lab time on this day. Try another day.</Empty>}
-        {dayLabs.map((s) => {
+        {hasAppliedToday ? <Alert ok>You have already applied for a lab on this day. Your booking is shown below.</Alert> : null}
+        {!hasAppliedToday && dayLabs.length === 0 && <Empty>No lab time on this day. Try another day.</Empty>}
+        {!hasAppliedToday && dayLabs.map((s) => {
           const m = mine(s.id);
           const alreadyBookedToday = isStudent && myApps.some((a) => a.date === s.date && a.status !== 'rejected');
           const pct = s.seats ? ((s.seats - s.left) / s.seats) * 100 : 100;
