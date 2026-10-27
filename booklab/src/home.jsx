@@ -1391,6 +1391,7 @@ function OverviewPage({ me }) {
 
   return (
     <div className="space-y-6">
+      <CallPanel />
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <Stat v={t.approved ?? 0} t="Approved bookings" tone="gr" />
         <Stat v={t.pending ?? 0} t="Waiting or in queue" tone="or" />
@@ -2188,14 +2189,10 @@ function ChatPage({ me, onUnread }) {
   const [typing, setTyping] = useState(null);
   const [showList, setShowList] = useState(true);
   const [err, setErr] = useState('');
-  const [callStatus, setCallStatus] = useState('');
-  const [callMode, setCallMode] = useState('');
+  const { start, call } = useCall();
   const { busy, run } = useBusy();
   const box = useRef(null);
   const fileInput = useRef(null);
-  const peerRef = useRef(null);
-  const streamRef = useRef(null);
-  const remoteAudio = useRef(null);
   const lastType = useRef(0);
   const typingTimer = useRef(null);
   const activeRef = useRef(active);
@@ -2232,51 +2229,7 @@ function ChatPage({ me, onUnread }) {
       typingTimer.current = setTimeout(() => setTyping(null), 3000);
     },
     presence: (list) => setOnline(new Set(list.map((p) => p.email))),
-    'call:signal': async (signal) => {
-      if (!signal || signal.from !== activeRef.current && signal.to !== me.email) return;
-      try {
-        if (signal.type === 'offer') {
-          const accept = window.confirm(`${signal.name || 'An admin'} is calling. Accept?`);
-          if (!accept) { liveSocket().emit('call:signal', { to: signal.from, type: 'decline' }); return; }
-          const pc = new RTCPeerConnection(); peerRef.current = pc;
-          pc.ontrack = (e) => { if (remoteAudio.current) remoteAudio.current.srcObject = e.streams[0]; };
-          pc.onicecandidate = (e) => e.candidate && liveSocket().emit('call:signal', { to: signal.from, type: 'candidate', candidate: e.candidate });
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: signal.mode === 'video' });
-          streamRef.current = stream; stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-          await pc.setRemoteDescription(signal.offer);
-          const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
-          liveSocket().emit('call:signal', { to: signal.from, type: 'answer', answer, mode: signal.mode });
-          setCallMode(signal.mode); setCallStatus('Connected');
-        } else if (signal.type === 'answer' && peerRef.current) {
-          await peerRef.current.setRemoteDescription(signal.answer); setCallStatus('Connected');
-        } else if (signal.type === 'candidate' && peerRef.current) {
-          await peerRef.current.addIceCandidate(signal.candidate);
-        } else if (['decline', 'hangup'].includes(signal.type)) {
-          streamRef.current?.getTracks().forEach((track) => track.stop()); peerRef.current?.close();
-          peerRef.current = null; streamRef.current = null; setCallMode(''); setCallStatus(signal.type === 'decline' ? 'Call declined' : '');
-        }
-      } catch (e) { setErr(e.message || 'Could not connect the call.'); }
-    },
   });
-
-  const endCall = () => {
-    if (other?.email) liveSocket().emit('call:signal', { to: other.email, type: 'hangup' });
-    streamRef.current?.getTracks().forEach((track) => track.stop()); peerRef.current?.close();
-    peerRef.current = null; streamRef.current = null; setCallMode(''); setCallStatus('');
-  };
-  const startCall = async (mode) => {
-    if (!other?.email || active === 'all') return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: mode === 'video' });
-      const pc = new RTCPeerConnection(); peerRef.current = pc; streamRef.current = stream;
-      pc.ontrack = (e) => { if (remoteAudio.current) remoteAudio.current.srcObject = e.streams[0]; };
-      pc.onicecandidate = (e) => e.candidate && liveSocket().emit('call:signal', { to: other.email, type: 'candidate', candidate: e.candidate });
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-      const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
-      liveSocket().emit('call:signal', { to: other.email, type: 'offer', offer, mode, name: me.name });
-      setCallMode(mode); setCallStatus('Calling…');
-    } catch (e) { setErr(e.message || 'Could not start the call.'); }
-  };
   const uploadChatFile = async (file) => {
     if (!file) return;
     setErr('');
@@ -2374,13 +2327,14 @@ function ChatPage({ me, onUnread }) {
             </span>
           </div>
           {active !== 'all' && <span className="ml-auto flex gap-1">
-            <button type="button" aria-label="Start audio call" title="Audio call" onClick={() => startCall('audio')} className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5"><Phone className="h-4 w-4" /></button>
-            <button type="button" aria-label="Start video call" title="Video call" onClick={() => startCall('video')} className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5"><Video className="h-4 w-4" /></button>
+            <button type="button" aria-label="Audio call" title="Audio call" disabled={!!call || !other}
+              onClick={() => start({ email: other.email, name: other.name, picture: other.picture }, 'audio')}
+              className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5 disabled:opacity-40"><Phone className="h-4 w-4" /></button>
+            <button type="button" aria-label="Video call" title="Video call" disabled={!!call || !other}
+              onClick={() => start({ email: other.email, name: other.name, picture: other.picture }, 'video')}
+              className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5 disabled:opacity-40"><Video className="h-4 w-4" /></button>
           </span>}
         </header>
-
-        {callMode && <div className="flex items-center justify-between bg-[#111827] px-4 py-2 text-xs text-white"><span>{callMode === 'video' ? 'Video' : 'Audio'} call · {callStatus}</span><button type="button" onClick={endCall} className="rounded bg-red-600 px-3 py-1 font-bold">End call</button></div>}
-        <audio ref={remoteAudio} autoPlay />
 
         <div ref={box} className="flex-1 overflow-y-auto bg-[#f0f2f5] px-3 py-4 sm:px-5">
           {err && <div className="mb-3"><Alert>{err}</Alert></div>}
@@ -2824,6 +2778,278 @@ function Profile({ onChanged }) {
 const NAV_ICON = { 'My labs': CalendarDays, Bookings: CalendarCheck2, 'Lost & Found': PackageSearch, Profile: UserRound, Overview: LayoutDashboard, Labs: FlaskConical, Schedule: CalendarClock, People: UsersRound, Chat: MessageCircle, Settings: Settings2 };
 
 const NavBadge = ({ n }) => (n > 0 ? <span className="ml-auto grid h-5 min-w-[20px] place-items-center rounded-full bg-[#ff4500] px-1.5 text-[10px] font-bold text-white">{n > 99 ? '99+' : n}</span> : null);
+/* ================================================================== */
+/* CALLS: one call at a time between admins (audio or video)           */
+/* ================================================================== */
+
+const CallCtx = createContext(null);
+const useCall = () => useContext(CallCtx);
+const RTC = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const emitCall = (ev, data) => liveSocket().emit(ev, data);
+
+function CallProvider({ me, children }) {
+  const [online, setOnline] = useState([]);
+  const [call, setCall] = useState(null);
+  const [incoming, setIncoming] = useState(null);
+  const [local, setLocal] = useState(null);
+  const [remote, setRemote] = useState(null);
+  const [notice, setNotice] = useState('');
+  const callRef = useRef(null);
+  const pcRef = useRef(null);
+  const streamRef = useRef(null);
+  const iceQueue = useRef([]);
+  const timer = useRef(null);
+  const noticeTimer = useRef(null);
+
+  const say = (t) => {
+    setNotice(t);
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(''), 4000);
+  };
+  const begin = (c) => { callRef.current = c; setCall(c); };
+  const stopTimer = () => clearTimeout(timer.current);
+
+  const reset = () => {
+    stopTimer();
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    pcRef.current?.close();
+    pcRef.current = null;
+    iceQueue.current = [];
+    callRef.current = null;
+    setLocal(null); setRemote(null); setCall(null); setIncoming(null);
+  };
+
+  // notify = true tells the other admin that the call is over.
+  const hangUp = (text = '', notify = true) => {
+    const c = callRef.current;
+    if (c && notify) emitCall('call:end', { to: c.peer.email, callId: c.id });
+    reset();
+    if (text) say(text);
+  };
+
+  const getMedia = async (mode) => {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: mode === 'video' });
+    streamRef.current = s;
+    setLocal(s);
+    return s;
+  };
+
+  const makePc = (to, callId) => {
+    const pc = new RTCPeerConnection(RTC);
+    pc.onicecandidate = (e) => {
+      if (e.candidate) emitCall('call:signal', { to, callId, type: 'candidate', candidate: e.candidate });
+    };
+    pc.ontrack = (e) => setRemote(e.streams[0]);
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed') hangUp('The connection failed.');
+    };
+    pcRef.current = pc;
+    return pc;
+  };
+
+  const addIce = async (c) => {
+    const pc = pcRef.current;
+    if (!pc) return;
+    if (pc.remoteDescription) await pc.addIceCandidate(c).catch(() => {});
+    else iceQueue.current.push(c);
+  };
+  const flushIce = async () => {
+    const pc = pcRef.current;
+    if (!pc) return;
+    for (const c of iceQueue.current.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+  };
+
+  // Caller: ring one chosen admin only.
+  const start = (peer, mode) => {
+    if (callRef.current || incoming) return say('You are already in a call.');
+    const id = `${Date.now()}${Math.random().toString(36).slice(2, 7)}`;
+    begin({ id, peer, mode, role: 'caller', status: 'calling' });
+    emitCall('call:invite', { to: peer.email, callId: id, kind: mode });
+    timer.current = setTimeout(() => hangUp(`${peer.name} did not answer.`), 30000);
+  };
+
+  // Receiver: accept the call. Media is ready before the caller is told.
+  const accept = async () => {
+    const inc = incoming;
+    if (!inc) return;
+    stopTimer();
+    setIncoming(null);
+    try {
+      const s = await getMedia(inc.kind);
+      const pc = makePc(inc.from, inc.callId);
+      s.getTracks().forEach((t) => pc.addTrack(t, s));
+      begin({
+        id: inc.callId, peer: { email: inc.from, name: inc.name, picture: inc.picture },
+        mode: inc.kind, role: 'callee', status: 'connecting',
+      });
+      emitCall('call:accept', { to: inc.from, callId: inc.callId, kind: inc.kind });
+    } catch (e) {
+      emitCall('call:reject', { to: inc.from, callId: inc.callId });
+      reset();
+      say(e.message || 'Could not use the microphone or camera.');
+    }
+  };
+
+  const decline = () => {
+    if (!incoming) return;
+    stopTimer();
+    emitCall('call:reject', { to: incoming.from, callId: incoming.callId });
+    setIncoming(null);
+  };
+
+  useLive({
+    presence: (list) => setOnline(list.filter((p) => p.email !== me.email)),
+
+    'call:invite': (p) => {
+      if (callRef.current) return emitCall('call:reject', { to: p.from, callId: p.callId });
+      setIncoming(p);
+      stopTimer();
+      timer.current = setTimeout(() => {
+        emitCall('call:reject', { to: p.from, callId: p.callId });
+        setIncoming(null);
+      }, 30000);
+    },
+
+    'call:unavailable': (p) => {
+      if (callRef.current?.id === p.callId) hangUp(`${callRef.current.peer.name} is not online.`, false);
+    },
+
+    'call:reject': (p) => {
+      if (callRef.current?.id === p.callId) hangUp(`${callRef.current.peer.name} declined the call.`, false);
+    },
+
+    'call:end': (p) => {
+      setIncoming((cur) => (cur?.callId === p.callId ? null : cur));
+      if (callRef.current?.id === p.callId) hangUp('The call ended.', false);
+    },
+
+    // The caller gets "accepted" and sends the offer.
+    'call:accept': async (p) => {
+      const c = callRef.current;
+      if (!c || c.id !== p.callId || c.role !== 'caller') return;
+      try {
+        stopTimer();
+        const s = await getMedia(c.mode);
+        const pc = makePc(c.peer.email, c.id);
+        s.getTracks().forEach((t) => pc.addTrack(t, s));
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        emitCall('call:signal', { to: c.peer.email, callId: c.id, type: 'offer', offer, mode: c.mode });
+        begin({ ...c, status: 'connecting' });
+      } catch (e) {
+        hangUp(e.message || 'Could not start the call.');
+      }
+    },
+
+    'call:signal': async (s) => {
+      const c = callRef.current;
+      if (!c || c.id !== s.callId) return;
+      try {
+        if (s.type === 'offer' && c.role === 'callee') {
+          const pc = pcRef.current;
+          if (!pc) return;
+          await pc.setRemoteDescription(s.offer);
+          await flushIce();
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          emitCall('call:signal', { to: c.peer.email, callId: c.id, type: 'answer', answer });
+          begin({ ...c, status: 'connected' });
+        } else if (s.type === 'answer' && c.role === 'caller') {
+          const pc = pcRef.current;
+          if (!pc) return;
+          stopTimer();
+          await pc.setRemoteDescription(s.answer);
+          await flushIce();
+          begin({ ...c, status: 'connected' });
+        } else if (s.type === 'candidate') {
+          await addIce(s.candidate);
+        }
+      } catch (e) {
+        hangUp(e.message || 'The call could not connect.');
+      }
+    },
+  });
+
+  const start_ = start; // keeps the name clear in the context value below
+  return (
+    <CallCtx.Provider value={{ online, call, start: start_, endCall: () => hangUp('') }}>
+      {children}
+
+      {notice && (
+        <div role="status" className="fixed bottom-4 left-1/2 z-[80] -translate-x-1/2 rounded-[6px] bg-[#111827] px-4 py-2.5 text-xs font-semibold text-white shadow-lg">
+          {notice}
+        </div>
+      )}
+
+      {incoming && (
+        <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label="Incoming call">
+          <div className="w-full max-w-sm rounded-[10px] bg-white p-6 text-center shadow-2xl">
+            <Avatar name={incoming.name} picture={incoming.picture} className="mx-auto h-20 w-20 text-xl" />
+            <p className="mt-4 text-xs text-black/55">Incoming {incoming.kind} call</p>
+            <h3 className="mt-1 text-lg font-bold">{incoming.name}</h3>
+            <div className="mt-6 flex justify-center gap-3">
+              <Btn c="or" onClick={decline}><PhoneOff className="h-4 w-4" aria-hidden="true" />Decline</Btn>
+              <Btn onClick={accept}><Phone className="h-4 w-4" aria-hidden="true" />Accept</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {call && <CallScreen call={call} local={local} remote={remote} onEnd={() => hangUp('')} />}
+    </CallCtx.Provider>
+  );
+}
+
+function CallScreen({ call, local, remote, onEnd }) {
+  const remoteRef = useRef(null);
+  const localRef = useRef(null);
+  useEffect(() => { if (remoteRef.current) remoteRef.current.srcObject = remote; }, [remote]);
+  useEffect(() => { if (localRef.current) localRef.current.srcObject = local; }, [local]);
+  const status = call.status === 'calling' ? 'Ringing…' : call.status === 'connecting' ? 'Connecting…' : 'Connected';
+  return (
+    <div className="fixed inset-0 z-[70] flex flex-col bg-black text-white">
+      <div className="relative flex-1">
+        <video ref={remoteRef} autoPlay playsInline className="h-full w-full object-contain" />
+        {!remote && (
+          <div className="absolute inset-0 grid place-items-center">
+            <Avatar name={call.peer.name} picture={call.peer.picture} className="h-28 w-28 text-3xl" />
+          </div>
+        )}
+        <div className="absolute left-4 top-4 rounded-full bg-black/50 px-3 py-1.5 text-xs font-semibold">
+          {call.peer.name} · {status}
+        </div>
+        {call.mode === 'video' && local && (
+          <video ref={localRef} autoPlay playsInline muted className="absolute bottom-4 right-4 h-36 w-24 rounded-lg object-cover sm:h-48 sm:w-32" />
+        )}
+      </div>
+      <div className="flex justify-center p-5">
+        <button type="button" onClick={onEnd} className="inline-flex items-center gap-2 rounded-full bg-[#dc2626] px-6 py-3 text-sm font-bold text-white">
+          <PhoneOff className="h-5 w-5" aria-hidden="true" />End call
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Lists the online admins. Pressing a button rings only that admin.
+function CallPanel() {
+  const { online, start, call } = useCall();
+  return (
+    <Card t="Admins online" sub="Choose an admin to call. Only that admin will ring.">
+      {online.length === 0 && <Empty>No other admin is online.</Empty>}
+      {online.map((p) => (
+        <div key={p.email} className="flex flex-wrap items-center justify-between gap-3 border-t border-black/10 py-3 first:border-t-0">
+          <Person p={p} sub={p.page ? `On ${p.page}` : 'Online'} />
+          <span className="flex gap-2">
+            <Btn disabled={!!call} onClick={() => start(p, 'audio')}><Phone className="h-4 w-4" aria-hidden="true" />Audio</Btn>
+            <Btn c="bl" disabled={!!call} onClick={() => start(p, 'video')}><Video className="h-4 w-4" aria-hidden="true" />Video</Btn>
+          </span>
+        </div>
+      ))}
+    </Card>
+  );
+}
 
 function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, dark, onToggleDark }) {
   const isAdmin = user.role === 'admin';
@@ -2969,7 +3195,11 @@ export default function Home() {
 
   let page;
   if (booting) page = <Loader full label="Loading" />;
-  else if (view === 'app' && user) page = <Dashboard user={user} opts={opts} intent={intent} onIntentDone={() => setIntent(null)} onLogout={logout} onRefreshMe={refreshMe} dark={dark} onToggleDark={toggleDark} />;
+  else if (view === 'app' && user) page = (
+    <CallProvider me={user}>
+      <Dashboard user={user} opts={opts} intent={intent} onIntentDone={() => setIntent(null)} onLogout={logout} onRefreshMe={refreshMe} dark={dark} onToggleDark={toggleDark} />
+    </CallProvider>
+  );
   else if (view === 'login') page = <Auth onDone={handleAuth} onBack={() => setView('home')} intent={intent} dark={dark} onToggleDark={toggleDark} />;
   else page = <Landing onLogin={goLogin} dark={dark} onToggleDark={toggleDark} />;
 

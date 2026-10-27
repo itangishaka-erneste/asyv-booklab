@@ -317,6 +317,15 @@ io.on('connection', socket => {
       }
       io.to(`admin:${to}`).emit(ev, {
         callId: String(p.callId || ''), kind: p.kind === 'video' ? 'video' : 'audio', data: p.data,
+        // The current chat client uses WebRTC's call:signal protocol directly.
+        // Forward its fields (offer/answer/ICE candidate and mode) unchanged.
+        ...(ev === 'call:signal' ? {
+          type: p.type,
+          mode: p.mode === 'video' ? 'video' : 'audio',
+          offer: p.offer,
+          answer: p.answer,
+          candidate: p.candidate,
+        } : {}),
         from: me.email, name: me.name, picture: me.picture || '',
       });
     }));
