@@ -2234,9 +2234,12 @@ function ChatPage({ me, onUnread }) {
     if (!file) return;
     setErr('');
     try {
-      const form = new FormData(); form.append('file', file); form.append('with', active);
-      const result = await api('/api/chat/files', 'POST', form);
-      const message = result.message || result;
+      if (file.size > 25 * 1024 * 1024) throw new Error('The file is too big (25 MB maximum).');
+      const data = await readB64(file);
+      const message = await api('/api/chat/messages', 'POST', {
+        with: active,
+        file: { name: file.name, mime: file.type || 'application/octet-stream', data },
+      });
       setMsgs((cur) => cur && !cur.some((x) => x.id === message.id) ? [...cur, message] : cur);
       loadSum();
     } catch (e) { setErr(e.message || 'File upload failed.'); }
@@ -2371,7 +2374,17 @@ function ChatPage({ me, onUnread }) {
                     {!mine && first && active === 'all' && <span className="mb-0.5 ml-3 text-[11px] font-medium text-black/50">{m.fromName}</span>}
                     <div title={`${dayHead(m.at)} ${clock(m.at)}`}
                       className={`whitespace-pre-wrap break-words rounded-[18px] px-3.5 py-2 text-[13px] leading-snug ${corner} ${mine ? 'bg-[#16a34a] text-white' : 'bg-white text-[#111827] shadow-sm'}`}>
-                      {m.file ? <a href={chatFileUrl(m.file.id, true)} target="_blank" rel="noreferrer" className="underline">{m.file.name || 'Download attachment'} · {fileSize(m.file.size || 0)}</a> : m.body}
+                      {m.deleted ? 'Message deleted' : <>
+                        {m.replyTo && m.replyBody && <div className={`mb-1 border-l-2 px-2 text-[11px] opacity-75 ${mine ? 'border-white' : 'border-[#16a34a]'}`}>
+                          <b>{m.replyName || 'Reply'}</b><div className="truncate">{m.replyBody}</div>
+                        </div>}
+                        {m.fileId && <a href={chatFileUrl(m.fileId, true)} target="_blank" rel="noreferrer" className="underline">
+                          {m.fileName || 'Download attachment'} · {fileSize(m.fileSize || 0)}
+                        </a>}
+                        {m.fileId && m.body ? <><br />{m.body}</> : !m.fileId && m.body}
+                        {m.forwarded && <span className="ml-1 text-[10px] opacity-70">Forwarded</span>}
+                        {m.editedAt && <span className="ml-1 text-[10px] opacity-70">(edited)</span>}
+                      </>}
                     </div>
                     {last && <span className="mx-2 mt-0.5 text-[10px] text-black/40">{clock(m.at)}</span>}
                   </div>

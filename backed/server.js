@@ -128,6 +128,9 @@ const upsertAdmin = u => (u?.email
 
 // presence: socket id -> { name, email, page, since }. The client sends its page with the 'page' event.
 const presence = new Map();
+// Track invited calls so signaling can only be relayed between the two admins
+// who were invited; a call ID alone is not authorization.
+const activeCalls = new Map();
 const presenceList = () => {
   const byEmail = new Map();
   presence.forEach(p => { const cur = byEmail.get(p.email); if (!cur || cur.since < p.since) byEmail.set(p.email, p); });
@@ -311,12 +314,22 @@ io.on('connection', socket => {
     ['call:invite', 'call:accept', 'call:reject', 'call:end', 'call:signal', 'call:busy'].forEach(ev => socket.on(ev, p => {
       const to = String(p?.to || '').toLowerCase();
       if (!validEmail(to) || to === me.email) return;
+      const callId = String(p?.callId || '').slice(0, 100);
+      if (!callId) return;
       if (ev === 'call:invite' && !io.sockets.adapter.rooms.get(`admin:${to}`)?.size) {
-        socket.emit('call:unavailable', { callId: String(p.callId || ''), from: to });
+        socket.emit('call:unavailable', { callId, from: to });
         return;
       }
+      if (ev === 'call:invite') {
+        if (activeCalls.has(callId)) return;
+        activeCalls.set(callId, { caller: me.email, callee: to });
+      } else {
+        const call = activeCalls.get(callId);
+        if (!call || !((call.caller === me.email && call.callee === to) || (call.callee === me.email && call.caller === to))) return;
+        if (['call:end', 'call:reject', 'call:busy'].includes(ev)) activeCalls.delete(callId);
+      }
       io.to(`admin:${to}`).emit(ev, {
-        callId: String(p.callId || ''), kind: p.kind === 'video' ? 'video' : 'audio', data: p.data,
+        callId, kind: p.kind === 'video' ? 'video' : 'audio', data: p.data,
         // The current chat client uses WebRTC's call:signal protocol directly.
         // Forward its fields (offer/answer/ICE candidate and mode) unchanged.
         ...(ev === 'call:signal' ? {
@@ -330,6 +343,13 @@ io.on('connection', socket => {
       });
     }));
     socket.on('disconnect', () => {
+      for (const [callId, call] of activeCalls) {
+        if (call.caller === me.email || call.callee === me.email) {
+          const other = call.caller === me.email ? call.callee : call.caller;
+          io.to(`admin:${other}`).emit('call:end', { callId, from: me.email });
+          activeCalls.delete(callId);
+        }
+      }
       presence.delete(socket.id);
       pushPresence();
       query('UPDATE admin_people SET last_seen = now() WHERE email = $1', [me.email]).catch(() => {});
