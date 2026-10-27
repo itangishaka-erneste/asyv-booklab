@@ -2813,6 +2813,37 @@ function CallProvider({ me, children }) {
   const iceQueue = useRef([]);
   const timer = useRef(null);
   const noticeTimer = useRef(null);
+  const ringContext = useRef(null);
+  const ringTimer = useRef(null);
+
+  const stopRing = () => {
+    clearInterval(ringTimer.current);
+    ringTimer.current = null;
+    ringContext.current?.close().catch(() => {});
+    ringContext.current = null;
+  };
+  const startRing = () => {
+    stopRing();
+    const AudioContext_ = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext_) return;
+    const ctx = new AudioContext_();
+    ringContext.current = ctx;
+    ctx.resume().catch(() => {});
+    const tone = () => {
+      if (ctx.state === 'closed') return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 440;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.04);
+      gain.gain.setValueAtTime(0.12, ctx.currentTime + 0.35);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + 0.42);
+    };
+    tone();
+    ringTimer.current = setInterval(tone, 1800);
+  };
 
   const say = (t) => {
     setNotice(t);
@@ -2824,6 +2855,7 @@ function CallProvider({ me, children }) {
 
   const reset = () => {
     stopTimer();
+    stopRing();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     pcRef.current?.close();
@@ -2878,6 +2910,7 @@ function CallProvider({ me, children }) {
     if (callRef.current || incoming) return say('You are already in a call.');
     const id = `${Date.now()}${Math.random().toString(36).slice(2, 7)}`;
     begin({ id, peer, mode, role: 'caller', status: 'calling' });
+    startRing();
     emitCall('call:invite', { to: peer.email, callId: id, kind: mode });
     timer.current = setTimeout(() => hangUp(`${peer.name} did not answer.`), 30000);
   };
@@ -2942,6 +2975,7 @@ function CallProvider({ me, children }) {
       const c = callRef.current;
       if (!c || c.id !== p.callId || c.role !== 'caller') return;
       try {
+        stopRing();
         stopTimer();
         const s = await getMedia(c.mode);
         const pc = makePc(c.peer.email, c.id);
