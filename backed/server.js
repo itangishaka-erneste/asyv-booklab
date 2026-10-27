@@ -7,6 +7,9 @@
 //  - Admin audio and video calls (WebRTC). The server only passes the call messages between the two admins.
 //  - GET /api/roster: teachers, psychosocial workers and admins see every student of every lab time of a day in one call.
 //  - Upload limit is 40 MB (25 MB of files becomes about 33 MB of base64).
+//  - NEW: GET /api/history       who was in which lab over a period (filter by lab and dates).
+//  - NEW: PATCH /api/students/class-remove   take students out of their class.
+//  - NEW: POST /api/grammar      spelling and grammar check (LanguageTool) for the chat and posts.
 require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
@@ -503,6 +506,16 @@ app.patch('/api/students/class', auth('admin'), wrap(async (req, res) => {
   await logAct(req.user, 'Moved students', `${ids.length} to ${p.cls}`);
   pushSeats();
   res.json({ updated: ids.length });
+}));
+
+// NEW: take students out of their class (they keep their account and bookings).
+app.patch('/api/students/class-remove', auth('admin'), wrap(async (req, res) => {
+  const ids = toIds(req.body.ids);
+  if (!ids.length) fail(400, 'Choose at least one student.');
+  const r = await query("UPDATE users SET profile = profile - 'grade' - 'combo' - 'section' - 'cls' WHERE role = 'student' AND id = ANY($1::int[]) RETURNING id", [ids]);
+  await logAct(req.user, 'Removed students from class', `${r.length} student(s)`);
+  pushSeats();
+  res.json({ updated: r.length });
 }));
 
 app.patch('/api/users/:id/communication', auth('admin'), wrap(async (req, res) => {
@@ -1003,6 +1016,27 @@ app.get('/api/board', auth('admin'), wrap(async (req, res) => {
   });
 }));
 
+/* ---------- NEW: history. Who was in which lab over a period of time (admins) ---------- */
+// ?from=YYYY-MM-DD&to=YYYY-MM-DD&lab=<lab id or 0 for all labs>. Released and rejected bookings are left out.
+
+app.get('/api/history', auth('admin'), wrap(async (req, res) => {
+  const to = ISO_DAY.test(String(req.query.to || '')) ? String(req.query.to) : nowLocal().date;
+  const from = ISO_DAY.test(String(req.query.from || '')) ? String(req.query.from) : addDay(to, -30);
+  if (from > to) fail(400, 'The first day must be before the last day.');
+  if ((Date.parse(to) - Date.parse(from)) / 864e5 > 366) fail(400, 'Choose a period of one year or less.');
+  const lab = Math.floor(+req.query.lab) || 0;
+  const rows = await listApps(`date::text BETWEEN $1::text AND $2::text AND status <> 'rejected'
+    AND sid IN (SELECT id FROM session_places WHERE $3::int = 0 OR "labId" = $3::int)`, [from, to, lab]);
+  rows.sort((a, b) => `${b.date} ${b.from}`.localeCompare(`${a.date} ${a.from}`));
+  res.json({
+    from, to, lab,
+    rows: rows.slice(0, 5000).map(a => ({
+      id: a.id, sid: a.sid, name: a.name, cls: a.cls || '', lab: a.lab, date: a.date, from: a.from, to: a.to, status: a.status,
+      att: a.att || null, late: !!a.late, reason: a.reason || '', email: a.email, picture: a.picture, gid: a.gid, bookedBy: a.bookedBy || '',
+    })),
+  });
+}));
+
 /* ---------- Activity log (admins), filtered by day, number of days or admin ---------- */
 
 app.get('/api/activity', auth('admin'), wrap(async (req, res) => {
@@ -1023,6 +1057,40 @@ app.get('/api/activity/chart', auth('admin'), wrap(async (req, res) => {
   res.json(await query(`SELECT actor, to_char((created_at AT TIME ZONE $2::text)::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
     FROM activity WHERE created_at >= (now() - ($1::int * interval '1 day'))
     GROUP BY actor, day ORDER BY day`, [days, TZ]));
+}));
+
+/* ---------- NEW: spelling and grammar check (LanguageTool). Used by the chat and the lost and found posts ---------- */
+// Free public API: https://api.languagetool.org (about 20 requests a minute per IP). Set GRAMMAR_URL to your own server
+// (or a LanguageTool Premium URL with GRAMMAR_USER + GRAMMAR_KEY) for more.
+
+const GRAMMAR_URL = process.env.GRAMMAR_URL || 'https://api.languagetool.org/v2/check';
+app.post('/api/grammar', auth(), wrap(async (req, res) => {
+  const text = String(req.body.text || '').slice(0, 3000);
+  if (text.trim().length < 3) return res.json({ matches: [] });
+  const lang = ['auto', 'en-US', 'en-GB', 'fr'].includes(req.body.language) ? req.body.language : 'auto';
+  const form = new URLSearchParams({ text, language: lang, enabledOnly: 'false' });
+  if (lang === 'auto') form.set('preferredVariants', 'en-US,fr');
+  if (process.env.GRAMMAR_USER && process.env.GRAMMAR_KEY) { form.set('username', process.env.GRAMMAR_USER); form.set('apiKey', process.env.GRAMMAR_KEY); }
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch(GRAMMAR_URL, {
+      method: 'POST', signal: ctl.signal, body: form,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    });
+    if (!r.ok) fail(502, 'The grammar checker is busy. Try again in a moment.');
+    const d = await r.json();
+    res.json({
+      language: d.language?.detectedLanguage?.name || d.language?.name || '',
+      matches: (d.matches || []).slice(0, 30).map(m => ({
+        offset: m.offset, length: m.length, message: m.message || '', short: m.shortMessage || '',
+        replacements: (m.replacements || []).slice(0, 4).map(x => x.value),
+        type: m.rule?.issueType || '', category: m.rule?.category?.id || '',
+      })),
+    });
+  } catch (e) {
+    if (Number.isInteger(e.code)) throw e;
+    fail(502, 'The grammar checker is not reachable right now.');
+  } finally { clearTimeout(timer); }
 }));
 
 /* ---------- Admin chat ---------- */
@@ -1150,7 +1218,7 @@ app.delete('/api/chat/messages/:id', auth('admin'), wrap(async (req, res) => {
     }
   } else {
     await query('INSERT INTO admin_chat_hidden(email, msg_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [me, m.id]);
-    io.to(`admin:${me}`).emit('chat:hidden', { id: m.id });
+    io.to(`admin:${me}`).emit('chat:hidden', { id: m.id, to: m.to_email, fromEmail: m.from_email });
   }
   res.json({ ok: true });
 }));
@@ -1599,6 +1667,8 @@ const ensureTables = async () => {
   await query('ALTER TABLE applications ADD COLUMN IF NOT EXISTS checked_in_at timestamptz');
   await query('CREATE INDEX IF NOT EXISTS applications_session_idx ON applications (session_id, status)');
   await query('CREATE INDEX IF NOT EXISTS applications_student_idx ON applications (student)');
+  // NEW: makes the History page fast when it looks at a long period.
+  await query('CREATE INDEX IF NOT EXISTS sessions_date_idx ON sessions (date)');
   await query(`CREATE TABLE IF NOT EXISTS session_people (
     session_id integer NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
