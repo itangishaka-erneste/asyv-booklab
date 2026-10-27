@@ -3016,14 +3016,22 @@ function CallProvider({ me, children }) {
 
 function CallScreen({ call, local, remote, onEnd }) {
   const remoteRef = useRef(null);
+  const remoteAudioRef = useRef(null);
   const localRef = useRef(null);
-  useEffect(() => { if (remoteRef.current) remoteRef.current.srcObject = remote; }, [remote]);
+  useEffect(() => {
+    if (remoteRef.current) remoteRef.current.srcObject = remote;
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = remote;
+      remoteAudioRef.current.play().catch(() => {});
+    }
+  }, [remote]);
   useEffect(() => { if (localRef.current) localRef.current.srcObject = local; }, [local]);
   const status = call.status === 'calling' ? 'Ringing…' : call.status === 'connecting' ? 'Connecting…' : 'Connected';
   return (
     <div className="fixed inset-0 z-[70] flex flex-col bg-black text-white">
       <div className="relative flex-1">
-        <video ref={remoteRef} autoPlay playsInline className="h-full w-full object-contain" />
+        <video ref={remoteRef} autoPlay playsInline muted={call.mode === 'audio'} className={`h-full w-full object-contain ${call.mode === 'audio' ? 'hidden' : ''}`} />
+        <audio ref={remoteAudioRef} autoPlay playsInline />
         {!remote && (
           <div className="absolute inset-0 grid place-items-center">
             <Avatar name={call.peer.name} picture={call.peer.picture} className="h-28 w-28 text-3xl" />
