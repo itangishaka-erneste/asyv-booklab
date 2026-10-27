@@ -7,6 +7,7 @@ import lab22 from './assets/lab22.jpeg';
 import lab4 from './assets/lab4.jpeg';
 import c7 from './assets/c7.jpeg';
 import c8 from './assets/c8.jpeg';
+import c3 from './assets/c3.jpeg';
 
 const icon = (d) => function Icon({ className = '', ...props }) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}><path d={d} /></svg>; };
 const CalendarDays = icon('M8 2v4m8-4v4M3 10h18M5 4h14v18H3V6a2 2 0 0 1 2-2zm2 10h3m4 0h3m-10 4h3');
@@ -68,7 +69,7 @@ const unsplash = (id, w = 900) => `https://images.unsplash.com/${id}?auto=format
 const LAB_PICS = ['photo-1498050108023-c5249f4df085', 'photo-1517694712202-14dd9538aa97', 'photo-1519389950473-47ba0277781c', 'photo-1522202176988-66273c2fd55f', 'photo-1531482615713-2afd69097998', 'photo-1497366754035-f200968a6e72'];
 const defaultLabPic = (i, w = 900) => unsplash(LAB_PICS[Math.abs(+i || 0) % LAB_PICS.length], w);
 const LAB_IMAGES_BY_NAME = {
-  lab1: lab11, lab2: lab22, lab3, lab33, lab11, lab22, lab4, c7, c8,
+  lab1: lab11, lab2: lab22, lab3, lab33, lab11, lab22, lab4, c7, c8, c3,
 };
 const LOGIN_SLIDES = [
   { id: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSPLrWxuPLWJQ6v6oUcHeQXk4Tjw6vnVZepDRUAfnRzWSErgiLehCu3Ww3z&s=10', t: 'Your next idea starts here.', s: 'Book a computer lab place before you arrive.' },
