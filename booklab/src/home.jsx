@@ -2885,7 +2885,12 @@ function CallProvider({ me, children }) {
     pc.onicecandidate = (e) => {
       if (e.candidate) emitCall('call:signal', { to, callId, type: 'candidate', candidate: e.candidate });
     };
-    pc.ontrack = (e) => setRemote(e.streams[0]);
+    pc.ontrack = (e) => {
+      // Use the provided stream when available, otherwise construct one from
+      // the received track so audio-only calls still produce a playable stream.
+      const received = e.streams?.[0] || new MediaStream([e.track]);
+      setRemote((current) => current || received);
+    };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed') hangUp('The connection failed.');
     };
@@ -2940,6 +2945,7 @@ function CallProvider({ me, children }) {
   const decline = () => {
     if (!incoming) return;
     stopTimer();
+    stopRing();
     emitCall('call:reject', { to: incoming.from, callId: incoming.callId });
     setIncoming(null);
   };
@@ -2950,8 +2956,10 @@ function CallProvider({ me, children }) {
     'call:invite': (p) => {
       if (callRef.current) return emitCall('call:reject', { to: p.from, callId: p.callId });
       setIncoming(p);
+      startRing();
       stopTimer();
       timer.current = setTimeout(() => {
+        stopRing();
         emitCall('call:reject', { to: p.from, callId: p.callId });
         setIncoming(null);
       }, 30000);
@@ -2966,6 +2974,7 @@ function CallProvider({ me, children }) {
     },
 
     'call:end': (p) => {
+      stopRing();
       setIncoming((cur) => (cur?.callId === p.callId ? null : cur));
       if (callRef.current?.id === p.callId) hangUp('The call ended.', false);
     },
@@ -3064,7 +3073,9 @@ function CallScreen({ call, local, remote, onEnd }) {
   return (
     <div className="fixed inset-0 z-[70] flex flex-col bg-black text-white">
       <div className="relative flex-1">
-        <video ref={remoteRef} autoPlay playsInline muted={call.mode === 'audio'} className={`h-full w-full object-contain ${call.mode === 'audio' ? 'hidden' : ''}`} />
+        {/* Audio is played by the audio element for both call types; mute this
+          video element to prevent duplicate sound during video calls. */}
+        <video ref={remoteRef} autoPlay playsInline muted className={`h-full w-full object-contain ${call.mode === 'audio' ? 'hidden' : ''}`} />
         <audio ref={remoteAudioRef} autoPlay playsInline />
         {!remote && (
           <div className="absolute inset-0 grid place-items-center">
