@@ -1562,6 +1562,7 @@ function LabsPage({ onOpenLab }) {
                 {l.sessions.map((s) => {
                   const list = liveOf(s);
                   const shown = list.slice(0, 6);
+                  const capacityPct = s.seats > 0 ? Math.min(100, Math.max(0, ((s.seats - s.left) / s.seats) * 100)) : 0;
                   return (
                     <div key={s.id} className="rounded-[6px] bg-black/[0.03] p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1572,6 +1573,9 @@ function LabsPage({ onOpenLab }) {
                         <b className="text-[#111827]">{list.length}</b> applied · {s.seats - s.left} of {s.seats} places taken
                         {forLabel(s) && <span className="text-[#c2310a]"> · {audText(s)}</span>}
                       </p>
+                      <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-black/10" role="progressbar" aria-label={`${s.seats - s.left} of ${s.seats} places taken`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(capacityPct)}>
+                        <div className={`h-full rounded-full transition-[width] duration-500 ${capacityPct >= 100 ? 'bg-[#ff4500]' : 'bg-[#16a34a]'}`} style={{ width: `${capacityPct}%` }} />
+                      </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {list.length === 0 && <span className="text-xs text-black/45">Nobody yet.</span>}
                         {shown.map((a) => (
@@ -2210,6 +2214,9 @@ function ChatPage({ me, onUnread }) {
   const [online, setOnline] = useState(null);
   const [typing, setTyping] = useState(null);
   const [showList, setShowList] = useState(true);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [groupMembers, setGroupMembers] = useState([]);
   const [err, setErr] = useState('');
   const { start, call } = useCall();
   const { busy, run } = useBusy();
@@ -2309,6 +2316,8 @@ function ChatPage({ me, onUnread }) {
 
   const myPic = sum.myPicture || me.picture || '';
   const people = sum.people.map((p) => ({ ...p, on: online ? online.has(p.email) : p.online }));
+  const groups = sum.groups || [];
+  const isAdmin = ['admin', 'administrator'].includes(String(me.role || me.type || '').toLowerCase());
   const everyone = [{ name: me.name, picture: myPic }, ...people];
   const lastAt = (k) => sum.last[k]?.at || '';
   const sorted = [...people].sort((a, b) => (sum.unread[b.email] || 0) - (sum.unread[a.email] || 0)
@@ -2320,6 +2329,17 @@ function ChatPage({ me, onUnread }) {
   const preview = (k) => { const l = sum.last[k]; return l ? `${l.fromMe ? 'You: ' : (k === 'all' ? `${l.fromName.split(' ')[0]}: ` : '')}${l.body}` : 'No messages yet'; };
 
   const open = (k) => { setActive(k); setShowList(false); };
+  const createGroup = async (event) => {
+    event.preventDefault();
+    const name = groupName.trim();
+    if (!name || !groupMembers.length) return;
+    try {
+      const group = await api('/api/chat/groups', 'POST', { name, members: groupMembers });
+      setCreatingGroup(false); setGroupName(''); setGroupMembers([]);
+      await loadSum();
+      open(group.id || group.key);
+    } catch (e) { setErr(e.message || 'Could not create group.'); }
+  };
   const send = (body) => run('send', async () => {
     const b = String(body ?? text).trim();
     if (!b) return;
@@ -2374,11 +2394,14 @@ function ChatPage({ me, onUnread }) {
       {/* Left: all chats */}
       <aside className={`${showList ? 'flex' : 'hidden'} w-full shrink-0 flex-col border-r border-black/10 md:flex md:w-80`}>
         <div className="p-3">
-          <h2 className="mb-2 text-base font-bold">Chats</h2>
+          <div className="mb-2 flex items-center justify-between"><h2 className="text-base font-bold">Chats</h2>
+            {isAdmin && <button type="button" onClick={() => setCreatingGroup(true)} className="rounded-full bg-[#16a34a] px-3 py-1.5 text-xs font-semibold text-white">Create group</button>}
+          </div>
           <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search admins" aria-label="Search admins"
             className="w-full rounded-full bg-[#f0f2f5] px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
         </div>
         <div className="flex-1 overflow-y-auto pb-2">
+          {groups.filter((g) => match(q, g.name)).map((g) => <Row key={g.id || g.key} k={g.id || g.key} name={g.name} unread={sum.unread[g.id || g.key] || 0} time={sum.last[g.id || g.key]?.at} sub={preview(g.id || g.key)} avatar={<GroupIcon people={g.members || []} />} />)}
           {showGroup && (
             <Row k="all" name="All admins" unread={sum.unread.all || 0} time={sum.last.all?.at}
               sub={preview('all')} avatar={<GroupIcon people={everyone} />} />
@@ -2392,6 +2415,15 @@ function ChatPage({ me, onUnread }) {
           {people.length === 0 && <p className="px-4 py-3 text-xs leading-relaxed text-black/50">Other admins appear here after they sign in once.</p>}
         </div>
       </aside>
+
+      {creatingGroup && <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="presentation">
+        <form onSubmit={createGroup} className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+          <h3 className="mb-4 text-lg font-bold">Create admin group</h3>
+          <label className="mb-3 block text-sm font-medium">Group name<input autoFocus required value={groupName} onChange={(e) => setGroupName(e.target.value)} className="mt-1 w-full rounded-lg border border-black/15 px-3 py-2" /></label>
+          <label className="mb-4 block text-sm font-medium">Add admins<select multiple value={groupMembers} onChange={(e) => setGroupMembers([...e.target.selectedOptions].map((o) => o.value))} className="mt-1 h-32 w-full rounded-lg border border-black/15 px-3 py-2">{people.map((p) => <option key={p.email} value={p.email}>{p.name} ({p.email})</option>)}</select></label>
+          <div className="flex justify-end gap-2"><button type="button" onClick={() => setCreatingGroup(false)} className="rounded-lg px-4 py-2 text-sm">Cancel</button><button type="submit" disabled={!groupName.trim() || !groupMembers.length} className="rounded-lg bg-[#16a34a] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">Create</button></div>
+        </form>
+      </div>}
 
       {/* Right: the conversation */}
       <section className={`${showList ? 'hidden' : 'flex'} min-w-0 flex-1 flex-col md:flex`}>
