@@ -152,8 +152,10 @@ const withPeople = async rows => {
 };
 const withExtras = async rows => {
   if (!rows.length) return rows;
-  const ex = new Map((await query('SELECT id, late, note FROM applications WHERE id = ANY($1::int[])', [rows.map(r => r.id)])).map(r => [r.id, r]));
-  return rows.map(a => { const x = ex.get(a.id); return { ...a, late: !!x?.late, note: x?.note || '', released: /^Released/.test(x?.note || '') }; });
+  const ex = new Map((await query(`SELECT id, late, note,
+    to_char(checked_in_at AT TIME ZONE $2::text, 'HH24:MI') AS "checkedInAt"
+    FROM applications WHERE id = ANY($1::int[])`, [rows.map(r => r.id), TZ])).map(r => [r.id, r]));
+  return rows.map(a => { const x = ex.get(a.id); return { ...a, late: !!x?.late, note: x?.note || '', released: /^Released/.test(x?.note || ''), checkedInAt: x?.checkedInAt || null }; });
 };
 
 const SESSION_ORDER = 'ORDER BY date, "from", lab';
@@ -305,10 +307,19 @@ io.on('connection', socket => {
       pushPresence();
     });
     // "is typing...": sent to the other admin, or to every other admin for the group chat.
-    socket.on('chat:typing', to => {
+    socket.on('chat:typing', async to => {
       const payload = { from: me.email, name: me.name, to: to === 'all' ? 'all' : String(to || '').toLowerCase() };
-      if (payload.to === 'all') socket.to('admins').emit('chat:typing', payload);
-      else if (validEmail(payload.to)) io.to(`admin:${payload.to}`).emit('chat:typing', payload);
+      try {
+        if (payload.to === 'all') socket.to('admins').emit('chat:typing', payload);
+        else if (validEmail(payload.to)) io.to(`admin:${payload.to}`).emit('chat:typing', payload);
+        else if (/^group:\d+$/.test(payload.to)) {
+          const groupId = Number(payload.to.slice(6));
+          const member = await one("SELECT 1 AS ok FROM admin_chat_group_members WHERE group_id = $1 AND email = $2 AND status = 'accepted'", [groupId, me.email]);
+          if (!member) return;
+          const members = await query("SELECT email FROM admin_chat_group_members WHERE group_id = $1 AND status = 'accepted' AND email <> $2", [groupId, me.email]);
+          members.forEach(p => io.to(`admin:${p.email}`).emit('chat:typing', payload));
+        }
+      } catch (e) { console.error('chat typing:', e.message); }
     });
     // Calls: the server only passes the messages between the two admins. WebRTC carries the sound and the video.
     ['call:invite', 'call:accept', 'call:reject', 'call:end', 'call:signal', 'call:busy'].forEach(ev => socket.on(ev, p => {
@@ -1061,7 +1072,7 @@ app.get('/api/history', auth('admin'), wrap(async (req, res) => {
     from, to, lab,
     rows: rows.slice(0, 5000).map(a => ({
       id: a.id, sid: a.sid, name: a.name, cls: a.cls || '', lab: a.lab, date: a.date, from: a.from, to: a.to, status: a.status,
-      att: a.att || null, late: !!a.late, reason: a.reason || '', email: a.email, picture: a.picture, gid: a.gid, bookedBy: a.bookedBy || '',
+      att: a.att || null, late: !!a.late, checkedInAt: a.checkedInAt || null, reason: a.reason || '', email: a.email, picture: a.picture, gid: a.gid, bookedBy: a.bookedBy || '',
     })),
   });
 }));
@@ -1129,8 +1140,27 @@ app.post('/api/grammar', auth(), wrap(async (req, res) => {
 // "Delete for me" hides it only for the person who deleted it. "Delete for everyone" empties it for all (own messages only).
 
 const dmRoom = (a, b) => 'dm:' + [a, b].sort().join('|');
-const chatWith = v => { const w = String(v || 'all').trim().toLowerCase(); return w === 'all' || validEmail(w) ? w : fail(400, 'Unknown chat.'); };
-const roomOf = (me, w) => (w === 'all' ? 'all' : dmRoom(me, w));
+const groupIdOf = v => {
+  const m = /^group:([1-9]\d*)$/.exec(String(v || ''));
+  const id = m ? Number(m[1]) : 0;
+  return Number.isSafeInteger(id) && id <= 2147483647 ? id : 0;
+};
+const chatWith = v => {
+  const w = String(v || 'all').trim().toLowerCase();
+  return w === 'all' || validEmail(w) || groupIdOf(w) ? w : fail(400, 'Unknown chat.');
+};
+const roomOf = (me, w) => (w === 'all' || groupIdOf(w) ? w : dmRoom(me, w));
+const assertChatAccess = async (email, w) => {
+  const groupId = groupIdOf(w);
+  if (groupId && !await one("SELECT 1 AS ok FROM admin_chat_group_members WHERE group_id = $1 AND email = $2 AND status = 'accepted'", [groupId, email])) {
+    fail(403, 'You must accept the group invitation before opening this chat.');
+  }
+};
+const canSeeChatMessage = async (email, m) => {
+  if (m.room === 'all' || m.from_email === email || m.to_email === email) return true;
+  const groupId = groupIdOf(m.room);
+  return !!(groupId && await one("SELECT 1 AS ok FROM admin_chat_group_members WHERE group_id = $1 AND email = $2 AND status = 'accepted'", [groupId, email]));
+};
 
 const CHAT_COLS = `m.id, m.room, m.from_email AS "fromEmail", m.from_name AS "fromName", m.to_email AS "to", m.body, m.created_at AS at,
   m.reply_to AS "replyTo", m.forwarded, m.deleted, m.edited_at AS "editedAt", m.file_id AS "fileId",
@@ -1140,7 +1170,16 @@ const CHAT_COLS = `m.id, m.room, m.from_email AS "fromEmail", m.from_name AS "fr
   (SELECT rf.name FROM admin_chat_files rf WHERE rf.id = r.file_id) AS "replyFileName"`;
 const CHAT_FROM = 'admin_chat m LEFT JOIN admin_chat_files f ON f.id = m.file_id LEFT JOIN admin_chat r ON r.id = m.reply_to';
 const chatOne = id => one(`SELECT ${CHAT_COLS} FROM ${CHAT_FROM} WHERE m.id = $1`, [id]);
-const chatAudience = row => (row.to === 'all' ? io.to('admins') : io.to(`admin:${row.to}`).to(`admin:${row.fromEmail}`));
+const emitChat = async (row, event, payload) => {
+  if (row.room === 'all') return io.to('admins').emit(event, payload);
+  const groupId = groupIdOf(row.room);
+  if (groupId) {
+    const members = await query("SELECT email FROM admin_chat_group_members WHERE group_id = $1 AND status = 'accepted'", [groupId]);
+    members.forEach(p => io.to(`admin:${p.email}`).emit(event, payload));
+    return;
+  }
+  io.to(`admin:${row.to}`).to(`admin:${row.fromEmail}`).emit(event, payload);
+};
 const CHAT_FILE_OK = /^(image\/(png|jpe?g|gif|webp|avif)|video\/(mp4|webm|ogg|quicktime|x-matroska)|audio\/[\w.+-]+|text\/plain|application\/(pdf|zip|x-zip-compressed|msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)))$/i;
 const CHAT_MAX_FILE = 25 * 1024 * 1024;
 const chatBody = v => String(v || '').replace(/\r\n/g, '\n').trim().slice(0, 2000);
@@ -1156,6 +1195,42 @@ const adminDirectory = async () => {
   return [...map.values()];
 };
 
+app.post('/api/chat/groups', auth('admin'), wrap(async (req, res) => {
+  const name = cleanName(req.body.name).slice(0, 80);
+  if (!name) fail(400, 'Enter a name for the group.');
+  const members = [...new Set(cleanList(Array.isArray(req.body.members) ? req.body.members : [])
+    .map(email => email.toLowerCase()))].filter(email => email !== req.user.email);
+  if (!members.length) fail(400, 'Choose at least one admin to invite.');
+  const known = new Set((await adminDirectory()).map(p => p.email));
+  if (members.some(email => !known.has(email))) fail(400, 'One or more selected admins are unavailable. Refresh and try again.');
+  const group = await tx(async q => {
+    const row = (await q('INSERT INTO admin_chat_groups(name, created_by) VALUES($1,$2) RETURNING id', [name, req.user.email]))[0];
+    await q("INSERT INTO admin_chat_group_members(group_id, email, status, invited_by, responded_at) VALUES($1,$2,'accepted',$2,now())", [row.id, req.user.email]);
+    await q(`INSERT INTO admin_chat_group_members(group_id, email, status, invited_by)
+      SELECT $1, invited.email, 'pending', $3 FROM unnest($2::text[]) AS invited(email)`, [row.id, members, req.user.email]);
+    return row;
+  });
+  await logAct(req.user, 'Created admin chat group', `${name} (${members.length} invitations)`);
+  members.forEach(email => io.to(`admin:${email}`).emit('chat:invitation', { groupId: group.id, name, createdBy: req.user.name }));
+  res.status(201).json({ id: `group:${group.id}`, name });
+}));
+
+app.post('/api/chat/groups/:id/respond', auth('admin'), wrap(async (req, res) => {
+  const groupId = Number(req.params.id);
+  if (!Number.isSafeInteger(groupId) || groupId < 1) fail(400, 'Unknown group invitation.');
+  const action = req.body.action;
+  if (action !== 'accept' && action !== 'decline') fail(400, 'Choose whether to accept or decline the invitation.');
+  const updated = await one(`UPDATE admin_chat_group_members SET status = $1, responded_at = now()
+    WHERE group_id = $2 AND email = $3 AND status = 'pending' RETURNING invited_by`,
+  [action === 'accept' ? 'accepted' : 'declined', groupId, req.user.email]);
+  if (!updated) fail(404, 'This group invitation is no longer available.');
+  const group = await one('SELECT name FROM admin_chat_groups WHERE id = $1', [groupId]);
+  if (!group) fail(404, 'Group not found.');
+  await logAct(req.user, action === 'accept' ? 'Accepted admin group invitation' : 'Declined admin group invitation', group.name);
+  io.to(`admin:${updated.invited_by}`).emit('chat:invitation-updated', { groupId, email: req.user.email, action });
+  res.json({ ok: true, id: `group:${groupId}` });
+}));
+
 // People, last message and unread count of every chat, in one call. "me" carries your own picture for the chat screen.
 app.get('/api/chat/summary', auth('admin'), wrap(async (req, res) => {
   const me = req.user.email;
@@ -1164,25 +1239,46 @@ app.get('/api/chat/summary', auth('admin'), wrap(async (req, res) => {
   const people = dir.filter(p => p.email !== me)
     .map(p => ({ ...p, online: on.has(p.email) }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const unreadRows = await query(`SELECT CASE WHEN m.room = 'all' THEN 'all' ELSE m.from_email END AS key, COUNT(*)::int AS n
+  const memberships = await query(`SELECT g.id, g.name, gm.status, gm.invited_by AS "createdBy"
+    FROM admin_chat_groups g JOIN admin_chat_group_members gm ON gm.group_id = g.id
+    WHERE gm.email = $1 AND gm.status IN ('accepted','pending') ORDER BY g.name`, [me]);
+  const acceptedIds = memberships.filter(g => g.status === 'accepted').map(g => g.id);
+  const groupPeople = acceptedIds.length
+    ? await query(`SELECT gm.group_id AS "groupId", gm.email, COALESCE(NULLIF(p.name, ''), split_part(gm.email, '@', 1)) AS name,
+      COALESCE(NULLIF(a.picture, ''), p.picture, '') AS picture
+      FROM admin_chat_group_members gm LEFT JOIN admin_people p ON p.email = gm.email LEFT JOIN admin_profiles a ON a.email = gm.email
+      WHERE gm.group_id = ANY($1::int[]) AND gm.status = 'accepted' ORDER BY name`, [acceptedIds])
+    : [];
+  const groups = memberships.filter(g => g.status === 'accepted').map(g => ({
+    id: `group:${g.id}`, name: g.name, members: groupPeople.filter(p => p.groupId === g.id).map(({ groupId, ...p }) => p),
+  }));
+  const invitations = memberships.filter(g => g.status === 'pending').map(g => ({
+    groupId: g.id, id: `group:${g.id}`, name: g.name, createdBy: dir.find(p => p.email === g.createdBy)?.name || g.createdBy,
+  }));
+  const groupRooms = groups.map(g => g.id);
+  const unreadRows = await query(`SELECT CASE WHEN m.room = 'all' THEN 'all' WHEN m.room = ANY($2::text[]) THEN m.room ELSE m.from_email END AS key, COUNT(*)::int AS n
     FROM admin_chat m LEFT JOIN admin_chat_reads r ON r.email = $1 AND r.room = m.room
-    WHERE m.id > COALESCE(r.last_id, 0) AND m.from_email <> $1 AND (m.room = 'all' OR m.to_email = $1) AND NOT m.deleted
+    WHERE m.id > COALESCE(r.last_id, 0) AND m.from_email <> $1 AND (m.room = 'all' OR m.to_email = $1 OR m.room = ANY($2::text[])) AND NOT m.deleted
     AND NOT EXISTS (SELECT 1 FROM admin_chat_hidden h WHERE h.msg_id = m.id AND h.email = $1)
-    GROUP BY 1`, [me]);
+    GROUP BY 1`, [me, groupRooms]);
   const lastRows = await query(`SELECT DISTINCT ON (c.room) c.room, c.to_email AS "to", c.from_email AS "fromEmail", c.from_name AS "fromName",
       CASE WHEN c.deleted THEN 'Message deleted' WHEN c.file_id IS NOT NULL AND c.body = '' THEN '📎 ' || COALESCE((SELECT f.name FROM admin_chat_files f WHERE f.id = c.file_id), 'File') ELSE c.body END AS body,
       c.created_at AS at
-    FROM admin_chat c WHERE (c.room = 'all' OR c.from_email = $1 OR c.to_email = $1)
+    FROM admin_chat c WHERE (c.room = 'all' OR c.from_email = $1 OR c.to_email = $1 OR c.room = ANY($2::text[]))
     AND NOT EXISTS (SELECT 1 FROM admin_chat_hidden h WHERE h.msg_id = c.id AND h.email = $1)
-    ORDER BY c.room, c.id DESC`, [me]);
+    ORDER BY c.room, c.id DESC`, [me, groupRooms]);
   const last = {};
-  lastRows.forEach(m => { last[m.room === 'all' ? 'all' : (m.fromEmail === me ? m.to : m.fromEmail)] = { body: m.body, at: m.at, fromMe: m.fromEmail === me, fromName: m.fromName }; });
+  lastRows.forEach(m => {
+    const key = m.room === 'all' || groupIdOf(m.room) ? m.room : (m.fromEmail === me ? m.to : m.fromEmail);
+    last[key] = { body: m.body, at: m.at, fromMe: m.fromEmail === me, fromName: m.fromName };
+  });
   const mine = dir.find(p => p.email === me);
-  res.json({ me, myPicture: mine?.picture || req.user.picture || '', people, unread: Object.fromEntries(unreadRows.map(r => [r.key, r.n])), last });
+  res.json({ me, myPicture: mine?.picture || req.user.picture || '', people, groups, invitations, unread: Object.fromEntries(unreadRows.map(r => [r.key, r.n])), last });
 }));
 
 app.get('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
   const me = req.user.email, w = chatWith(req.query.with), before = Math.max(+req.query.before || 0, 0);
+  await assertChatAccess(me, w);
   const rows = await query(`SELECT ${CHAT_COLS} FROM ${CHAT_FROM} WHERE m.room = $1 AND ($2::int = 0 OR m.id < $2::int)
     AND NOT EXISTS (SELECT 1 FROM admin_chat_hidden h WHERE h.msg_id = m.id AND h.email = $3)
     ORDER BY m.id DESC LIMIT 80`, [roomOf(me, w), before, me]);
@@ -1193,6 +1289,7 @@ app.get('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
 app.post('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
   const me = req.user, w = chatWith(req.body.with);
   if (w === me.email) fail(400, 'You cannot write to yourself.');
+  await assertChatAccess(me.email, w);
   const room = roomOf(me.email, w);
   let body = chatBody(req.body.body), fileId = null, forwarded = false;
   const replyTo = Number.isInteger(+req.body.replyTo) && +req.body.replyTo > 0 ? +req.body.replyTo : null;
@@ -1202,7 +1299,7 @@ app.post('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
   }
   if (req.body.forwardOf) {
     const src = await one('SELECT room, from_email, to_email, body, file_id, deleted FROM admin_chat WHERE id = $1', [+req.body.forwardOf]);
-    if (!src || src.deleted || !(src.room === 'all' || src.from_email === me.email || src.to_email === me.email)) fail(404, 'That message cannot be forwarded.');
+    if (!src || src.deleted || !await canSeeChatMessage(me.email, src)) fail(404, 'That message cannot be forwarded.');
     body = src.body; fileId = src.file_id; forwarded = true;
   } else if (req.body.file) {
     const f = req.body.file, mime = String(f.mime || '').toLowerCase().split(';')[0], buf = Buffer.from(String(f.data || ''), 'base64');
@@ -1216,20 +1313,21 @@ app.post('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
     [room, me.email, me.name, w, body, replyTo, fileId, forwarded]);
   const row = await chatOne(ins.id);
   await markRead(me.email, room, row.id);
-  chatAudience(row).emit('chat:message', row);
+  await emitChat(row, 'chat:message', row);
   res.json(row);
 }));
 
 // Edit your own message.
 app.patch('/api/chat/messages/:id', auth('admin'), wrap(async (req, res) => {
-  const m = await one('SELECT id, from_email, deleted, file_id FROM admin_chat WHERE id = $1', [+req.params.id]) || fail(404, 'Message not found.');
+  const m = await one('SELECT id, room, from_email, deleted, file_id FROM admin_chat WHERE id = $1', [+req.params.id]) || fail(404, 'Message not found.');
+  await assertChatAccess(req.user.email, m.room);
   if (m.from_email !== req.user.email) fail(403, 'You can only edit your own messages.');
   if (m.deleted) fail(409, 'This message was deleted.');
   const body = chatBody(req.body.body);
   if (!body && !m.file_id) fail(400, 'A message cannot be empty.');
   await query('UPDATE admin_chat SET body = $1, edited_at = now() WHERE id = $2', [body, m.id]);
   const row = await chatOne(m.id);
-  chatAudience(row).emit('chat:edited', row);
+  await emitChat(row, 'chat:edited', row);
   res.json(row);
 }));
 
@@ -1237,13 +1335,13 @@ app.patch('/api/chat/messages/:id', auth('admin'), wrap(async (req, res) => {
 app.delete('/api/chat/messages/:id', auth('admin'), wrap(async (req, res) => {
   const me = req.user.email;
   const m = await one('SELECT id, room, from_email, to_email, deleted, file_id FROM admin_chat WHERE id = $1', [+req.params.id]) || fail(404, 'Message not found.');
-  if (!(m.room === 'all' || m.from_email === me || m.to_email === me)) fail(403, 'You do not have access to this.');
+  if (!await canSeeChatMessage(me, m)) fail(403, 'You do not have access to this.');
   if (req.query.scope === 'all') {
     if (m.from_email !== me) fail(403, 'You can only delete your own messages for everyone.');
     if (!m.deleted) {
       await query("UPDATE admin_chat SET deleted = true, body = '', file_id = NULL WHERE id = $1", [m.id]);
       if (m.file_id) await query('DELETE FROM admin_chat_files WHERE id = $1::int AND NOT EXISTS (SELECT 1 FROM admin_chat WHERE file_id = $1::int)', [m.file_id]);
-      chatAudience({ to: m.to_email, fromEmail: m.from_email }).emit('chat:deleted', { id: m.id, to: m.to_email, fromEmail: m.from_email });
+      await emitChat(m, 'chat:deleted', { id: m.id, room: m.room, to: m.to_email, fromEmail: m.from_email });
     }
   } else {
     await query('INSERT INTO admin_chat_hidden(email, msg_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [me, m.id]);
@@ -1255,12 +1353,14 @@ app.delete('/api/chat/messages/:id', auth('admin'), wrap(async (req, res) => {
 // Photos, videos, audio and files of the chat. Only admins who are part of the chat can open them (token in ?t=). ?dl=1 downloads.
 app.get('/api/chat/files/:id', qAuth, auth('admin'), wrap(async (req, res) => {
   const f = (Number.isInteger(+req.params.id) && await one(`SELECT f.name, f.mime, f.data FROM admin_chat_files f WHERE f.id = $1 AND EXISTS (
-      SELECT 1 FROM admin_chat m WHERE m.file_id = f.id AND NOT m.deleted AND (m.room = 'all' OR m.from_email = $2 OR m.to_email = $2))`, [+req.params.id, req.user.email])) || fail(404, 'File not found.');
+      SELECT 1 FROM admin_chat m WHERE m.file_id = f.id AND NOT m.deleted AND (m.room = 'all' OR m.from_email = $2 OR m.to_email = $2
+        OR (m.room LIKE 'group:%' AND EXISTS (SELECT 1 FROM admin_chat_group_members gm WHERE gm.group_id = split_part(m.room, ':', 2)::int AND gm.email = $2 AND gm.status = 'accepted'))))`, [+req.params.id, req.user.email])) || fail(404, 'File not found.');
   sendData(req, res, f, { download: req.query.dl === '1', priv: true });
 }));
 
 app.post('/api/chat/read', auth('admin'), wrap(async (req, res) => {
-  const me = req.user.email, room = roomOf(me, chatWith(req.body.with));
+  const me = req.user.email, w = chatWith(req.body.with), room = roomOf(me, w);
+  await assertChatAccess(me, w);
   await query(`INSERT INTO admin_chat_reads(email, room, last_id)
     VALUES($1, $2, COALESCE((SELECT MAX(id) FROM admin_chat WHERE room = $2), 0))
     ON CONFLICT (email, room) DO UPDATE SET last_id = GREATEST(admin_chat_reads.last_id, EXCLUDED.last_id)`, [me, room]);
@@ -1639,6 +1739,14 @@ const ensureTables = async () => {
   // Admin chat: who the admins are, their messages, and what each admin has already read.
   await query(`CREATE TABLE IF NOT EXISTS admin_people (
     email text PRIMARY KEY, name text NOT NULL DEFAULT '', picture text NOT NULL DEFAULT '', last_seen timestamptz NOT NULL DEFAULT now())`);
+  await query(`CREATE TABLE IF NOT EXISTS admin_chat_groups (
+    id serial PRIMARY KEY, name text NOT NULL, created_by text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
+  await query(`CREATE TABLE IF NOT EXISTS admin_chat_group_members (
+    group_id integer NOT NULL REFERENCES admin_chat_groups(id) ON DELETE CASCADE,
+    email text NOT NULL, status text NOT NULL CHECK (status IN ('pending','accepted','declined')),
+    invited_by text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), responded_at timestamptz,
+    PRIMARY KEY (group_id, email))`);
+  await query('CREATE INDEX IF NOT EXISTS admin_chat_group_member_email_idx ON admin_chat_group_members (email, status)');
   await query(`CREATE TABLE IF NOT EXISTS admin_chat (
     id serial PRIMARY KEY, room text NOT NULL, from_email text NOT NULL, from_name text NOT NULL DEFAULT '',
     to_email text NOT NULL DEFAULT 'all', body text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);

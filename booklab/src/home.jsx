@@ -60,7 +60,7 @@ const SECTIONS = [...Array.from({ length: 12 }, (_, i) => String(i + 1)), ...'AB
 const EMPTY_OPTS = { grades: [], gradeCombos: {}, reasons: [], trendCategories: [] };
 const ROLE_LABEL = { admin: 'Admin', teacher: 'Teacher', psychosocial: 'Psychosocial worker', student: 'Student' };
 const ROLE_CHOICES = ['student', 'teacher', 'psychosocial'];
-const ADMIN_TABS = ['Overview', 'Labs', 'Schedule', 'People', 'Chat', 'Settings'];
+const ADMIN_TABS = ['Overview', 'History', 'Labs', 'Schedule', 'People', 'Chat', 'Settings'];
 const gradesOf = (o) => (o.grades?.length ? o.grades : DEFAULT_GRADES);
 const combosFor = (o, g) => o.gradeCombos?.[g] ?? [];
 const catsOf = (o) => (o?.trendCategories?.length ? o.trendCategories : DEFAULT_CATS);
@@ -842,6 +842,12 @@ function LiveLabs() {
             </span>
             {demo ? 'Live preview' : 'Live now'}
           </span>
+          {selected && (
+            <span aria-live="polite" className="inline-flex max-w-[42%] min-w-0 items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-bold text-[#111827] shadow">
+              <span className="h-2 w-2 rounded-full" style={{ background: LIVE[selected.status]?.[0] || LIVE.none[0] }} />
+              <span className="truncate">{selected.name}: {LIVE[selected.status]?.[1] || LIVE.none[1]}</span>
+            </span>
+          )}
           <span className="rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-semibold backdrop-blur"><Radio className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />{free} free places today</span>
         </div>
         <div className="grid grid-cols-3 gap-2" aria-label="Choose a lab">
@@ -1344,7 +1350,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
 }
 
 /* ================================================================== */
-/* 6. ADMIN: Overview, Labs, Schedule, People, Chat, Settings          */
+/* 6. ADMIN: Overview, History, Labs, Schedule, People, Chat, Settings */
 /* ================================================================== */
 
 const ACT_FILTERS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['date', 'Pick a day']];
@@ -1462,6 +1468,79 @@ function OverviewPage({ me }) {
           </div>
         ))}
         {acts.length > many && <div className="pt-2 text-center"><Btn c="w" onClick={() => setMany((n) => n + 15)}>Show more ({acts.length - many} left)</Btn></div>}
+      </Card>
+    </div>
+  );
+}
+
+function HistoryPage() {
+  const [labs, setLabs] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [from, setFrom] = useState(() => shiftDay(today(), -30));
+  const [to, setTo] = useState(today());
+  const [lab, setLab] = useState('0');
+  const [attendance, setAttendance] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const load = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({ from, to, lab });
+      const [labList, history] = await Promise.all([api('/api/labs'), api(`/api/history?${params}`)]);
+      setLabs(labList);
+      setRows(history.rows);
+      setErr('');
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [from, to, lab]);
+  useEffect(() => { load(); }, [load]);
+  const visible = rows.filter((r) => !attendance || (attendance === 'unmarked' ? !r.att : r.att === attendance));
+  return (
+    <div className="space-y-6">
+      <Card t="Lab attendance history" sub="Review who booked and attended each lab session, including their scheduled time and recorded check-in.">
+        <div className="mb-4 flex flex-wrap items-end gap-3">
+          <Field l="From"><Inp type="date" value={from} max={today()} onChange={(e) => { setLoading(true); setFrom(e.target.value); }} /></Field>
+          <Field l="To"><Inp type="date" value={to} max={today()} onChange={(e) => { setLoading(true); setTo(e.target.value); }} /></Field>
+          <Field l="Lab">
+            <Sel value={lab} onChange={(value) => { setLoading(true); setLab(value); }} options={[{ value: '0', label: 'All labs' }, ...labs.map((l) => ({ value: String(l.id), label: l.name }))]} />
+          </Field>
+          <Field l="Attendance">
+            <Sel value={attendance} onChange={setAttendance} options={[
+              { value: '', label: 'All records' }, { value: 'present', label: 'Present' },
+              { value: 'absent', label: 'Absent' }, { value: 'unmarked', label: 'Not marked' },
+            ]} />
+          </Field>
+          <Btn c="w" onClick={() => { setLoading(true); load(); }} disabled={loading}>Refresh</Btn>
+          <span className="ml-auto text-xs text-black/55">{plural(visible.length, 'record')}</span>
+        </div>
+        {err && <div className="mb-4"><Alert>{err}</Alert></div>}
+        {loading && <Loader label="Loading attendance history" />}
+        {!loading && !err && visible.length === 0 && <Empty>No attendance records match these filters.</Empty>}
+        {!loading && visible.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] border-collapse text-left text-xs">
+              <thead><tr className="border-b border-black/10 text-black/55">
+                <th className="px-3 py-2 font-semibold">Student</th><th className="px-3 py-2 font-semibold">Lab</th>
+                <th className="px-3 py-2 font-semibold">Date and session</th><th className="px-3 py-2 font-semibold">Attendance</th>
+                <th className="px-3 py-2 font-semibold">Check-in time</th><th className="px-3 py-2 font-semibold">Booking</th>
+              </tr></thead>
+              <tbody className="divide-y divide-black/10">
+                {visible.map((r) => (
+                  <tr key={r.id}>
+                    <td className="px-3 py-3"><b>{r.name}</b><span className="block text-[11px] text-black/50">{r.cls || 'No class'}</span></td>
+                    <td className="px-3 py-3">{r.lab}</td>
+                    <td className="px-3 py-3">{niceDay(r.date)}<span className="block text-[11px] text-black/50">{r.from}–{r.to}</span></td>
+                    <td className="px-3 py-3"><Badge s={attKey(r) || 'none'}>{attLabel(r)}</Badge></td>
+                    <td className="px-3 py-3">{r.checkedInAt || 'Not recorded'}</td>
+                    <td className="px-3 py-3">{STATUS_LABEL[r.status] || r.status}<span className="block text-[11px] text-black/50">{r.bookedBy || '—'}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -2217,6 +2296,8 @@ function ChatPage({ me, onUnread }) {
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [groupMembers, setGroupMembers] = useState([]);
+  const [memberPickerOpen, setMemberPickerOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [err, setErr] = useState('');
   const { start, call } = useCall();
   const { busy, run } = useBusy();
@@ -2261,7 +2342,7 @@ function ChatPage({ me, onUnread }) {
 
   useLive({
     'chat:message': (m) => {
-      const key = m.to === 'all' ? 'all' : (m.fromEmail === me.email ? m.to : m.fromEmail);
+      const key = m.room?.startsWith('group:') ? m.room : (m.to === 'all' ? 'all' : (m.fromEmail === me.email ? m.to : m.fromEmail));
       if (key === activeRef.current) {
         if (m.fromEmail !== me.email) playChatSound();
         setMsgs((cur) => (cur && !cur.some((x) => x.id === m.id) ? [...cur, m] : cur));
@@ -2269,13 +2350,15 @@ function ChatPage({ me, onUnread }) {
       } else loadSum();
     },
     'chat:typing': (t) => {
-      const key = t.to === 'all' ? 'all' : t.from;
+      const key = t.to === 'all' || t.to?.startsWith('group:') ? t.to : t.from;
       if (key !== activeRef.current || t.from === me.email) return;
       playChatSound();
       setTyping(t.name);
       clearTimeout(typingTimer.current);
       typingTimer.current = setTimeout(() => setTyping(null), 3000);
     },
+    'chat:invitation': loadSum,
+    'chat:invitation-updated': loadSum,
     presence: (list) => setOnline(new Set(list.map((p) => p.email))),
   });
   const uploadChatFile = async (file) => {
@@ -2317,6 +2400,8 @@ function ChatPage({ me, onUnread }) {
   const myPic = sum.myPicture || me.picture || '';
   const people = sum.people.map((p) => ({ ...p, on: online ? online.has(p.email) : p.online }));
   const groups = sum.groups || [];
+  const invitations = sum.invitations || [];
+  const activeGroup = groups.find((g) => g.id === active);
   const isAdmin = ['admin', 'administrator'].includes(String(me.role || me.type || '').toLowerCase());
   const everyone = [{ name: me.name, picture: myPic }, ...people];
   const lastAt = (k) => sum.last[k]?.at || '';
@@ -2332,13 +2417,24 @@ function ChatPage({ me, onUnread }) {
   const createGroup = async (event) => {
     event.preventDefault();
     const name = groupName.trim();
-    if (!name || !groupMembers.length) return;
+    if (!name || !groupMembers.length || creating) return;
+    setCreating(true);
+    setErr('');
     try {
       const group = await api('/api/chat/groups', 'POST', { name, members: groupMembers });
-      setCreatingGroup(false); setGroupName(''); setGroupMembers([]);
+      setCreatingGroup(false); setGroupName(''); setGroupMembers([]); setMemberPickerOpen(false);
       await loadSum();
-      open(group.id || group.key);
+      open(group.id);
     } catch (e) { setErr(e.message || 'Could not create group.'); }
+    finally { setCreating(false); }
+  };
+  const respondToInvitation = async (invitation, action) => {
+    try {
+      await api(`/api/chat/groups/${invitation.groupId}/respond`, 'POST', { action });
+      await loadSum();
+      if (action === 'accept') open(invitation.id);
+      setErr('');
+    } catch (e) { setErr(e.message || 'Could not update invitation.'); }
   };
   const send = (body) => run('send', async () => {
     const b = String(body ?? text).trim();
@@ -2354,7 +2450,7 @@ function ChatPage({ me, onUnread }) {
     const body = text.trim();
     if (!editing || !body) return;
     try {
-      const updated = await api(`/api/chat/messages/${encodeURIComponent(editing.id)}`, 'PUT', { body });
+      const updated = await api(`/api/chat/messages/${encodeURIComponent(editing.id)}`, 'PATCH', { body });
       setMsgs((cur) => cur?.map((m) => m.id === editing.id ? { ...m, ...updated, body } : m));
       setEditing(null); setText('');
     } catch (e) { setErr(e.message); }
@@ -2396,12 +2492,27 @@ function ChatPage({ me, onUnread }) {
       <aside className={`${showList ? 'flex' : 'hidden'} w-full shrink-0 flex-col border-r border-black/10 md:flex md:w-80`}>
         <div className="p-3">
           <div className="mb-2 flex items-center justify-between"><h2 className="text-base font-bold">Chats</h2>
-            {isAdmin && <button type="button" onClick={() => setCreatingGroup(true)} className="rounded-full bg-[#16a34a] px-3 py-1.5 text-xs font-semibold text-white">Create group</button>}
+            {isAdmin && <button type="button" onClick={() => { setCreatingGroup(true); setMemberPickerOpen(false); }} className="rounded-full bg-[#16a34a] px-3 py-1.5 text-xs font-semibold text-white">Create group</button>}
           </div>
           <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search admins" aria-label="Search admins"
             className="w-full rounded-full bg-[#f0f2f5] px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
         </div>
         <div className="flex-1 overflow-y-auto pb-2">
+          {invitations.length > 0 && (
+            <div className="border-b border-black/10 px-3 py-3">
+              <p className="mb-2 text-[11px] font-bold text-black/55">Group invitations</p>
+              {invitations.map((invitation) => (
+                <div key={invitation.groupId} className="mb-2 rounded-lg border border-[#16a34a]/25 bg-[#16a34a]/5 p-3 last:mb-0">
+                  <b className="block truncate text-xs">{invitation.name}</b>
+                  <span className="text-[11px] text-black/55">Invited by {invitation.createdBy}</span>
+                  <div className="mt-2 flex gap-2">
+                    <button type="button" onClick={() => respondToInvitation(invitation, 'accept')} className="rounded-md bg-[#16a34a] px-3 py-1.5 text-[11px] font-semibold text-white">Accept</button>
+                    <button type="button" onClick={() => respondToInvitation(invitation, 'decline')} className="rounded-md border border-black/15 px-3 py-1.5 text-[11px] font-semibold">Decline</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {groups.filter((g) => match(q, g.name)).map((g) => <Row key={g.id || g.key} k={g.id || g.key} name={g.name} unread={sum.unread[g.id || g.key] || 0} time={sum.last[g.id || g.key]?.at} sub={preview(g.id || g.key)} avatar={<GroupIcon people={g.members || []} />} />)}
           {showGroup && (
             <Row k="all" name="All admins" unread={sum.unread.all || 0} time={sum.last.all?.at}
@@ -2420,14 +2531,29 @@ function ChatPage({ me, onUnread }) {
       {creatingGroup && <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="presentation">
         <form onSubmit={createGroup} className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
           <h3 className="mb-4 text-lg font-bold">Create admin group</h3>
+          {err && <div className="mb-3"><Alert>{err}</Alert></div>}
           <label className="mb-3 block text-sm font-medium">Group name<input autoFocus required value={groupName} onChange={(e) => setGroupName(e.target.value)} className="mt-1 w-full rounded-lg border border-black/15 px-3 py-2" /></label>
-          <label className="mb-4 block text-sm font-medium">Add admins
-            <select multiple value={groupMembers} onChange={(e) => setGroupMembers([...e.target.selectedOptions].map((o) => o.value))} className="mt-1 h-32 w-full rounded-lg border border-black/15 px-3 py-2" aria-label="Select group members">
-              {people.map((p) => <option key={p.email} value={p.email}>{p.name} ({p.email})</option>)}
-            </select>
-            <span className="mt-1 block text-xs font-normal text-black/50">Select any number of admins (use Ctrl or Cmd to select multiple). {groupMembers.length} selected.</span>
-          </label>
-          <div className="flex justify-end gap-2"><button type="button" onClick={() => setCreatingGroup(false)} className="rounded-lg px-4 py-2 text-sm">Cancel</button><button type="submit" disabled={!groupName.trim() || !groupMembers.length} className="rounded-lg bg-[#16a34a] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">Create</button></div>
+          <div className="mb-4">
+            <span className="block text-sm font-medium">Invite admins</span>
+            <button type="button" aria-expanded={memberPickerOpen} aria-controls="group-member-picker" onClick={() => setMemberPickerOpen((open) => !open)}
+              className="mt-1 flex w-full items-center justify-between rounded-lg border border-black/15 px-3 py-2 text-left text-sm">
+              <span>{groupMembers.length ? `${groupMembers.length} admin${groupMembers.length === 1 ? '' : 's'} selected` : 'Choose admins to invite'}</span>
+              <span aria-hidden="true">{memberPickerOpen ? '▴' : '▾'}</span>
+            </button>
+            {memberPickerOpen && (
+              <div id="group-member-picker" role="group" aria-label="Select admins to invite" className="mt-1 max-h-48 overflow-y-auto rounded-lg border border-black/15 bg-white p-1">
+                {people.map((p) => (
+                  <label key={p.email} className="flex cursor-pointer items-center gap-2 rounded px-2 py-2 text-xs hover:bg-black/[0.04]">
+                    <input type="checkbox" checked={groupMembers.includes(p.email)} onChange={() => setGroupMembers((members) => members.includes(p.email) ? members.filter((email) => email !== p.email) : [...members, p.email])} />
+                    <span className="min-w-0"><b className="block truncate">{p.name}</b><span className="block truncate text-black/50">{p.email}</span></span>
+                  </label>
+                ))}
+                {people.length === 0 && <p className="px-2 py-3 text-xs text-black/50">No other admins are available to invite.</p>}
+              </div>
+            )}
+            <span className="mt-1 block text-xs font-normal text-black/50">Invited admins must accept before they can see or use the group. You will be a member as soon as it is created.</span>
+          </div>
+          <div className="flex justify-end gap-2"><button type="button" onClick={() => { setCreatingGroup(false); setGroupName(''); setGroupMembers([]); setMemberPickerOpen(false); setErr(''); }} className="rounded-lg px-4 py-2 text-sm">Cancel</button><button type="submit" disabled={creating || !groupName.trim() || !groupMembers.length} className="rounded-lg bg-[#16a34a] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{creating ? 'Creating…' : 'Create'}</button></div>
         </form>
       </div>}
 
@@ -2435,17 +2561,18 @@ function ChatPage({ me, onUnread }) {
       <section className={`${showList ? 'hidden' : 'flex'} min-w-0 flex-1 flex-col md:flex`}>
         <header className="flex items-center gap-3 border-b border-black/10 px-4 py-3">
           <button type="button" aria-label="Back to chats" onClick={() => setShowList(true)} className="grid h-8 w-8 place-items-center rounded-full text-[#16a34a] hover:bg-black/5 md:hidden"><ChevronLeft className="h-5 w-5" aria-hidden="true" /></button>
-          {active === 'all'
-            ? <GroupIcon people={everyone} className="h-10 w-10" />
+          {active === 'all' || activeGroup
+            ? <GroupIcon people={activeGroup?.members || everyone} className="h-10 w-10" />
             : <Presence on={!!other?.on}><Avatar name={other?.name || active} picture={other?.picture} className="h-10 w-10 text-xs" /></Presence>}
           <div className="min-w-0">
-            <b className="block truncate text-sm">{active === 'all' ? 'All admins' : other?.name || active}</b>
+            <b className="block truncate text-sm">{active === 'all' ? 'All admins' : activeGroup?.name || other?.name || active}</b>
             <span className="block truncate text-[11px] text-black/50">
-              {active === 'all' ? `${people.length + 1} admins · ${onlineCount} online`
+              {activeGroup ? `${activeGroup.members.length} members`
+                : active === 'all' ? `${people.length + 1} admins · ${onlineCount} online`
                 : other?.on ? 'Active now' : other?.lastSeen ? `Active ${ago(other.lastSeen)}` : 'Offline'}
             </span>
           </div>
-          {active !== 'all' && <span className="ml-auto flex gap-1">
+          {active !== 'all' && !activeGroup && <span className="ml-auto flex gap-1">
             <button type="button" aria-label="Audio call" title="Audio call" disabled={!!call || !other}
               onClick={() => start({ email: other.email, name: other.name, picture: other.picture }, 'audio')}
               className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5 disabled:opacity-40"><Phone className="h-4 w-4" /></button>
@@ -2461,8 +2588,8 @@ function ChatPage({ me, onUnread }) {
           {msgs && msgs.length === 0 && (
             <div className="grid h-full place-items-center text-center">
               <div>
-                {active === 'all' ? <GroupIcon people={everyone} className="mx-auto h-16 w-16" /> : <Avatar name={other?.name || active} picture={other?.picture} className="mx-auto h-16 w-16 text-lg" />}
-                <p className="mt-3 text-sm font-semibold">{active === 'all' ? 'All admins' : other?.name}</p>
+                {active === 'all' || activeGroup ? <GroupIcon people={activeGroup?.members || everyone} className="mx-auto h-16 w-16" /> : <Avatar name={other?.name || active} picture={other?.picture} className="mx-auto h-16 w-16 text-lg" />}
+                <p className="mt-3 text-sm font-semibold">{active === 'all' ? 'All admins' : activeGroup?.name || other?.name}</p>
                 <p className="mt-1 text-xs text-black/50">No messages yet. Say hello.</p>
               </div>
             </div>
@@ -2487,7 +2614,7 @@ function ChatPage({ me, onUnread }) {
                     </span>
                   )}
                   <div className={`flex max-w-[78%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
-                    {!mine && first && active === 'all' && <span className="mb-0.5 ml-3 text-[11px] font-medium text-black/50">{m.fromName}</span>}
+                    {!mine && first && (active === 'all' || activeGroup) && <span className="mb-0.5 ml-3 text-[11px] font-medium text-black/50">{m.fromName}</span>}
                     <div title={`${dayHead(m.at)} ${clock(m.at)}`}
                       className={`whitespace-pre-wrap break-words rounded-[18px] px-3.5 py-2 text-[13px] leading-snug ${corner} ${mine ? 'bg-[#16a34a] text-white' : 'bg-white text-[#111827] shadow-sm'}`}>
                       {m.deleted ? 'Message deleted' : <>
@@ -2908,7 +3035,7 @@ function Profile({ onChanged }) {
 /* 8. DASHBOARD SHELL and ROOT                                         */
 /* ================================================================== */
 
-const NAV_ICON = { 'My labs': CalendarDays, Bookings: CalendarCheck2, 'Lost & Found': PackageSearch, Profile: UserRound, Overview: LayoutDashboard, Labs: FlaskConical, Schedule: CalendarClock, People: UsersRound, Chat: MessageCircle, Settings: Settings2 };
+const NAV_ICON = { 'My labs': CalendarDays, Bookings: CalendarCheck2, 'Lost & Found': PackageSearch, Profile: UserRound, Overview: LayoutDashboard, History: CalendarClock, Labs: FlaskConical, Schedule: CalendarClock, People: UsersRound, Chat: MessageCircle, Settings: Settings2 };
 
 const NavBadge = ({ n }) => (n > 0 ? <span className="ml-auto grid h-5 min-w-[20px] place-items-center rounded-full bg-[#ff4500] px-1.5 text-[10px] font-bold text-white">{n > 99 ? '99+' : n}</span> : null);
 /* ================================================================== */
@@ -3265,6 +3392,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, da
   else if (page === 'Lost & Found') body = <TrendsManager user={user} opts={opts} />;
   else if (isAdmin) {
     if (page === 'Overview') body = <OverviewPage me={user} />;
+    else if (page === 'History') body = <HistoryPage />;
     else if (page === 'Labs') body = labView
       ? <LabDetail labId={labView.id} day={labView.day} onBack={() => setLabView(null)} />
       : <LabsPage onOpenLab={(id, day, name) => setLabView({ id, day, name })} />;
