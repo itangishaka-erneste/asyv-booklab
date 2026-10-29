@@ -1291,8 +1291,8 @@ function Booker({ user, opts, intent, onIntentDone }) {
                 </div>
               </div>
               {m ? <Badge s={statusKey(m, s)}>{STATUS_LABEL[statusKey(m, s)]}</Badge> : (
-                <ActBtn c={s.left < 1 ? 'bl' : 'ink'} busy={busy === 'a' + s.id} doing="Sending…" label={past ? 'Closed' : s.left < 1 ? 'Join queue' : 'Apply'}
-                  disabled={past || s.exclusive || alreadyBookedToday} onClick={() => apply(s.id)} />
+                <ActBtn c="ink" busy={busy === 'a' + s.id} doing="Sending…" label={past ? 'Closed' : s.left < 1 ? 'Full' : 'Apply'}
+                  disabled={past || s.exclusive || alreadyBookedToday || s.left < 1} onClick={() => apply(s.id)} />
               )}
             </div>
           );
@@ -2213,9 +2213,6 @@ function ChatPage({ me, onUnread }) {
   const [q, setQ] = useState('');
   const [online, setOnline] = useState(null);
   const [typing, setTyping] = useState(null);
-  const [chatAlerts, setChatAlerts] = useState(() => localStorage.getItem('chat_alerts') === 'on');
-  const chatAlertsRef = useRef(chatAlerts);
-  chatAlertsRef.current = chatAlerts;
   const [showList, setShowList] = useState(true);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [groupName, setGroupName] = useState('');
@@ -2238,29 +2235,11 @@ function ChatPage({ me, onUnread }) {
       const oscillator = ctx.createOscillator();
       const gain = ctx.createGain();
       oscillator.frequency.value = 660;
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.025);
-      gain.gain.setValueAtTime(0.07, ctx.currentTime + 0.16);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.22);
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime + 0.28);
-      gain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.31);
-      gain.gain.setValueAtTime(0.07, ctx.currentTime + 0.43);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
       oscillator.connect(gain); gain.connect(ctx.destination);
-      oscillator.start(); oscillator.stop(ctx.currentTime + 0.5);
+      oscillator.start(); oscillator.stop(ctx.currentTime + 0.12);
     } catch { /* Audio may not be available in this browser. */ }
-  };
-  const enableChatAlerts = async () => {
-    let permission = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
-    if (permission === 'default') permission = await Notification.requestPermission();
-    const enabled = permission === 'granted' || permission === 'unsupported';
-    setChatAlerts(enabled);
-    localStorage.setItem('chat_alerts', enabled ? 'on' : 'off');
-    if (enabled) playChatSound(); // User gesture unlocks audio in browsers that require it.
-  };
-  const notifyChat = (title, body) => {
-    if (!chatAlerts || document.visibilityState === 'visible' || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    try { new Notification(title, { body, tag: 'booklab-chat' }); } catch { /* Notifications may be blocked by the browser. */ }
   };
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -2283,24 +2262,16 @@ function ChatPage({ me, onUnread }) {
   useLive({
     'chat:message': (m) => {
       const key = m.to === 'all' ? 'all' : (m.fromEmail === me.email ? m.to : m.fromEmail);
-      if (m.fromEmail !== me.email) {
-        if (chatAlertsRef.current) playChatSound();
-        notifyChat(m.fromName || 'New message', m.body || 'Sent an attachment');
-      }
       if (key === activeRef.current) {
-        if (m.fromEmail !== me.email) {
-          // Incoming sound/notification is handled above, including other chats.
-        }
+        if (m.fromEmail !== me.email) playChatSound();
         setMsgs((cur) => (cur && !cur.some((x) => x.id === m.id) ? [...cur, m] : cur));
         if (m.fromEmail !== me.email) { setTyping(null); markRead(key); } else loadSum();
       } else loadSum();
     },
     'chat:typing': (t) => {
       const key = t.to === 'all' ? 'all' : t.from;
-      if (t.from === me.email) return;
-      if (chatAlertsRef.current) playChatSound();
-      notifyChat(t.name || 'Chat', ' is typing…');
-      if (key !== activeRef.current) return;
+      if (key !== activeRef.current || t.from === me.email) return;
+      playChatSound();
       setTyping(t.name);
       clearTimeout(typingTimer.current);
       typingTimer.current = setTimeout(() => setTyping(null), 3000);
@@ -2397,6 +2368,7 @@ function ChatPage({ me, onUnread }) {
   };
   const onType = (v) => {
     setText(v);
+    if (v.length > text.length) playChatSound();
     const now = Date.now();
     if (v && now - lastType.current > 2000) { lastType.current = now; liveSocket().emit('chat:typing', activeRef.current); }
   };
@@ -2449,7 +2421,12 @@ function ChatPage({ me, onUnread }) {
         <form onSubmit={createGroup} className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
           <h3 className="mb-4 text-lg font-bold">Create admin group</h3>
           <label className="mb-3 block text-sm font-medium">Group name<input autoFocus required value={groupName} onChange={(e) => setGroupName(e.target.value)} className="mt-1 w-full rounded-lg border border-black/15 px-3 py-2" /></label>
-          <label className="mb-4 block text-sm font-medium">Add admins<select multiple value={groupMembers} onChange={(e) => setGroupMembers([...e.target.selectedOptions].map((o) => o.value))} className="mt-1 h-32 w-full rounded-lg border border-black/15 px-3 py-2">{people.map((p) => <option key={p.email} value={p.email}>{p.name} ({p.email})</option>)}</select></label>
+          <label className="mb-4 block text-sm font-medium">Add admins
+            <select multiple value={groupMembers} onChange={(e) => setGroupMembers([...e.target.selectedOptions].map((o) => o.value))} className="mt-1 h-32 w-full rounded-lg border border-black/15 px-3 py-2" aria-label="Select group members">
+              {people.map((p) => <option key={p.email} value={p.email}>{p.name} ({p.email})</option>)}
+            </select>
+            <span className="mt-1 block text-xs font-normal text-black/50">Select any number of admins (use Ctrl or Cmd to select multiple). {groupMembers.length} selected.</span>
+          </label>
           <div className="flex justify-end gap-2"><button type="button" onClick={() => setCreatingGroup(false)} className="rounded-lg px-4 py-2 text-sm">Cancel</button><button type="submit" disabled={!groupName.trim() || !groupMembers.length} className="rounded-lg bg-[#16a34a] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">Create</button></div>
         </form>
       </div>}
@@ -2461,18 +2438,14 @@ function ChatPage({ me, onUnread }) {
           {active === 'all'
             ? <GroupIcon people={everyone} className="h-10 w-10" />
             : <Presence on={!!other?.on}><Avatar name={other?.name || active} picture={other?.picture} className="h-10 w-10 text-xs" /></Presence>}
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0">
             <b className="block truncate text-sm">{active === 'all' ? 'All admins' : other?.name || active}</b>
             <span className="block truncate text-[11px] text-black/50">
               {active === 'all' ? `${people.length + 1} admins · ${onlineCount} online`
                 : other?.on ? 'Active now' : other?.lastSeen ? `Active ${ago(other.lastSeen)}` : 'Offline'}
             </span>
           </div>
-          <button type="button" onClick={enableChatAlerts} title={chatAlerts ? 'Chat alerts enabled' : 'Enable chat alerts'}
-            className={`rounded-full px-3 py-1.5 text-[11px] font-semibold ${chatAlerts ? 'bg-[#16a34a]/10 text-[#15803d]' : 'bg-black/5 text-black/60'}`}>
-            {chatAlerts ? 'Alerts on' : 'Enable alerts'}
-          </button>
-          {active !== 'all' && <span className="flex gap-1">
+          {active !== 'all' && <span className="ml-auto flex gap-1">
             <button type="button" aria-label="Audio call" title="Audio call" disabled={!!call || !other}
               onClick={() => start({ email: other.email, name: other.name, picture: other.picture }, 'audio')}
               className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5 disabled:opacity-40"><Phone className="h-4 w-4" /></button>
