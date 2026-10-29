@@ -2213,6 +2213,9 @@ function ChatPage({ me, onUnread }) {
   const [q, setQ] = useState('');
   const [online, setOnline] = useState(null);
   const [typing, setTyping] = useState(null);
+  const [chatAlerts, setChatAlerts] = useState(() => localStorage.getItem('chat_alerts') === 'on');
+  const chatAlertsRef = useRef(chatAlerts);
+  chatAlertsRef.current = chatAlerts;
   const [showList, setShowList] = useState(true);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [groupName, setGroupName] = useState('');
@@ -2235,11 +2238,29 @@ function ChatPage({ me, onUnread }) {
       const oscillator = ctx.createOscillator();
       const gain = ctx.createGain();
       oscillator.frequency.value = 660;
-      gain.gain.setValueAtTime(0.06, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.025);
+      gain.gain.setValueAtTime(0.07, ctx.currentTime + 0.16);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.22);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime + 0.28);
+      gain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.31);
+      gain.gain.setValueAtTime(0.07, ctx.currentTime + 0.43);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
       oscillator.connect(gain); gain.connect(ctx.destination);
-      oscillator.start(); oscillator.stop(ctx.currentTime + 0.12);
+      oscillator.start(); oscillator.stop(ctx.currentTime + 0.5);
     } catch { /* Audio may not be available in this browser. */ }
+  };
+  const enableChatAlerts = async () => {
+    let permission = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+    if (permission === 'default') permission = await Notification.requestPermission();
+    const enabled = permission === 'granted' || permission === 'unsupported';
+    setChatAlerts(enabled);
+    localStorage.setItem('chat_alerts', enabled ? 'on' : 'off');
+    if (enabled) playChatSound(); // User gesture unlocks audio in browsers that require it.
+  };
+  const notifyChat = (title, body) => {
+    if (!chatAlerts || document.visibilityState === 'visible' || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try { new Notification(title, { body, tag: 'booklab-chat' }); } catch { /* Notifications may be blocked by the browser. */ }
   };
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -2262,16 +2283,24 @@ function ChatPage({ me, onUnread }) {
   useLive({
     'chat:message': (m) => {
       const key = m.to === 'all' ? 'all' : (m.fromEmail === me.email ? m.to : m.fromEmail);
+      if (m.fromEmail !== me.email) {
+        if (chatAlertsRef.current) playChatSound();
+        notifyChat(m.fromName || 'New message', m.body || 'Sent an attachment');
+      }
       if (key === activeRef.current) {
-        if (m.fromEmail !== me.email) playChatSound();
+        if (m.fromEmail !== me.email) {
+          // Incoming sound/notification is handled above, including other chats.
+        }
         setMsgs((cur) => (cur && !cur.some((x) => x.id === m.id) ? [...cur, m] : cur));
         if (m.fromEmail !== me.email) { setTyping(null); markRead(key); } else loadSum();
       } else loadSum();
     },
     'chat:typing': (t) => {
       const key = t.to === 'all' ? 'all' : t.from;
-      if (key !== activeRef.current || t.from === me.email) return;
-      playChatSound();
+      if (t.from === me.email) return;
+      if (chatAlertsRef.current) playChatSound();
+      notifyChat(t.name || 'Chat', ' is typing…');
+      if (key !== activeRef.current) return;
       setTyping(t.name);
       clearTimeout(typingTimer.current);
       typingTimer.current = setTimeout(() => setTyping(null), 3000);
@@ -2432,14 +2461,18 @@ function ChatPage({ me, onUnread }) {
           {active === 'all'
             ? <GroupIcon people={everyone} className="h-10 w-10" />
             : <Presence on={!!other?.on}><Avatar name={other?.name || active} picture={other?.picture} className="h-10 w-10 text-xs" /></Presence>}
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <b className="block truncate text-sm">{active === 'all' ? 'All admins' : other?.name || active}</b>
             <span className="block truncate text-[11px] text-black/50">
               {active === 'all' ? `${people.length + 1} admins · ${onlineCount} online`
                 : other?.on ? 'Active now' : other?.lastSeen ? `Active ${ago(other.lastSeen)}` : 'Offline'}
             </span>
           </div>
-          {active !== 'all' && <span className="ml-auto flex gap-1">
+          <button type="button" onClick={enableChatAlerts} title={chatAlerts ? 'Chat alerts enabled' : 'Enable chat alerts'}
+            className={`rounded-full px-3 py-1.5 text-[11px] font-semibold ${chatAlerts ? 'bg-[#16a34a]/10 text-[#15803d]' : 'bg-black/5 text-black/60'}`}>
+            {chatAlerts ? 'Alerts on' : 'Enable alerts'}
+          </button>
+          {active !== 'all' && <span className="flex gap-1">
             <button type="button" aria-label="Audio call" title="Audio call" disabled={!!call || !other}
               onClick={() => start({ email: other.email, name: other.name, picture: other.picture }, 'audio')}
               className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5 disabled:opacity-40"><Phone className="h-4 w-4" /></button>
