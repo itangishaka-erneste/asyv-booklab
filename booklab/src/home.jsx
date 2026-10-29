@@ -2180,11 +2180,32 @@ const Presence = ({ on, children }) => (
   </span>
 );
 
+// Display supported media inline, with a download link for other file types.
+function Attachment({ m }) {
+  const url = chatFileUrl(m.fileId);
+  const downloadUrl = chatFileUrl(m.fileId, true);
+  const mime = m.fileMime || '';
+  if (mime.startsWith('image/')) return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={m.fileName || 'Photo'} className="mb-1 max-h-64 max-w-full rounded-[12px] object-cover" /></a>;
+  if (mime.startsWith('video/')) return <video src={url} controls preload="metadata" className="mb-1 max-h-64 max-w-full rounded-[12px] bg-black" />;
+  if (mime.startsWith('audio/')) return <audio src={url} controls preload="metadata" className="mb-1 h-10 w-60 max-w-full" />;
+  return (
+    <span className="mb-1 flex items-center gap-3 rounded-[12px] bg-black/5 p-2.5">
+      <FileIcon className="h-7 w-7 shrink-0" />
+      <span className="min-w-0 text-left"><b className="block max-w-[170px] truncate text-xs">{m.fileName || 'File'}</b><span className="text-[10px] opacity-75">{fileSize(m.fileSize || 0)}</span></span>
+      <span className="flex flex-col gap-0.5 text-[11px] font-semibold underline">
+        {mime === 'application/pdf' && <a href={url} target="_blank" rel="noreferrer">Open</a>}
+        <a href={downloadUrl}>Download</a>
+      </span>
+    </span>
+  );
+}
+
 function ChatPage({ me, onUnread }) {
   const [sum, setSum] = useState({ people: [], unread: {}, last: {}, myPicture: '' });
   const [active, setActive] = useState('all');
   const [msgs, setMsgs] = useState(null);
   const [text, setText] = useState('');
+  const [editing, setEditing] = useState(null);
   const [q, setQ] = useState('');
   const [online, setOnline] = useState(null);
   const [typing, setTyping] = useState(null);
@@ -2196,6 +2217,22 @@ function ChatPage({ me, onUnread }) {
   const fileInput = useRef(null);
   const lastType = useRef(0);
   const typingTimer = useRef(null);
+  const soundRef = useRef(null);
+  const playChatSound = () => {
+    try {
+      const Audio = window.AudioContext || window.webkitAudioContext;
+      if (!Audio) return;
+      const ctx = soundRef.current || (soundRef.current = new Audio());
+      if (ctx.state === 'suspended') ctx.resume();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.frequency.value = 660;
+      gain.gain.setValueAtTime(0.06, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      oscillator.connect(gain); gain.connect(ctx.destination);
+      oscillator.start(); oscillator.stop(ctx.currentTime + 0.12);
+    } catch { /* Audio may not be available in this browser. */ }
+  };
   const activeRef = useRef(active);
   activeRef.current = active;
 
@@ -2218,6 +2255,7 @@ function ChatPage({ me, onUnread }) {
     'chat:message': (m) => {
       const key = m.to === 'all' ? 'all' : (m.fromEmail === me.email ? m.to : m.fromEmail);
       if (key === activeRef.current) {
+        if (m.fromEmail !== me.email) playChatSound();
         setMsgs((cur) => (cur && !cur.some((x) => x.id === m.id) ? [...cur, m] : cur));
         if (m.fromEmail !== me.email) { setTyping(null); markRead(key); } else loadSum();
       } else loadSum();
@@ -2225,6 +2263,7 @@ function ChatPage({ me, onUnread }) {
     'chat:typing': (t) => {
       const key = t.to === 'all' ? 'all' : t.from;
       if (key !== activeRef.current || t.from === me.email) return;
+      playChatSound();
       setTyping(t.name);
       clearTimeout(typingTimer.current);
       typingTimer.current = setTimeout(() => setTyping(null), 3000);
@@ -2269,6 +2308,22 @@ function ChatPage({ me, onUnread }) {
       loadSum();
     } catch (e) { setErr(e.message); }
   });
+  const saveEdit = async () => {
+    const body = text.trim();
+    if (!editing || !body) return;
+    try {
+      const updated = await api(`/api/chat/messages/${encodeURIComponent(editing.id)}`, 'PUT', { body });
+      setMsgs((cur) => cur?.map((m) => m.id === editing.id ? { ...m, ...updated, body } : m));
+      setEditing(null); setText('');
+    } catch (e) { setErr(e.message); }
+  };
+  const deleteMessage = async (message) => {
+    if (!window.confirm('Delete this message?')) return;
+    try {
+      await api(`/api/chat/messages/${encodeURIComponent(message.id)}`, 'DELETE');
+      setMsgs((cur) => cur?.map((m) => m.id === message.id ? { ...m, deleted: true } : m));
+    } catch (e) { setErr(e.message); }
+  };
   const onType = (v) => {
     setText(v);
     const now = Date.now();
@@ -2379,14 +2434,16 @@ function ChatPage({ me, onUnread }) {
                         {m.replyTo && m.replyBody && <div className={`mb-1 border-l-2 px-2 text-[11px] opacity-75 ${mine ? 'border-white' : 'border-[#16a34a]'}`}>
                           <b>{m.replyName || 'Reply'}</b><div className="truncate">{m.replyBody}</div>
                         </div>}
-                        {m.fileId && <a href={chatFileUrl(m.fileId, true)} target="_blank" rel="noreferrer" className="underline">
-                          {m.fileName || 'Download attachment'} · {fileSize(m.fileSize || 0)}
-                        </a>}
+                        {m.fileId && <Attachment m={m} />}
                         {m.fileId && m.body ? <><br />{m.body}</> : !m.fileId && m.body}
                         {m.forwarded && <span className="ml-1 text-[10px] opacity-70">Forwarded</span>}
                         {m.editedAt && <span className="ml-1 text-[10px] opacity-70">(edited)</span>}
                       </>}
                     </div>
+                    {mine && !m.deleted && <div className="mt-1 flex gap-2 text-[10px]">
+                      {m.body && !m.fileId && <button type="button" className="underline" onClick={() => { setEditing(m); setText(m.body); }}>Edit</button>}
+                      <button type="button" className="underline" onClick={() => deleteMessage(m)}>Delete</button>
+                    </div>}
                     {last && <span className="mx-2 mt-0.5 text-[10px] text-black/40">{clock(m.at)}</span>}
                   </div>
                   {mine && (
@@ -2410,13 +2467,14 @@ function ChatPage({ me, onUnread }) {
         </div>
 
         <footer className="relative border-t border-black/10 bg-white p-3">
+          {editing && <div className="mb-2 flex items-center justify-between text-xs text-black/60"><span>Editing message</span><button type="button" onClick={() => { setEditing(null); setText(''); }} className="underline">Cancel</button></div>}
           <div className="flex items-end gap-2">
-            <input ref={fileInput} type="file" className="hidden" onChange={(e) => { uploadChatFile(e.target.files?.[0]); e.target.value = ''; }} />
+            <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => { [...(e.target.files || [])].forEach(uploadChatFile); e.target.value = ''; }} />
             <button type="button" aria-label="Attach file" title="Attach file" onClick={() => fileInput.current?.click()} className="grid h-10 w-10 shrink-0 place-items-center rounded-full hover:bg-black/5"><Paperclip className="h-4 w-4" /></button>
             <textarea rows={1} value={text} onChange={(e) => onType(e.target.value)} placeholder="Write a message"
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
               className="max-h-28 min-h-[40px] flex-1 resize-none rounded-[20px] bg-[#f0f2f5] px-4 py-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
-            <button type="button" aria-label="Send" disabled={busy === 'send' || !text.trim()} onClick={() => send()}
+            <button type="button" aria-label={editing ? 'Save edit' : 'Send'} disabled={busy === 'send' || !text.trim()} onClick={() => editing ? saveEdit() : send()}
               className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#16a34a] text-white hover:opacity-90 disabled:opacity-40"><Send className="h-4 w-4" aria-hidden="true" /></button>
           </div>
         </footer>
