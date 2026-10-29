@@ -2218,6 +2218,7 @@ function ChatPage({ me, onUnread }) {
   const lastType = useRef(0);
   const typingTimer = useRef(null);
   const soundRef = useRef(null);
+  const recorderRef = useRef(null);
   const playChatSound = () => {
     try {
       const Audio = window.AudioContext || window.webkitAudioContext;
@@ -2283,6 +2284,27 @@ function ChatPage({ me, onUnread }) {
       setMsgs((cur) => cur && !cur.some((x) => x.id === message.id) ? [...cur, message] : cur);
       loadSum();
     } catch (e) { setErr(e.message || 'File upload failed.'); }
+  };
+
+  const toggleVoiceRecording = async () => {
+    if (recorderRef.current?.state === 'recording') {
+      recorderRef.current.stop();
+      return;
+    }
+    try {
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw new Error('Voice recording is not supported in this browser.');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      const chunks = [];
+      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      recorder.onstop = () => {
+        const file = new File(chunks, `voice-message-${Date.now()}.webm`, { type: recorder.mimeType || 'audio/webm' });
+        stream.getTracks().forEach((track) => track.stop());
+        if (file.size) uploadChatFile(file);
+      };
+      recorder.start();
+    } catch (e) { setErr(e.message || 'Could not start voice recording.'); }
   };
 
   const myPic = sum.myPicture || me.picture || '';
@@ -2441,8 +2463,8 @@ function ChatPage({ me, onUnread }) {
                       </>}
                     </div>
                     {mine && !m.deleted && <div className="mt-1 flex gap-2 text-[10px]">
-                      {m.body && !m.fileId && <button type="button" className="underline" onClick={() => { setEditing(m); setText(m.body); }}>Edit</button>}
-                      <button type="button" className="underline" onClick={() => deleteMessage(m)}>Delete</button>
+                      {m.body && !m.fileId && <button type="button" aria-label="Edit message" title="Edit message" className="rounded p-1 hover:bg-black/10" onClick={() => { setEditing(m); setText(m.body); }}><Pencil className="h-3.5 w-3.5" /></button>}
+                      <button type="button" aria-label="Delete message" title="Delete message" className="rounded p-1 hover:bg-black/10" onClick={() => deleteMessage(m)}><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>}
                     {last && <span className="mx-2 mt-0.5 text-[10px] text-black/40">{clock(m.at)}</span>}
                   </div>
@@ -2471,6 +2493,7 @@ function ChatPage({ me, onUnread }) {
           <div className="flex items-end gap-2">
             <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => { [...(e.target.files || [])].forEach(uploadChatFile); e.target.value = ''; }} />
             <button type="button" aria-label="Attach file" title="Attach file" onClick={() => fileInput.current?.click()} className="grid h-10 w-10 shrink-0 place-items-center rounded-full hover:bg-black/5"><Paperclip className="h-4 w-4" /></button>
+            <button type="button" aria-label="Record voice message" title="Record voice message" onClick={toggleVoiceRecording} className="grid h-10 w-10 shrink-0 place-items-center rounded-full hover:bg-black/5"><Mic className="h-4 w-4" /></button>
             <textarea rows={1} value={text} onChange={(e) => onType(e.target.value)} placeholder="Write a message"
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
               className="max-h-28 min-h-[40px] flex-1 resize-none rounded-[20px] bg-[#f0f2f5] px-4 py-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
