@@ -3060,21 +3060,15 @@ function CallProvider({ me, children }) {
   const iceQueue = useRef([]);
   const timer = useRef(null);
   const noticeTimer = useRef(null);
-  const ringContext = useRef(null);
-  const ringTimer = useRef(null);
   const ringPlayer = useRef(null);
 
   const stopRing = () => {
-    clearInterval(ringTimer.current);
-    ringTimer.current = null;
     ringPlayer.current?.remove();
     ringPlayer.current = null;
-    ringContext.current?.close().catch(() => {});
-    ringContext.current = null;
   };
   const startRing = () => {
     stopRing();
-    // Use the provided YouTube clip as the ringtone during incoming and outgoing ringing.
+    // Use the requested YouTube clip as the only ringtone for incoming and outgoing calls.
     const player = document.createElement('iframe');
     player.src = 'https://www.youtube-nocookie.com/embed/oui7g5frCL0?autoplay=1&controls=0&loop=1&playlist=oui7g5frCL0';
     player.title = 'Call ringtone';
@@ -3083,25 +3077,6 @@ function CallProvider({ me, children }) {
     Object.assign(player.style, { position: 'fixed', width: '1px', height: '1px', opacity: '0', pointerEvents: 'none' });
     document.body.appendChild(player);
     ringPlayer.current = player;
-    const AudioContext_ = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext_) return;
-    const ctx = new AudioContext_();
-    ringContext.current = ctx;
-    ctx.resume().catch(() => {});
-    const tone = () => {
-      if (ctx.state === 'closed') return;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = 440;
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.04);
-      gain.gain.setValueAtTime(0.12, ctx.currentTime + 0.35);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.start(); osc.stop(ctx.currentTime + 0.42);
-    };
-    tone();
-    ringTimer.current = setInterval(tone, 1800);
   };
 
   const say = (t) => {
