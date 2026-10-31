@@ -82,6 +82,7 @@ const setToken = (t) => {
   if (t) localStorage.setItem('lms_token', t);
   else localStorage.removeItem('lms_token');
 };
+const pushKeyBytes = (key) => Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
 
 async function api(path, method = 'GET', body) {
   const res = await fetch(BASE + path, {
@@ -3007,10 +3008,29 @@ function Profile({ onChanged }) {
   const [p, setP] = useState(null);
   const [pic, setPic] = useState('');
   const [phone, setPhone] = useState('');
+  const [pushConfig, setPushConfig] = useState(null);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushNote, setPushNote] = useState(null);
   const [note, setNote] = useState(null);
   const { busy, run } = useBusy();
   const load = () => api('/api/profile').then((d) => { setP(d); setPic(d.picture || ''); setPhone(d.phone || ''); }).catch((e) => setNote({ ok: false, text: e.message }));
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (p?.role !== 'admin') return;
+    let active = true;
+    api('/api/push/config').then((config) => {
+      if (active) setPushConfig(config);
+    }).catch((e) => {
+      if (active) setPushNote({ ok: false, text: e.message });
+    });
+    navigator.serviceWorker?.getRegistration('/').then((registration) =>
+      registration?.pushManager?.getSubscription()).then((subscription) => {
+      if (active) setPushEnabled(!!subscription);
+    }).catch((e) => {
+      if (active) setPushNote({ ok: false, text: e.message });
+    });
+    return () => { active = false; };
+  }, [p?.role]);
   if (!p) return note ? <Alert>{note.text}</Alert> : <Loader full label="Loading your profile" />;
   const save = () => run('save', async () => {
     setNote(null);
@@ -3037,6 +3057,51 @@ function Profile({ onChanged }) {
         </dl>
       </Card>
       <div className="space-y-6">
+        {p.role === 'admin' && (
+          <Card t="Call notifications" sub="Enable browser notifications on this device to receive incoming admin calls when the app is closed.">
+            {pushNote && <div className="mb-4"><Alert ok={pushNote.ok}>{pushNote.text}</Alert></div>}
+            {!pushConfig?.enabled
+              ? <Alert>Push notifications are not configured on the server yet.</Alert>
+              : (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="max-w-xl text-xs text-black/60">
+                    This device must be online and your browser must allow notifications. Tap an incoming call notification, then answer in BookLab.
+                  </p>
+                  <ActBtn c={pushEnabled ? 'w' : 'bl'} busy={busy === 'push'} doing="Updating…"
+                    label={pushEnabled ? 'Disable on this device' : 'Enable on this device'}
+                    onClick={() => run('push', async () => {
+                      setPushNote(null);
+                      try {
+                        if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+                          throw new Error('Push notifications are not supported by this browser.');
+                        }
+                        const registration = await navigator.serviceWorker.register('/service-worker.js');
+                        const existing = await registration.pushManager.getSubscription();
+                        if (pushEnabled && existing) {
+                          await api('/api/push/subscriptions', 'DELETE', { endpoint: existing.endpoint });
+                          await existing.unsubscribe();
+                          setPushEnabled(false);
+                          setPushNote({ ok: true, text: 'Call notifications are disabled on this device.' });
+                          return;
+                        }
+                        let subscription = existing;
+                        if (!subscription) {
+                          const permission = await Notification.requestPermission();
+                          if (permission !== 'granted') throw new Error('Allow browser notifications to receive calls on this device.');
+                          subscription = await registration.pushManager.subscribe({
+                            userVisibleOnly: true,
+                            applicationServerKey: pushKeyBytes(pushConfig.publicKey),
+                          });
+                        }
+                        await api('/api/push/subscriptions', 'POST', subscription.toJSON());
+                        setPushEnabled(true);
+                        setPushNote({ ok: true, text: 'This device can now receive incoming admin call notifications.' });
+                      } catch (e) { setPushNote({ ok: false, text: e.message }); }
+                    })} />
+                </div>
+              )}
+          </Card>
+        )}
         <Card t="Edit my profile" sub="Change your photo and phone number. Your name and email are set by the school.">
           {note && <div className="mb-4"><Alert ok={note.ok}>{note.text}</Alert></div>}
           <div className="space-y-4">
@@ -3086,6 +3151,8 @@ function CallProvider({ me, children }) {
   const [remote, setRemote] = useState(null);
   const [notice, setNotice] = useState('');
   const callRef = useRef(null);
+  const incomingRef = useRef(null);
+  const receiveInviteRef = useRef(null);
   const pcRef = useRef(null);
   const streamRef = useRef(null);
   const iceQueue = useRef([]);
@@ -3117,6 +3184,22 @@ function CallProvider({ me, children }) {
   };
   const begin = (c) => { callRef.current = c; setCall(c); };
   const stopTimer = () => clearTimeout(timer.current);
+  const updateIncoming = (invite) => { incomingRef.current = invite; setIncoming(invite); };
+  const receiveInvite = (invite) => {
+    if (callRef.current || incomingRef.current) {
+      if (incomingRef.current?.callId !== invite.callId) emitCall('call:reject', { to: invite.from, callId: invite.callId });
+      return;
+    }
+    updateIncoming(invite);
+    startRing();
+    stopTimer();
+    timer.current = setTimeout(() => {
+      stopRing();
+      emitCall('call:reject', { to: invite.from, callId: invite.callId });
+      updateIncoming(null);
+    }, 30000);
+  };
+  receiveInviteRef.current = receiveInvite;
 
   const reset = () => {
     stopTimer();
@@ -3127,7 +3210,7 @@ function CallProvider({ me, children }) {
     pcRef.current = null;
     iceQueue.current = [];
     callRef.current = null;
-    setLocal(null); setRemote(null); setCall(null); setIncoming(null);
+    setLocal(null); setRemote(null); setCall(null); updateIncoming(null);
   };
 
   // notify = true tells the other admin that the call is over.
@@ -3191,7 +3274,7 @@ function CallProvider({ me, children }) {
     if (!inc) return;
     stopTimer();
     stopRing();
-    setIncoming(null);
+    updateIncoming(null);
     try {
       const s = await getMedia(inc.kind);
       const pc = makePc(inc.from, inc.callId);
@@ -3213,23 +3296,13 @@ function CallProvider({ me, children }) {
     stopTimer();
     stopRing();
     emitCall('call:reject', { to: incoming.from, callId: incoming.callId });
-    setIncoming(null);
+    updateIncoming(null);
   };
 
   useLive({
     presence: (list) => setOnline(list.filter((p) => p.email !== me.email)),
 
-    'call:invite': (p) => {
-      if (callRef.current) return emitCall('call:reject', { to: p.from, callId: p.callId });
-      setIncoming(p);
-      startRing();
-      stopTimer();
-      timer.current = setTimeout(() => {
-        stopRing();
-        emitCall('call:reject', { to: p.from, callId: p.callId });
-        setIncoming(null);
-      }, 30000);
-    },
+    'call:invite': receiveInvite,
 
     'call:unavailable': (p) => {
       if (callRef.current?.id === p.callId) hangUp(`${callRef.current.peer.name} is not online.`, false);
@@ -3241,7 +3314,7 @@ function CallProvider({ me, children }) {
 
     'call:end': (p) => {
       stopRing();
-      setIncoming((cur) => (cur?.callId === p.callId ? null : cur));
+      if (incomingRef.current?.callId === p.callId) updateIncoming(null);
       if (callRef.current?.id === p.callId) hangUp('The call ended.', false);
     },
 
@@ -3292,6 +3365,26 @@ function CallProvider({ me, children }) {
       }
     },
   });
+
+  useEffect(() => {
+    if (me.role !== 'admin') return undefined;
+    let active = true;
+    const loadIncoming = () => api('/api/calls/incoming').then((invites) => {
+      if (active && invites[0]) receiveInviteRef.current?.(invites[0]);
+    }).catch((e) => console.error('Could not load incoming calls:', e.message));
+    const onMessage = (event) => {
+      if (event.data?.type === 'incoming-call') loadIncoming();
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') loadIncoming(); };
+    navigator.serviceWorker?.addEventListener('message', onMessage);
+    document.addEventListener('visibilitychange', onVisible);
+    loadIncoming();
+    return () => {
+      active = false;
+      navigator.serviceWorker?.removeEventListener('message', onMessage);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [me.email, me.role]);
 
   const start_ = start; // keeps the name clear in the context value below
   return (

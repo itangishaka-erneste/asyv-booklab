@@ -14,6 +14,7 @@ require('dotenv').config();
 const express = require('express'), cors = require('cors'), http = require('http');
 const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
 const { OAuth2Client } = require('google-auth-library');
+const webpush = require('web-push');
 const { query, one, tx } = require('./db');
 
 const SECRET = process.env.JWT_SECRET || 'change-me';
@@ -21,6 +22,10 @@ const CLIENT = process.env.CLIENT_URL || 'http://localhost:5173';
 const ADMINS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 const SUPER_ADMIN_EMAIL = 'ernesteitangishaka31@gmail.com';
 const isSuperAdmin = email => String(email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+if (!!VAPID_PUBLIC_KEY !== !!VAPID_PRIVATE_KEY) throw new Error('Set both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable push notifications.');
+if (VAPID_PUBLIC_KEY) webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:admin@asyv.org', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 const TZ = process.env.LAB_TZ || 'Africa/Kigali';
 const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families', 'reasons'];
 const ROLES = ['student', 'teacher', 'psychosocial'];
@@ -52,6 +57,18 @@ const nameKey = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u
 const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
 const cleanList = list => [...new Set(list.map(x => String(x).trim()).filter(Boolean))];
 const validEmail = e => /^\S+@\S+\.\S+$/.test(e);
+const validPushEndpoint = value => {
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  const host = url.hostname.toLowerCase();
+  return url.protocol === 'https:' && (
+    host === 'fcm.googleapis.com'
+    || host === 'push.services.mozilla.com'
+    || host.endsWith('.push.services.mozilla.com')
+    || host === 'web.push.apple.com'
+    || host.endsWith('.notify.windows.com')
+  );
+};
 const toIds = v => (Array.isArray(v) ? v : []).map(Number).filter(Number.isInteger);
 
 // Today and the time in the school's time zone, as 'YYYY-MM-DD' and 'HH:MM'.
@@ -137,6 +154,24 @@ const presence = new Map();
 // Track invited calls so signaling can only be relayed between the two admins
 // who were invited; a call ID alone is not authorization.
 const activeCalls = new Map();
+const sendCallPush = async (email, payload) => {
+  const subscriptions = await query('SELECT endpoint, subscription FROM admin_push_subscriptions WHERE email = $1', [email]);
+  const results = await Promise.allSettled(subscriptions.map(async ({ endpoint, subscription }) => {
+    try {
+      await webpush.sendNotification(subscription, JSON.stringify(payload), { TTL: 30, urgency: 'high' });
+    } catch (e) {
+      if (e.statusCode === 404 || e.statusCode === 410) {
+        await query('DELETE FROM admin_push_subscriptions WHERE endpoint = $1', [endpoint]);
+        return false;
+      }
+      throw e;
+    }
+    return true;
+  }));
+  const failures = results.filter(r => r.status === 'rejected');
+  failures.forEach(r => console.error('call push:', r.reason?.message || r.reason));
+  return results.some(r => r.status === 'fulfilled' && r.value);
+};
 const presenceList = () => {
   const byEmail = new Map();
   presence.forEach(p => { const cur = byEmail.get(p.email); if (!cur || cur.since < p.since) byEmail.set(p.email, p); });
@@ -334,21 +369,50 @@ io.on('connection', socket => {
       } catch (e) { console.error('chat typing:', e.message); }
     });
     // Calls: the server only passes the messages between the two admins. WebRTC carries the sound and the video.
-    ['call:invite', 'call:accept', 'call:reject', 'call:end', 'call:signal', 'call:busy'].forEach(ev => socket.on(ev, p => {
+    const handleCallEvent = async (ev, p) => {
       const to = String(p?.to || '').toLowerCase();
       if (!validEmail(to) || to === me.email) return;
       const callId = String(p?.callId || '').slice(0, 100);
       if (!callId) return;
-      if (ev === 'call:invite' && !io.sockets.adapter.rooms.get(`admin:${to}`)?.size) {
-        socket.emit('call:unavailable', { callId, from: to });
-        return;
-      }
       if (ev === 'call:invite') {
         if (activeCalls.has(callId)) return;
+        const targetOnline = !!io.sockets.adapter.rooms.get(`admin:${to}`)?.size;
+        const targetHasPush = !targetOnline && !!await one('SELECT 1 FROM admin_push_subscriptions WHERE email = $1', [to]);
+        if (!targetOnline && !targetHasPush) {
+          socket.emit('call:unavailable', { callId, from: to });
+          return;
+        }
+        await query(`INSERT INTO admin_call_invites(call_id, caller_email, caller_name, caller_picture, callee_email, kind, expires_at)
+          VALUES($1,$2,$3,$4,$5,$6,now() + interval '45 seconds')`,
+        [callId, me.email, me.name || me.email, me.picture || '', to, p.kind === 'video' ? 'video' : 'audio']);
         activeCalls.set(callId, { caller: me.email, callee: to });
+        const invite = {
+          callId, kind: p.kind === 'video' ? 'video' : 'audio',
+          from: me.email, name: me.name, picture: me.picture || '',
+        };
+        if (targetOnline) io.to(`admin:${to}`).emit(ev, invite);
+        else if (!await sendCallPush(to, {
+          title: `Incoming ${invite.kind} call`,
+          body: `${invite.name} is calling you.`,
+          url: `/?incomingCall=${encodeURIComponent(callId)}`,
+          callId,
+        })) {
+          activeCalls.delete(callId);
+          await query('DELETE FROM admin_call_invites WHERE call_id = $1', [callId]);
+          socket.emit('call:unavailable', { callId, from: to });
+        }
+        return;
       } else {
-        const call = activeCalls.get(callId);
+        let call = activeCalls.get(callId);
+        if (!call) {
+          const row = await one(`SELECT caller_email AS caller, callee_email AS callee FROM admin_call_invites
+            WHERE call_id = $1 AND expires_at > now()`, [callId]);
+          if (row) { call = row; activeCalls.set(callId, call); }
+        }
         if (!call || !((call.caller === me.email && call.callee === to) || (call.callee === me.email && call.caller === to))) return;
+        if (ev === 'call:accept' || ['call:end', 'call:reject', 'call:busy'].includes(ev)) {
+          await query('DELETE FROM admin_call_invites WHERE call_id = $1', [callId]);
+        }
         if (['call:end', 'call:reject', 'call:busy'].includes(ev)) activeCalls.delete(callId);
       }
       io.to(`admin:${to}`).emit(ev, {
@@ -364,6 +428,12 @@ io.on('connection', socket => {
         } : {}),
         from: me.email, name: me.name, picture: me.picture || '',
       });
+    };
+    ['call:invite', 'call:accept', 'call:reject', 'call:end', 'call:signal', 'call:busy'].forEach(ev => socket.on(ev, p => {
+      handleCallEvent(ev, p).catch(e => {
+        console.error('call event:', e.message);
+        if (p?.callId) socket.emit('call:unavailable', { callId: String(p.callId), from: p.to });
+      });
     }));
     socket.on('disconnect', () => {
       for (const [callId, call] of activeCalls) {
@@ -371,6 +441,7 @@ io.on('connection', socket => {
           const other = call.caller === me.email ? call.callee : call.caller;
           io.to(`admin:${other}`).emit('call:end', { callId, from: me.email });
           activeCalls.delete(callId);
+          query('DELETE FROM admin_call_invites WHERE call_id = $1', [callId]).catch(e => console.error('call cleanup:', e.message));
         }
       }
       presence.delete(socket.id);
@@ -1224,10 +1295,45 @@ app.delete('/api/admins/:email', auth('admin'), wrap(async (req, res) => {
   await tx(async q => {
     await q('INSERT INTO admin_revocations(email, removed_by) VALUES($1,$2) ON CONFLICT (email) DO NOTHING', [email, req.user.email]);
     await q('DELETE FROM admin_people WHERE email = $1', [email]);
+    await q('DELETE FROM admin_push_subscriptions WHERE email = $1', [email]);
   });
   io.in(`admin:${email}`).disconnectSockets(true);
   await logAct(req.user, 'Removed admin', email);
   res.sendStatus(204);
+}));
+
+app.get('/api/push/config', auth('admin'), (_req, res) =>
+  res.json({ enabled: !!VAPID_PUBLIC_KEY, publicKey: VAPID_PUBLIC_KEY }));
+
+app.post('/api/push/subscriptions', auth('admin'), wrap(async (req, res) => {
+  if (!VAPID_PUBLIC_KEY) fail(503, 'Push notifications are not configured on the server.');
+  const sub = req.body;
+  if (!sub || typeof sub.endpoint !== 'string' || !validPushEndpoint(sub.endpoint)
+    || !sub.keys || typeof sub.keys.p256dh !== 'string' || typeof sub.keys.auth !== 'string') {
+    fail(400, 'A valid browser push subscription is required.');
+  }
+  const saved = await one(`INSERT INTO admin_push_subscriptions(email, endpoint, subscription) VALUES($1,$2,$3::jsonb)
+    ON CONFLICT (endpoint) DO UPDATE SET subscription = EXCLUDED.subscription
+    WHERE admin_push_subscriptions.email = EXCLUDED.email RETURNING email`,
+  [req.user.email, sub.endpoint, JSON.stringify(sub)]);
+  if (!saved) fail(409, 'This device is already registered to another admin.');
+  res.sendStatus(204);
+}));
+
+app.delete('/api/push/subscriptions', auth('admin'), wrap(async (req, res) => {
+  const endpoint = String(req.body?.endpoint || '');
+  if (!endpoint) fail(400, 'A push subscription endpoint is required.');
+  await query('DELETE FROM admin_push_subscriptions WHERE email = $1 AND endpoint = $2', [req.user.email, endpoint]);
+  res.sendStatus(204);
+}));
+
+app.get('/api/calls/incoming', auth('admin'), wrap(async (req, res) => {
+  await query('DELETE FROM admin_call_invites WHERE expires_at <= now()');
+  const rows = await query(`SELECT call_id AS "callId", caller_email AS "from", caller_name AS name,
+      caller_picture AS picture, kind
+    FROM admin_call_invites WHERE callee_email = $1 AND expires_at > now()
+    ORDER BY created_at DESC LIMIT 1`, [req.user.email]);
+  res.json(rows);
 }));
 
 app.post('/api/chat/groups', auth('admin'), wrap(async (req, res) => {
@@ -1765,6 +1871,15 @@ const ensureTables = async () => {
     email text PRIMARY KEY, picture text NOT NULL DEFAULT '', phone text NOT NULL DEFAULT '')`);
   await query(`CREATE TABLE IF NOT EXISTS admin_revocations (
     email text PRIMARY KEY, removed_by text NOT NULL, removed_at timestamptz NOT NULL DEFAULT now())`);
+  await query(`CREATE TABLE IF NOT EXISTS admin_push_subscriptions (
+    email text NOT NULL, endpoint text PRIMARY KEY, subscription jsonb NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now())`);
+  await query('CREATE INDEX IF NOT EXISTS admin_push_email_idx ON admin_push_subscriptions (email)');
+  await query(`CREATE TABLE IF NOT EXISTS admin_call_invites (
+    call_id text PRIMARY KEY, caller_email text NOT NULL, caller_name text NOT NULL DEFAULT '',
+    caller_picture text NOT NULL DEFAULT '', callee_email text NOT NULL, kind text NOT NULL CHECK (kind IN ('audio','video')),
+    created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL)`);
+  await query('CREATE INDEX IF NOT EXISTS admin_call_callee_expiry_idx ON admin_call_invites (callee_email, expires_at)');
 
   // Activity log: every admin change. Used for the live feed and the chart.
   await query(`CREATE TABLE IF NOT EXISTS activity (
