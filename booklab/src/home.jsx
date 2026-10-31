@@ -2042,8 +2042,9 @@ function SchedulePage() {
 }
 
 // People: accounts, groups, and moving students between classes.
-function PeoplePage() {
+function PeoplePage({ user }) {
   const [users, setUsers] = useState([]);
+  const [admins, setAdmins] = useState([]);
   const [groups, setGroups] = useState([]);
   const [opts, setOpts] = useState(EMPTY_OPTS);
   const [q, setQ] = useState('');
@@ -2056,8 +2057,12 @@ function PeoplePage() {
   const [nw, setNw] = useState({ name: '', email: '', role: 'student', phone: '', grade: '', combo: '', section: '' });
   const [newGroup, setNewGroup] = useState({ name: '', members: [] });
   const [openGroup, setOpenGroup] = useState(null);
-  const load = useCallback(() => Promise.all([api('/api/users'), api('/api/groups'), api('/api/options')])
-    .then(([u, g, o]) => { setUsers(u); setGroups(g); setOpts({ ...EMPTY_OPTS, ...o }); }).catch(() => {}), []);
+  const load = useCallback(() => Promise.all([
+    api('/api/users'), api('/api/groups'), api('/api/options'),
+    user.superAdmin ? api('/api/admins') : Promise.resolve([]),
+  ]).then(([u, g, o, a]) => {
+    setUsers(u); setGroups(g); setOpts({ ...EMPTY_OPTS, ...o }); setAdmins(a);
+  }).catch(() => {}), [user.superAdmin]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => setLimit(100), [q, role]);
   useLive({ 'me:update': load, 'applications:update': load, seats: load });
@@ -2137,6 +2142,29 @@ function PeoplePage() {
           </div>
         )}
       </Card>
+
+      {user.superAdmin && (
+        <Card t={`Admins (${admins.length})`} sub="Remove an admin's access without affecting other admins.">
+          {admins.length === 0 && <Empty>No admins found.</Empty>}
+          <div className="divide-y divide-black/10">
+            {admins.map((admin) => (
+              <div key={admin.email} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold">{admin.name}</span>
+                  <span className="block truncate text-xs text-black/55">{admin.email}</span>
+                </span>
+                <span className="flex items-center gap-2">
+                  {admin.superAdmin
+                    ? <Badge s="draft">Super admin</Badge>
+                    : <ActBtn c="or" busy={busy === `admin${admin.email}`} doing="Removing…" label="Remove admin"
+                      onClick={() => sure({ message: `Remove admin access for ${admin.email}? They will be signed out and cannot sign in again.`, ok: 'Remove admin', danger: true },
+                        `admin${admin.email}`, () => api(`/api/admins/${encodeURIComponent(admin.email)}`, 'DELETE'), 'Admin removed.')} />}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card t="Groups" sub="A group can mix students from any class. In Schedule you can give a lab time to a whole group.">
         <div className="mb-5 rounded-[8px] border border-black/10 bg-black/[0.02] p-4">
@@ -3388,7 +3416,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, da
       ? <LabDetail labId={labView.id} day={labView.day} onBack={() => setLabView(null)} />
       : <LabsPage onOpenLab={(id, day, name) => setLabView({ id, day, name })} />;
     else if (page === 'Schedule') body = <SchedulePage />;
-    else if (page === 'People') body = <PeoplePage />;
+    else if (page === 'People') body = <PeoplePage user={user} />;
     else if (page === 'Chat') body = <ChatPage me={user} onUnread={setUnread} />;
     else body = <SettingsPage />;
   } else body = <Booker user={user} opts={opts} intent={intent} onIntentDone={onIntentDone} />;

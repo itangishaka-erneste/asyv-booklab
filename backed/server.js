@@ -19,6 +19,8 @@ const { query, one, tx } = require('./db');
 const SECRET = process.env.JWT_SECRET || 'change-me';
 const CLIENT = process.env.CLIENT_URL || 'http://localhost:5173';
 const ADMINS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+const SUPER_ADMIN_EMAIL = 'ernesteitangishaka31@gmail.com';
+const isSuperAdmin = email => String(email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
 const TZ = process.env.LAB_TZ || 'Africa/Kigali';
 const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families', 'reasons'];
 const ROLES = ['student', 'teacher', 'psychosocial'];
@@ -75,9 +77,13 @@ app.use(cors({ origin: CLIENT }), express.json({ limit: '40mb' }));
 const sign = p => jwt.sign(p, SECRET, { expiresIn: '7d' });
 const fail = (code, msg) => { const e = new Error(msg); e.code = code; throw e; };
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-const auth = (...roles) => (req, res, next) => {
+const isRevokedAdmin = async email => !!await one('SELECT 1 FROM admin_revocations WHERE email = $1', [String(email || '').toLowerCase()]);
+const auth = (...roles) => async (req, res, next) => {
   try { req.user = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), SECRET); }
   catch { return res.status(401).json({ error: 'Please sign in again.' }); }
+  if (req.user.role === 'admin' && !isSuperAdmin(req.user.email) && await isRevokedAdmin(req.user.email)) {
+    return res.status(403).json({ error: 'This admin account has been removed.' });
+  }
   if (roles.length && !roles.includes(req.user.role)) return res.status(403).json({ error: 'You do not have access to this.' });
   next();
 };
@@ -283,11 +289,17 @@ const releaseNoShows = async (q, sid, touched = []) => {
 
 /* ---------- Socket.io ---------- */
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const t = socket.handshake.auth?.token;
   if (!t) { socket.user = null; return next(); }
-  try { socket.user = jwt.verify(t, SECRET); next(); }
-  catch { next(new Error('unauthorized')); }
+  try { socket.user = jwt.verify(t, SECRET); }
+  catch { return next(new Error('unauthorized')); }
+  try {
+    if (socket.user?.role === 'admin' && !isSuperAdmin(socket.user.email) && await isRevokedAdmin(socket.user.email)) {
+      return next(new Error('unauthorized'));
+    }
+  } catch (e) { return next(e); }
+  next();
 });
 io.on('connection', socket => {
   if (!socket.user) { socket.join('public'); return; }
@@ -382,7 +394,8 @@ app.post('/api/google', wrap(async (req, res) => {
   catch { fail(401, 'Google sign-in failed. Please try again.'); }
   if (!p.email_verified) fail(403, 'Your Google email is not verified.');
   const email = p.email.toLowerCase(), picture = p.picture || '';
-  if (ADMINS.includes(email)) {
+  if (isSuperAdmin(email) || ADMINS.includes(email)) {
+    if (!isSuperAdmin(email) && await isRevokedAdmin(email)) fail(403, 'This admin account has been removed.');
     const name = cleanName(p.name || email.split('@')[0]);
     await upsertAdmin({ email, name, picture });
     return res.json({ token: sign({ id: 0, role: 'admin', name, email, picture }) });
@@ -403,7 +416,7 @@ app.get('/api/me', auth(), wrap(async (req, res) => {
     const row = await one('SELECT picture FROM admin_profiles WHERE email = $1', [req.user.email]);
     picture = row?.picture || picture;
   }
-  res.json({ ...req.user, picture, comm: isComm });
+  res.json({ ...req.user, picture, comm: isComm, superAdmin: isSuperAdmin(req.user.email) });
 }));
 
 app.put('/api/me/profile', auth(), wrap(async (req, res) => {
@@ -1191,9 +1204,31 @@ const adminDirectory = async () => {
   const rows = await query(`SELECT p.email, p.name, COALESCE(NULLIF(a.picture, ''), p.picture) AS picture, p.last_seen AS "lastSeen"
     FROM admin_people p LEFT JOIN admin_profiles a ON a.email = p.email`);
   const map = new Map(rows.map(r => [r.email, r]));
-  ADMINS.forEach(e => { if (!map.has(e)) map.set(e, { email: e, name: e.split('@')[0], picture: '', lastSeen: null }); });
-  return [...map.values()];
+  const revoked = new Set((await query('SELECT email FROM admin_revocations')).map(r => r.email));
+  ADMINS.forEach(e => { if (!revoked.has(e) && !map.has(e)) map.set(e, { email: e, name: e.split('@')[0], picture: '', lastSeen: null }); });
+  if (!map.has(SUPER_ADMIN_EMAIL)) map.set(SUPER_ADMIN_EMAIL, { email: SUPER_ADMIN_EMAIL, name: SUPER_ADMIN_EMAIL.split('@')[0], picture: '', lastSeen: null });
+  return [...map.values()].filter(p => !revoked.has(p.email)).map(p => ({ ...p, superAdmin: isSuperAdmin(p.email) }));
 };
+
+app.get('/api/admins', auth('admin'), wrap(async (req, res) => {
+  if (!isSuperAdmin(req.user.email)) fail(403, 'Only the super admin can manage admins.');
+  res.json(await adminDirectory());
+}));
+
+app.delete('/api/admins/:email', auth('admin'), wrap(async (req, res) => {
+  if (!isSuperAdmin(req.user.email)) fail(403, 'Only the super admin can manage admins.');
+  const email = String(req.params.email || '').trim().toLowerCase();
+  if (!validEmail(email)) fail(400, 'Enter a valid admin email address.');
+  if (isSuperAdmin(email)) fail(400, 'The super admin cannot be removed.');
+  if (!await adminDirectory().then(admins => admins.some(p => p.email === email))) fail(404, 'Admin not found.');
+  await tx(async q => {
+    await q('INSERT INTO admin_revocations(email, removed_by) VALUES($1,$2) ON CONFLICT (email) DO NOTHING', [email, req.user.email]);
+    await q('DELETE FROM admin_people WHERE email = $1', [email]);
+  });
+  io.in(`admin:${email}`).disconnectSockets(true);
+  await logAct(req.user, 'Removed admin', email);
+  res.sendStatus(204);
+}));
 
 app.post('/api/chat/groups', auth('admin'), wrap(async (req, res) => {
   const name = cleanName(req.body.name).slice(0, 80);
@@ -1728,6 +1763,8 @@ app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.
 const ensureTables = async () => {
   await query(`CREATE TABLE IF NOT EXISTS admin_profiles (
     email text PRIMARY KEY, picture text NOT NULL DEFAULT '', phone text NOT NULL DEFAULT '')`);
+  await query(`CREATE TABLE IF NOT EXISTS admin_revocations (
+    email text PRIMARY KEY, removed_by text NOT NULL, removed_at timestamptz NOT NULL DEFAULT now())`);
 
   // Activity log: every admin change. Used for the live feed and the chart.
   await query(`CREATE TABLE IF NOT EXISTS activity (
