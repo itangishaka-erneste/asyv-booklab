@@ -2398,7 +2398,7 @@ function ChatPage({ me, onUnread }) {
   };
 
   const myPic = sum.myPicture || me.picture || '';
-  const removedChatAdmins = ['mwamikazi pacific', 'ntwali kevin', 'mukunzi'];
+  const removedChatAdmins = ['mwamikazi pacific', 'ntwali kevin', 'mukunzi', 'deborah pacific', 'ntwalik kevin'];
   const people = sum.people
     .filter((p) => !removedChatAdmins.some((name) => nameKey(p.name).includes(nameKey(name))))
     .map((p) => ({ ...p, on: online ? online.has(p.email) : p.online }));
