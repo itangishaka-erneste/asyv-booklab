@@ -3149,7 +3149,6 @@ function CallProvider({ me, children }) {
     if (callRef.current || incoming) return say('You are already in a call.');
     const id = `${Date.now()}${Math.random().toString(36).slice(2, 7)}`;
     begin({ id, peer, mode, role: 'caller', status: 'calling' });
-    startRing();
     emitCall('call:invite', { to: peer.email, callId: id, kind: mode });
     timer.current = setTimeout(() => hangUp(`${peer.name} did not answer.`), 30000);
   };
