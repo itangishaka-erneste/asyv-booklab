@@ -3158,6 +3158,7 @@ function CallProvider({ me, children }) {
     const inc = incoming;
     if (!inc) return;
     stopTimer();
+    stopRing();
     setIncoming(null);
     try {
       const s = await getMedia(inc.kind);
