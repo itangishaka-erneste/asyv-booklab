@@ -1,2004 +1,3526 @@
-// server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js).
-// Everyone signs in with Google. Admins get live presence, an activity log and a private admin chat.
-//
-// What is new in this version
-//  - Lab pictures: every lab can have its own uploaded picture (or a link), changed one by one. Reset gives the default picture back.
-//  - Admin chat is complete: reply, forward, edit, delete for me / for everyone, photos, videos, audio, voice notes and files.
-//  - Admin audio and video calls (WebRTC). The server only passes the call messages between the two admins.
-//  - GET /api/roster: teachers, psychosocial workers and admins see every student of every lab time of a day in one call.
-//  - Upload limit is 40 MB (25 MB of files becomes about 33 MB of base64).
-//  - NEW: GET /api/history       who was in which lab over a period (filter by lab and dates).
-//  - NEW: PATCH /api/students/class-remove   take students out of their class.
-//  - NEW: POST /api/grammar      spelling and grammar check (LanguageTool) for the chat and posts.
-require('dotenv').config();
-const express = require('express'), cors = require('cors'), http = require('http');
-const jwt = require('jsonwebtoken'), { Server } = require('socket.io');
-const { OAuth2Client } = require('google-auth-library');
-const webpush = require('web-push');
-const { query, one, tx } = require('./db');
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { io } from 'socket.io-client';
+import lab3 from './assets/lab3.jpeg';
+import lab33 from './assets/lab33.jpeg';
+import lab11 from './assets/lab11.jpeg';
+import lab22 from './assets/lab22.jpeg';
+import lab4 from './assets/lab4.jpeg';
+import c7 from './assets/c7.jpeg';
+import c8 from './assets/c8.jpeg';
+import c3 from './assets/c3.jpeg';
 
-const SECRET = process.env.JWT_SECRET || 'change-me';
-const CLIENT = process.env.CLIENT_URL || 'http://localhost:5173';
-const ADMINS = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
-const SUPER_ADMIN_EMAIL = 'ernesteitangishaka31@gmail.com';
-const isSuperAdmin = email => String(email || '').toLowerCase() === SUPER_ADMIN_EMAIL;
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
-if (!!VAPID_PUBLIC_KEY !== !!VAPID_PRIVATE_KEY) throw new Error('Set both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable push notifications.');
-if (VAPID_PUBLIC_KEY) webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:admin@asyv.org', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-const TZ = process.env.LAB_TZ || 'Africa/Kigali';
-const LISTS = ['grades', 'classes', 'combos', 'clubs', 'staffRoles', 'families', 'reasons'];
-const ROLES = ['student', 'teacher', 'psychosocial'];
-const ROLE_NAMES = { student: 'student', teacher: 'teacher', psychosocial: 'psychosocial worker' };
-const gClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const icon = (d) => function Icon({ className = '', ...props }) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}><path d={d} /></svg>; };
+const CalendarDays = icon('M8 2v4m8-4v4M3 10h18M5 4h14v18H3V6a2 2 0 0 1 2-2zm2 10h3m4 0h3m-10 4h3');
+const CalendarCheck2 = icon('M8 2v4m8-4v4M3 10h18M5 4h14v18H3V6a2 2 0 0 1 2-2zm4 10 2 2 4-4');
+const UserRound = icon('M20 21a8 8 0 0 0-16 0m8-10a5 5 0 1 0 0-10 5 5 0 0 0 0 10z');
+const LayoutDashboard = icon('M3 3h8v8H3zm10 0h8v5h-8zm0 7h8v11h-8zm-10 3h8v8H3z');
+const FlaskConical = icon('M9 3h6m-5 0v7L4 20a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1l-6-10V3m-8 12h12');
+const CalendarClock = icon('M8 2v4m8-4v4M3 10h13M5 4h14v9M3 6v14h11m4-5v4l3 2');
+const UsersRound = icon('M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2m6-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm6-7a4 4 0 0 1 0 8m2 3a4 4 0 0 1 3 4v2');
+const MessageCircle = icon('M21 11.5a8.5 8.5 0 0 1-12.5 7.5L3 21l2-5.5A8.5 8.5 0 1 1 21 11.5z');
+const Settings2 = icon('M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M2 14h4m4-6h4m4 8h4');
+const PackageSearch = icon('M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4m-9 4v10');
+const Sun = icon('M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4m0-12.8L17 7M7 17l-1.4 1.4M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z');
+const Moon = icon('M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5z');
+const Send = icon('m22 2-7 20-4-9-9-4 20-7zM22 2 11 13'); const Users = UsersRound;
+const ChevronLeft = icon('m15 18-6-6 6-6'); const ChevronRight = icon('m9 18 6-6-6-6');
+const X = icon('M18 6 6 18M6 6l12 12'); const Trash2 = icon('M3 6h18m-2 0-1 14H6L5 6m4 0V4h6v2');
+const Printer = icon('M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2m-12-4h12v8H6z');
+const Plus = icon('M12 5v14m-7-7h14'); const LogOut = icon('M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9');
+const Sunrise = icon('M12 2v7m-4-3 4 3 4-3M3 18h18M5 14a7 7 0 0 1 14 0m-17 8h20'); const Sunset = icon('M12 22v-7m-4 3 4-3 4 3M3 6h18M5 10a7 7 0 0 1 14 0m-17-8h20');
+const Eye = icon('M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'); const Radio = icon('M4 8h16a2 2 0 0 1 2 2v10H2V10a2 2 0 0 1 2-2zm4 4h.01');
+const ArrowLeft = icon('m12 19-7-7 7-7m-7 7h14'); const CheckCheck = icon('m2 12 4 4L16 6m-4 6 4 4 6-10');
+// Chat and call icons
+const PHONE = 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z';
+const VIDEO = 'm16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 11M4 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z';
+const MIC = 'M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v3';
+const Phone = icon(PHONE); const PhoneOff = icon(PHONE + 'M2 2l20 20');
+const Video = icon(VIDEO); const VideoOff = icon(VIDEO + 'M2 2l20 20');
+const Mic = icon(MIC); const MicOff = icon(MIC + 'M2 2l20 20');
+const Paperclip = icon('m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5');
+const Smile = icon('M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01');
+const Reply = icon('M9 17 4 12l5-5M20 18v-2a4 4 0 0 0-4-4H4');
+const Forward = icon('m15 17 5-5-5-5M4 18v-2a4 4 0 0 1 4-4h12');
+const MoreV = icon('M12 5h.01M12 12h.01M12 19h.01');
+const Pencil = icon('M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z');
+const Copy = icon('M9 9h11v11H9zM5 15H4V4h11v1');
+const Download = icon('M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3');
+const Monitor = icon('M3 4h18v12H3zM8 20h8M12 16v4');
+const FileIcon = icon('M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6');
+import logo from './assets/as.png';
 
-const DEFAULT_GRADE_COMBOS = { S4: ['INGABE'], S5: ['INGABO'], S6: ['IJABO'] };
-const DEFAULT_TREND_CATEGORIES = ['Clothes', 'Shoes', 'Keys', 'Bags', 'Phones and electronics', 'Books and stationery', 'Documents and IDs', 'Water bottles and lunch boxes', 'Jewelry and watches', 'Other'];
-const DEFAULT_SETTINGS = {
-  maxConsecutive: 1, graceMinutes: 15, autoRelease: true,
-  beforeFrom: '08:00', beforeTo: '12:30', afterFrom: '13:30', afterTo: '17:00',
+/* ================================================================== */
+/* 0. CONFIG, API, LIVE SOCKET                                         */
+/* ================================================================== */
+
+const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const DEFAULT_GRADES = ['S4', 'S5', 'S6'];
+const DEFAULT_CATS = ['Clothes', 'Shoes', 'Keys', 'Bags', 'Phones and electronics', 'Books and stationery', 'Documents and IDs', 'Water bottles and lunch boxes', 'Jewelry and watches', 'Other'];
+const SECTIONS = [...Array.from({ length: 12 }, (_, i) => String(i + 1)), ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')];
+const EMPTY_OPTS = { grades: [], gradeCombos: {}, reasons: [], trendCategories: [] };
+const ROLE_LABEL = { admin: 'Admin', teacher: 'Teacher', psychosocial: 'Psychosocial worker', student: 'Student' };
+const ROLE_CHOICES = ['student', 'teacher', 'psychosocial'];
+const ADMIN_TABS = ['Overview', 'History', 'Labs', 'Schedule', 'People', 'Chat', 'Settings'];
+const gradesOf = (o) => (o.grades?.length ? o.grades : DEFAULT_GRADES);
+const combosFor = (o, g) => o.gradeCombos?.[g] ?? [];
+const catsOf = (o) => (o?.trendCategories?.length ? o.trendCategories : DEFAULT_CATS);
+const unsplash = (id, w = 900) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=${w}&q=80`;
+// Pictures used when a lab has no image of its own, and on the landing and login pages.
+const LAB_PICS = ['photo-1498050108023-c5249f4df085', 'photo-1517694712202-14dd9538aa97', 'photo-1519389950473-47ba0277781c', 'photo-1522202176988-66273c2fd55f', 'photo-1531482615713-2afd69097998', 'photo-1497366754035-f200968a6e72'];
+const defaultLabPic = (i, w = 900) => unsplash(LAB_PICS[Math.abs(+i || 0) % LAB_PICS.length], w);
+const LAB_IMAGES_BY_NAME = {
+  lab1: lab11, lab2: lab22, lab3, lab33, lab11, lab22, lab4, c7, c8, c3,
 };
-const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.floor(+v) || 0));
-const timeP = def => v => (/^\d{2}:\d{2}$/.test(String(v || '')) ? String(v) : def);
-const SETTING_PARSERS = {
-  maxConsecutive: v => clampInt(v, 0, 7),
-  graceMinutes: v => clampInt(v, 0, 120),
-  autoRelease: v => v === true || v === 'true',
-  beforeFrom: timeP(DEFAULT_SETTINGS.beforeFrom), beforeTo: timeP(DEFAULT_SETTINGS.beforeTo),
-  afterFrom: timeP(DEFAULT_SETTINGS.afterFrom), afterTo: timeP(DEFAULT_SETTINGS.afterTo),
-};
-const DEFAULTS = { grades: ['S4', 'S5', 'S6'], gradeCombos: DEFAULT_GRADE_COMBOS, trendCategories: DEFAULT_TREND_CATEGORIES, ...DEFAULT_SETTINGS };
-const SECTION_RE = /^[A-Z0-9]{1,2}$/;
-const combosFor = (opts, grade) => opts.gradeCombos?.[grade] ?? DEFAULT_GRADE_COMBOS[grade] ?? [];
-const maxOf = o => (Number.isFinite(+o.maxConsecutive) && o.maxConsecutive !== null ? +o.maxConsecutive : DEFAULT_SETTINGS.maxConsecutive);
-const graceOf = o => (Number.isFinite(+o.graceMinutes) && o.graceMinutes !== null ? +o.graceMinutes : DEFAULT_SETTINGS.graceMinutes);
+const LOGIN_SLIDES = [
+  { id: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSPLrWxuPLWJQ6v6oUcHeQXk4Tjw6vnVZepDRUAfnRzWSErgiLehCu3Ww3z&s=10', t: 'Your next idea starts here.', s: 'Book a computer lab place before you arrive.' },
+];
 
-const nameKey = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
-const cleanName = n => String(n || '').replace(/\s+/g, ' ').trim();
-const cleanList = list => [...new Set(list.map(x => String(x).trim()).filter(Boolean))];
-const validEmail = e => /^\S+@\S+\.\S+$/.test(e);
-const validPushEndpoint = value => {
-  let url;
-  try { url = new URL(value); } catch { return false; }
-  const host = url.hostname.toLowerCase();
-  return url.protocol === 'https:' && (
-    host === 'fcm.googleapis.com'
-    || host === 'push.services.mozilla.com'
-    || host.endsWith('.push.services.mozilla.com')
-    || host === 'web.push.apple.com'
-    || host.endsWith('.notify.windows.com')
+let token = localStorage.getItem('lms_token') || '';
+const getToken = () => token;
+const setToken = (t) => {
+  token = t || '';
+  if (t) localStorage.setItem('lms_token', t);
+  else localStorage.removeItem('lms_token');
+};
+
+async function api(path, method = 'GET', body) {
+  const res = await fetch(BASE + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+  return data;
+}
+
+// One shared socket per login. It is dropped on sign in and sign out so the new token is used.
+let sock = null;
+const liveSocket = () => { if (!sock) sock = io(BASE, { auth: { token } }); return sock; };
+const dropSocket = () => { sock?.disconnect(); sock = null; };
+
+function useLive(handlers) {
+  const ref = useRef(handlers);
+  ref.current = handlers;
+  useEffect(() => {
+    const s = liveSocket();
+    const subs = Object.keys(ref.current).map((ev) => {
+      const f = (...a) => ref.current[ev]?.(...a);
+      s.on(ev, f);
+      return [ev, f];
+    });
+    return () => subs.forEach(([ev, f]) => s.off(ev, f));
+  }, []);
+}
+
+/* ================================================================== */
+/* 1. HELPERS                                                          */
+/* ================================================================== */
+
+const pad = (n) => String(n).padStart(2, '0');
+const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+const dayOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return ymd(d); };
+const today = () => dayOffset(0);
+const shiftDay = (s, n) => { const [y, m, d] = s.split('-').map(Number); return ymd(new Date(y, m - 1, d + n)); };
+const BOOKABLE_WEEKDAYS = new Set([5, 0, 6]); // Fri, Sat, Sun
+const isBookableDay = (s) => {
+  if (!s) return false;
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return !Number.isNaN(dt.getTime()) && BOOKABLE_WEEKDAYS.has(dt.getDay());
+};
+const shiftBookableDay = (s, dir = 1) => {
+  const base = new Date(`${s || today()}T12:00:00`);
+  let d = new Date(base);
+  let tries = 0;
+  while (tries < 14) {
+    d.setDate(d.getDate() + dir);
+    tries += 1;
+    if (BOOKABLE_WEEKDAYS.has(d.getDay())) return ymd(d);
+  }
+  return today();
+};
+const pickBookableDay = (s) => (isBookableDay(s) ? s : shiftBookableDay(s, 1));
+const niceDay = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); };
+const shortDay = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
+const weekdayShort = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short' }); };
+const nameKey = (n) => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
+const match = (q, ...fields) => {
+  const hay = fields.join(' ').toLowerCase();
+  return String(q || '').toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+};
+const initials = (name) => String(name || '?').split(' ').filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+const gravatar = (gid) => (gid ? `https://www.gravatar.com/avatar/${gid}?s=96&d=404` : '');
+const cartoon = (name) => `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(nameKey(name) || 'user')}&backgroundColor=b6e3f4,c0aadd,d1d4f9,ffd5dc,ffdfbf`;
+const ago = (iso) => {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  const d = Math.floor(s / 86400);
+  return d === 1 ? 'yesterday' : `${d} days ago`;
+};
+const clock = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+const dayHead = (iso) => { const d = ymd(new Date(iso)); return d === today() ? 'Today' : d === dayOffset(-1) ? 'Yesterday' : niceDay(d); };
+const listTime = (iso) => { const d = ymd(new Date(iso)); return d === today() ? clock(iso) : shortDay(d); };
+const directImg = (u) => {
+  const s = String(u || '');
+  let m = s.match(/drive\.google\.com\/file\/d\/([\w-]+)/) || s.match(/drive\.google\.com\/(?:open|uc)\?(?:[^#]*&)?id=([\w-]+)/);
+  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1600`;
+  if (/^https?:\/\/(www\.)?dropbox\.com\//i.test(s)) {
+    try { const x = new URL(s); x.searchParams.delete('dl'); x.searchParams.set('raw', '1'); return x.toString(); } catch { return s; }
+  }
+  m = s.match(/^https?:\/\/(?:www\.)?imgur\.com\/([A-Za-z0-9]{5,8})\/?$/);
+  return m ? `https://i.imgur.com/${m[1]}.jpg` : s;
+};
+// Photo of a lost item: an uploaded image is served by the API, a link is converted when possible.
+const itemPhoto = (m) => {
+  if (m.kind === 'image') return m.src?.startsWith('/') ? BASE + m.src : directImg(m.src);
+  if (m.kind === 'link') { const d = directImg(m.src); return d !== m.src ? d : ''; }
+  return '';
+};
+// Picture of a lab: an uploaded one (path that starts with /api/) or a link.
+const labSrc = (u) => { const s = String(u || ''); return s.startsWith('/') ? BASE + s : directImg(s); };
+// Chat files are opened with the sign-in token in the link, because <img> and <video> cannot send a header.
+const chatFileUrl = (id, dl) => `${BASE}/api/chat/files/${id}?t=${encodeURIComponent(getToken())}${dl ? '&dl=1' : ''}`;
+const readB64 = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
+const fileSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const mmss = (s) => `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+const byTime = (a, b) => `${a.date} ${a.from} ${a.lab}`.localeCompare(`${b.date} ${b.from} ${b.lab}`);
+const forLabel = (s) => s.forGroupName || s.forClass || (s.forPeople ? `${s.forPeople} chosen student${s.forPeople === 1 ? '' : 's'}` : '');
+const audText = (s) => (forLabel(s) ? `${s.exclusive ? 'Only ' : 'Reserved for '}${forLabel(s)}` : 'Everyone');
+const attKey = (a) => (a.att === 'present' && a.late ? 'late' : a.att || '');
+const attLabel = (a) => ({ present: 'Present', late: 'Late', absent: 'Absent' }[attKey(a)] || 'Not marked');
+const STATUS_LABEL = { pending: 'Waiting', queue: 'In queue', released: 'Released', approved: 'Approved', rejected: 'Rejected' };
+const statusKey = (a, s) => (a.released ? 'released' : a.status === 'pending' && s && s.left < 1 ? 'queue' : a.status);
+const STATE_LABEL = { draft: 'Draft', over: 'Over', full: 'Full', open: 'Open' };
+const LAB_STATUS_TEXT = { open: 'Open', full: 'Full', over: 'Over', draft: 'Draft', none: 'No lab time' };
+const labStatus = (sessions) => {
+  if (!sessions.length) return 'none';
+  if (sessions.every((s) => s.state === 'draft')) return 'draft';
+  if (sessions.every((s) => s.state === 'over' || s.state === 'draft')) return 'over';
+  if (sessions.some((s) => s.state === 'open')) return 'open';
+  return 'full';
+};
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+// The people who really hold a place or wait for one (released and rejected are left out).
+const liveOf = (s) => s.people.filter((a) => a.status !== 'rejected');
+// Lunch periods are kept in the settings. Defaults are used until the settings are loaded.
+const periodsOf = (o = {}) => ({
+  before: { from: o.beforeFrom || '08:00', to: o.beforeTo || '12:30' },
+  after: { from: o.afterFrom || '13:30', to: o.afterTo || '17:00' },
+});
+
+/* Printing: admin only. Students never see print buttons. */
+const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const PRINT_CSS = `@page{size:A4 landscape;margin:12mm}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font:12px system-ui,sans-serif;color:#111;margin:0}h1{font-size:20px;margin:0 0 4px}.sub{color:#555;margin:0 0 12px}
+h2{font-size:15px;margin:20px 0 4px}h3{font-size:13px;margin:12px 0 6px;padding:5px 8px;background:#e8efe9;border-left:4px solid #16a34a}
+table{width:100%;border-collapse:collapse;margin-bottom:6px}td,th{border:1px solid #666;padding:6px 8px;text-align:left}th{background:#f3f4f6}
+.sec{page-break-inside:avoid}.lab{page-break-before:auto}.foot{margin-top:14px;color:#777;font-size:10px}`;
+function printDoc(title, sub, html) {
+  const w = window.open('', '_blank');
+  if (!w) { window.alert('Please allow pop-ups to print.'); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${PRINT_CSS}</style></head><body>
+    <h1>${esc(title)}</h1><p class="sub">${esc(sub)}</p>${html}<p class="foot">Asyv_lms · printed ${esc(new Date().toLocaleString())}</p></body></html>`);
+  w.document.close();
+  setTimeout(() => w.print(), 300);
+}
+const tableHtml = (head, rows) => `<table><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+  <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+const ROSTER_HEAD = ['#', 'Name', 'Class', 'Status', 'Attendance', 'Signature'];
+const rosterRows = (s, list) => list.map((a, i) => [i + 1, a.name, a.cls || '', STATUS_LABEL[statusKey(a, s)] || a.status, attKey(a) ? attLabel(a) : '', '']);
+const sessionHead = (s, list) => `${s.from}–${s.to} · ${STATE_LABEL[s.state]} · ${plural(list.length, 'student')} applied · ${s.seats - s.left} of ${s.seats} places taken · ${audText(s)}`;
+// One lab time on one page.
+function printSession(lab, s) {
+  const list = liveOf(s);
+  printDoc(`${lab.name} · ${niceDay(s.date)}`, sessionHead(s, list), tableHtml(ROSTER_HEAD, rosterRows(s, list)));
+}
+// One lab (or every lab) with all its lab times of the day.
+function printLabs(labs, day) {
+  const html = labs.map((l) => `<div class="lab"><h2>${esc(l.name)} · ${l.pcs} computers</h2>${l.sessions.length
+    ? l.sessions.map((s) => { const list = liveOf(s); return `<div class="sec"><h3>${esc(sessionHead(s, list))}</h3>${tableHtml(ROSTER_HEAD, rosterRows(s, list))}</div>`; }).join('')
+    : '<p>No lab time on this day.</p>'}</div>`).join('');
+  printDoc(labs.length === 1 ? `${labs[0].name} · ${niceDay(day)}` : `All labs · ${niceDay(day)}`, `Printed list of the students of each lab time`, html);
+}
+
+/* ================================================================== */
+/* 2. UI KIT                                                           */
+/* ================================================================== */
+
+const BTN = {
+  ink: 'bg-[#16a34a] text-white', or: 'bg-[#ff4500] text-white', bl: 'bg-[#2563eb] text-white',
+  dk: 'bg-[#111827] text-white', am: 'bg-[#f59e0b] text-white', w: 'bg-white text-[#111827] border border-black/20 hover:bg-black/5',
+};
+const Btn = ({ c = 'ink', className = '', ...p }) => (
+  <button type="button" className={`inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-[6px] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed ${BTN[c]} ${className}`} {...p} />
+);
+const ActBtn = ({ busy, label, doing = 'Working…', c = 'ink', disabled, className = '', ...p }) => (
+  <Btn c={c} className={className} disabled={busy || disabled} {...p}>
+    <span className="inline-flex items-center gap-2">
+      {busy && <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />}
+      {busy ? doing : label}
+    </span>
+  </Btn>
+);
+const FIELD = 'w-full px-3 py-2 text-xs rounded-[6px] border border-black/20 bg-white focus:outline-none focus:border-[#16a34a] disabled:bg-black/5';
+const Inp = ({ className = '', ...p }) => <input className={`${FIELD} ${className}`} {...p} />;
+const Sel = ({ options, value, onChange, className = '', ...p }) => (
+  <select value={value} onChange={(e) => onChange(e.target.value)} className={`${FIELD} ${className}`} {...p}>
+    {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+  </select>
+);
+const Field = ({ l, hint, children }) => (
+  <label className="block text-xs font-medium">
+    <span className="mb-1.5 block">{l}</span>
+    {children}
+    {hint && <span className="mt-1.5 block font-normal text-black/50">{hint}</span>}
+  </label>
+);
+const Card = ({ t, sub, action, children, className = '' }) => (
+  <section className={`rounded-[8px] border border-black/10 bg-white p-5 ${className}`}>
+    {(t || action) && (
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          {t && <h3 className="text-sm font-semibold">{t}</h3>}
+          {sub && <p className="mt-1 text-xs text-black/55">{sub}</p>}
+        </div>
+        {action}
+      </div>
+    )}
+    {children}
+  </section>
+);
+const Alert = ({ ok, children }) => (
+  <p role={ok ? 'status' : 'alert'}
+    className={`rounded-[6px] border px-4 py-3 text-xs font-medium ${ok ? 'border-[#16a34a]/40 bg-[#16a34a]/5 text-[#15803d]' : 'border-[#ff4500]/40 bg-[#ff4500]/5 text-[#c2310a]'}`}>
+    {children}
+  </p>
+);
+const BADGE = {
+  approved: 'bg-[#16a34a] text-white', pending: 'bg-[#ff4500]/10 text-[#c2310a]', rejected: 'bg-black/10 text-black/55',
+  present: 'bg-[#16a34a] text-white', absent: 'bg-[#ff4500]/10 text-[#c2310a]', late: 'bg-[#f59e0b]/15 text-[#b45309]',
+  returned: 'bg-[#2563eb]/10 text-[#1d4ed8]', removed: 'bg-black/10 text-black/55', open: 'bg-[#16a34a]/10 text-[#15803d]',
+  full: 'bg-[#ff4500] text-white', over: 'bg-[#dc2626] text-white', draft: 'bg-[#2563eb]/10 text-[#1d4ed8]',
+  published: 'bg-[#16a34a]/10 text-[#15803d]', none: 'bg-black/5 text-black/60', queue: 'bg-[#2563eb]/10 text-[#1d4ed8]',
+  released: 'bg-black/10 text-black/55', active: 'bg-[#16a34a] text-white',
+};
+const Badge = ({ s, children }) => (
+  <span className={`inline-block whitespace-nowrap rounded-[4px] px-2 py-0.5 text-[11px] font-semibold ${BADGE[s] || 'bg-black/5 text-black/60'}`}>{children || s}</span>
+);
+const Empty = ({ children }) => <p className="py-6 text-center text-sm text-black/50">{children}</p>;
+const Stat = ({ v, t, tone }) => {
+  const color = { gr: 'text-[#16a34a]', or: 'text-[#ff4500]', am: 'text-[#b45309]', rd: 'text-[#dc2626]' }[tone] || 'text-[#111827]';
+  return (
+    <div className="rounded-[8px] border border-black/10 bg-white p-4">
+      <div className={`text-2xl font-bold ${color}`}>{v}</div>
+      <div className="mt-1 text-xs font-medium text-black/60">{t}</div>
+    </div>
   );
 };
-const toIds = v => (Array.isArray(v) ? v : []).map(Number).filter(Number.isInteger);
-
-// Today and the time in the school's time zone, as 'YYYY-MM-DD' and 'HH:MM'.
-const nowLocal = () => {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-    .formatToParts(new Date()).map(x => [x.type, x.value]));
-  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
+const Loader = ({ label = 'Loading', full = false }) => {
+  const el = (
+    <div role="status" className="flex flex-col items-center gap-2">
+      <div className="relative grid h-14 w-14 place-items-center rounded-full">
+        <span className="absolute inset-0 animate-spin rounded-full border-[3px] border-[#16a34a]/20 border-t-[#ff4500]" />
+        <span className="text-[11px] font-extrabold text-[#16a34a]">Asyv</span>
+      </div>
+      <span className="text-xs text-black/55">{label}…</span>
+    </div>
+  );
+  return full ? <div className="grid min-h-[50vh] place-items-center">{el}</div> : el;
 };
-const addDay = (s, n) => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
-const HM = t => String(t || '').slice(0, 5);
-const mins = t => { const [h, m] = HM(t).split(':').map(Number); return (h || 0) * 60 + (m || 0); };
-const isOver = (s, now = nowLocal()) => s.date < now.date || (s.date === now.date && mins(s.to) <= mins(now.time));
-const hasStarted = (s, now = nowLocal()) => s.date < now.date || (s.date === now.date && mins(s.from) <= mins(now.time));
-const pad2 = n => String(n).padStart(2, '0');
-const dayStr = d => (d instanceof Date ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` : String(d ?? '').slice(0, 10));
-// State of one lab time, shown on every screen: draft, over, full or open.
-const stateOf = s => (!s.published ? 'draft' : isOver(s) ? 'over' : s.left < 1 ? 'full' : 'open');
-
-const app = express(), server = http.createServer(app);
-const io = new Server(server, { cors: { origin: CLIENT } });
-app.use(cors({ origin: CLIENT }), express.json({ limit: '40mb' }));
-
-const sign = p => jwt.sign(p, SECRET, { expiresIn: '7d' });
-const fail = (code, msg) => { const e = new Error(msg); e.code = code; throw e; };
-const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-const isRevokedAdmin = async email => !!await one('SELECT 1 FROM admin_revocations WHERE email = $1', [String(email || '').toLowerCase()]);
-const auth = (...roles) => async (req, res, next) => {
-  try { req.user = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), SECRET); }
-  catch { return res.status(401).json({ error: 'Please sign in again.' }); }
-  if (req.user.role === 'admin' && !isSuperAdmin(req.user.email) && await isRevokedAdmin(req.user.email)) {
-    return res.status(403).json({ error: 'This admin account has been removed.' });
-  }
-  if (roles.length && !roles.includes(req.user.role)) return res.status(403).json({ error: 'You do not have access to this.' });
-  next();
+const Modal = ({ title, onClose, wide, children }) => (
+  <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/40 p-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label={title}
+      className={`my-auto max-h-[92vh] w-full overflow-y-auto rounded-[8px] bg-white p-6 shadow-xl ${wide ? 'max-w-3xl' : 'max-w-md'}`}
+      onClick={(e) => e.stopPropagation()}>
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <button type="button" aria-label="Close" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full text-black/50 hover:bg-black/5 hover:text-black"><X className="h-4 w-4" aria-hidden="true" /></button>
+      </div>
+      {children}
+    </div>
+  </div>
+);
+const SearchBox = ({ value, onChange, placeholder = 'Search' }) => (
+  <Inp type="search" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder} />
+);
+const Pills = ({ value, onChange, items }) => (
+  <div className="flex flex-wrap gap-2">
+    {items.map(([v, t, n]) => (
+      <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}
+        className={`rounded-[6px] border px-3 py-1.5 text-xs font-semibold ${value === v ? 'border-[#16a34a] bg-[#16a34a] text-white' : 'border-black/15 bg-white text-black/70 hover:bg-black/5'}`}>
+        {t}{n != null && <span className="ml-1.5 opacity-70">{n}</span>}
+      </button>
+    ))}
+  </div>
+);
+const DayBar = ({ day, onChange }) => {
+  const safeDay = isBookableDay(day) ? day : pickBookableDay(day || today());
+  const jump = (delta) => onChange(shiftBookableDay(safeDay, delta));
+  const choose = (value) => onChange(isBookableDay(value) ? value : pickBookableDay(value));
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Btn c="w" onClick={() => jump(-1)}><ChevronLeft className="h-4 w-4" aria-hidden="true" />Previous day</Btn>
+      <Inp type="date" aria-label="Choose a day" value={safeDay} onChange={(e) => e.target.value && choose(e.target.value)} className="!w-40" />
+      <Btn c="w" onClick={() => jump(1)}>Next day<ChevronRight className="h-4 w-4" aria-hidden="true" /></Btn>
+      {safeDay !== today() && <Btn onClick={() => onChange(pickBookableDay(today()))}>Today</Btn>}
+    </div>
+  );
 };
-// Photos, videos and files are opened by <img> and <video> tags, which cannot send a header. They pass the token as ?t=...
-const qAuth = (req, _res, next) => { if (!req.headers.authorization && req.query.t) req.headers.authorization = 'Bearer ' + req.query.t; next(); };
-// Minister of Communication: checked in the database on each request. The admin can always do it too.
-const comm = [auth(), wrap(async (req, _res, next) => {
-  if (req.user.role === 'admin') return next();
-  const ok = req.user.id && await one("SELECT 1 AS ok FROM users WHERE id = $1 AND profile->>'comm' = 'true'", [req.user.id]);
-  if (!ok) fail(403, 'Only the Minister of Communication can do this.');
-  next();
-})];
-
-// Sends stored bytes with range support (needed so videos and audio can be played and skipped).
-function sendData(req, res, f, { download = false, priv = false } = {}) {
-  const size = f.data.length;
-  res.set({
-    'Content-Type': f.mime || 'application/octet-stream', 'Accept-Ranges': 'bytes',
-    'Cache-Control': priv ? 'private, max-age=3600' : 'public, max-age=86400',
-    'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*',
-    'Content-Disposition': `${download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(f.name || 'file')}`,
-  });
-  const r = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
-  if (r && (r[1] || r[2])) {
-    const start = r[1] ? +r[1] : Math.max(size - +r[2], 0), end = r[1] && r[2] ? Math.min(+r[2], size - 1) : size - 1;
-    if (start > end || start >= size) return res.status(416).set('Content-Range', `bytes */${size}`).end();
-    return res.status(206).set({ 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 }).end(f.data.subarray(start, end + 1));
+const Avatar = ({ name, picture, gid, className = 'h-10 w-10 text-xs' }) => {
+  const srcs = [directImg(picture), gravatar(gid), cartoon(name)].filter(Boolean);
+  const [i, setI] = useState(0);
+  useEffect(() => setI(0), [picture, gid, name]);
+  if (i < srcs.length) {
+    return <img src={srcs[i]} alt="" referrerPolicy="no-referrer" onError={() => setI((n) => n + 1)} className={`shrink-0 rounded-full bg-black/10 object-cover ${className}`} />;
   }
-  return res.set('Content-Length', size).end(f.data);
+  return <span className={`grid shrink-0 place-items-center rounded-full bg-[#16a34a] font-bold text-white ${className}`}>{initials(name)}</span>;
+};
+const Person = ({ p, sub, className = 'h-9 w-9 text-xs' }) => (
+  <span className="flex min-w-0 items-center gap-3">
+    <Avatar name={p.name} picture={p.picture} gid={p.gid} className={className} />
+    <span className="min-w-0">
+      <b className="block truncate">{p.name}</b>
+      <span className="block truncate text-xs text-black/55">{sub ?? (p.email || 'No email')}</span>
+    </span>
+  </span>
+);
+// An image that falls back to something else when it cannot load (broken link, blocked host).
+const Photo = ({ src, alt = '', className = '', fallback = null }) => {
+  const [bad, setBad] = useState(false);
+  useEffect(() => setBad(false), [src]);
+  if (!src || bad) return fallback;
+  return <img src={src} alt={alt} loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} className={className} />;
+};
+// The picture of a lab: its own image (uploaded or a link), or a nice default one.
+const LabImg = ({ lab, index = 0, className = '', w = 900 }) => {
+  const def = defaultLabPic(lab?.id ?? index, w);
+  const nameKey = String(lab?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const namedImage = LAB_IMAGES_BY_NAME[nameKey];
+  const src = lab?.image ? labSrc(lab.image) : namedImage || def;
+  return <Photo src={src || def} alt={lab?.name || 'Computer lab'} className={className}
+    fallback={<img src={def} alt={lab?.name || 'Computer lab'} className={className} />} />;
+};
+const ThemeBtn = ({ dark, onToggle, className = '' }) => (
+  <button type="button" aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} onClick={onToggle}
+    className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border border-black/15 bg-white text-[#111827] hover:bg-black/5 ${className}`}>
+    {dark ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
+  </button>
+);
+// Previous / Next controls for long lists.
+const Pager = ({ page, pages, onChange, label }) => (pages > 1 ? (
+  <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-black/10 pt-3">
+    <span className="text-xs text-black/55">{label}</span>
+    <div className="flex items-center gap-2">
+      <Btn c="w" disabled={page <= 0} onClick={() => onChange(page - 1)}><ChevronLeft className="h-4 w-4" aria-hidden="true" />Previous</Btn>
+      <span className="text-xs font-semibold">{page + 1} / {pages}</span>
+      <Btn c="w" disabled={page >= pages - 1} onClick={() => onChange(page + 1)}>Next<ChevronRight className="h-4 w-4" aria-hidden="true" /></Btn>
+    </div>
+  </div>
+) : null);
+// "Select all" bar used above lists that can be deleted in bulk.
+const SelectBar = ({ total, selected, onAll, onNone, children }) => (
+  <div className="mb-3 flex flex-wrap items-center gap-3 rounded-[6px] bg-black/[0.03] px-3 py-2">
+    <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold">
+      <input type="checkbox" className="h-4 w-4 accent-[#16a34a]" checked={total > 0 && selected === total}
+        ref={(el) => { if (el) el.indeterminate = selected > 0 && selected < total; }}
+        onChange={(e) => (e.target.checked ? onAll() : onNone())} />
+      Select all ({total})
+    </label>
+    {selected > 0 && <span className="text-xs text-black/55">{selected} selected</span>}
+    <span className="ml-auto flex flex-wrap items-center gap-2">{children}</span>
+  </div>
+);
+
+// Waits for one action at a time. A second click does nothing while busy.
+function useBusy() {
+  const [busy, setBusy] = useState('');
+  const ref = useRef('');
+  const run = useCallback(async (key, fn) => {
+    if (ref.current) return undefined;
+    ref.current = key;
+    setBusy(key);
+    try { return await fn(); }
+    finally { ref.current = ''; setBusy(''); }
+  }, []);
+  return { busy, run };
 }
 
-/* ---------- Activity log and live presence (admins) ---------- */
-
-const logAct = async (user, action, detail = '') => {
-  try {
-    await query('INSERT INTO activity(actor, action, detail) VALUES($1,$2,$3)', [user?.name || 'System', action, String(detail).slice(0, 300)]);
-    io.to('admins').emit('activity:update');
-  } catch (e) { console.error('activity log:', e.message); }
-};
-
-// Remember every admin who signs in, so the admin chat can list them (even when they are offline).
-const upsertAdmin = u => (u?.email
-  ? query(`INSERT INTO admin_people(email, name, picture, last_seen) VALUES($1,$2,$3,now())
-      ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name,
-        picture = CASE WHEN EXCLUDED.picture <> '' THEN EXCLUDED.picture ELSE admin_people.picture END, last_seen = now()`,
-  [u.email, u.name || u.email, u.picture || '']).catch(e => console.error('admin_people:', e.message))
-  : Promise.resolve());
-
-// presence: socket id -> { name, email, page, since }. The client sends its page with the 'page' event.
-const presence = new Map();
-// Track invited calls so signaling can only be relayed between the two admins
-// who were invited; a call ID alone is not authorization.
-const activeCalls = new Map();
-const sendCallPush = async (email, payload) => {
-  const subscriptions = await query('SELECT endpoint, subscription FROM admin_push_subscriptions WHERE email = $1', [email]);
-  const results = await Promise.allSettled(subscriptions.map(async ({ endpoint, subscription }) => {
-    try {
-      await webpush.sendNotification(subscription, JSON.stringify(payload), { TTL: 30, urgency: 'high' });
-    } catch (e) {
-      if (e.statusCode === 404 || e.statusCode === 410) {
-        await query('DELETE FROM admin_push_subscriptions WHERE endpoint = $1', [endpoint]);
-        return false;
-      }
-      throw e;
-    }
-    return true;
-  }));
-  const failures = results.filter(r => r.status === 'rejected');
-  failures.forEach(r => console.error('call push:', r.reason?.message || r.reason));
-  return results.some(r => r.status === 'fulfilled' && r.value);
-};
-const presenceList = () => {
-  const byEmail = new Map();
-  presence.forEach(p => { const cur = byEmail.get(p.email); if (!cur || cur.since < p.since) byEmail.set(p.email, p); });
-  return [...byEmail.values()];
-};
-const pushPresence = () => io.to('admins').emit('presence', presenceList());
-
-/* ---------- Data helpers ---------- */
-
-const CLASS_SQL = "COALESCE(NULLIF(profile->>'cls', ''), profile->>'grade', '')";
-// A lab picture is either an uploaded file (served by this API) or a link the admin pasted.
-const LAB_IMG = "CASE WHEN image_data IS NOT NULL THEN '/api/labs/' || id || '/photo?v=' || image_ver ELSE COALESCE(image, '') END AS image";
-const ASSIGNED = 'Assigned by admin';
-const forText = s => s.forGroupName || s.forClass || (s.forPeople ? `${s.forPeople} chosen student${s.forPeople === 1 ? '' : 's'}` : '');
-
-const withPeople = async rows => {
-  const m = new Map((await query("SELECT username, email, profile->>'picture' AS picture, md5(lower(email)) AS gid FROM users")).map(r => [r.username, r]));
-  return rows.map(a => { const p = m.get(a.name); return { ...a, email: p?.email || '', picture: p?.picture || '', gid: p?.gid || '' }; });
-};
-const withExtras = async rows => {
-  if (!rows.length) return rows;
-  const ex = new Map((await query(`SELECT id, late, note,
-    to_char(checked_in_at AT TIME ZONE $2::text, 'HH24:MI') AS "checkedInAt"
-    FROM applications WHERE id = ANY($1::int[])`, [rows.map(r => r.id), TZ])).map(r => [r.id, r]));
-  return rows.map(a => { const x = ex.get(a.id); return { ...a, late: !!x?.late, note: x?.note || '', released: /^Released/.test(x?.note || ''), checkedInAt: x?.checkedInAt || null }; });
-};
-
-const SESSION_ORDER = 'ORDER BY date, "from", lab';
-// Admin: every lab time (drafts too, with the list of assigned people). Students: published lab times they may book. Others: published lab times.
-const listSessions = async (all = false, user = null) => {
-  let rows;
-  if (all) rows = await query(`SELECT * FROM session_places ${SESSION_ORDER}`);
-  else if (user?.role === 'student') {
-    const me = await one(`SELECT id, ${CLASS_SQL} AS cls FROM users WHERE id = $1`, [user.id || 0]);
-    rows = await query(`SELECT * FROM session_places sp WHERE published AND (
-        NOT exclusive
-        OR (sp."forClass" <> '' AND sp."forClass" = $2::text)
-        OR (sp."forGroup" IS NOT NULL AND EXISTS (SELECT 1 FROM student_group_members gm WHERE gm.group_id = sp."forGroup" AND gm.user_id = $1::int))
-        OR EXISTS (SELECT 1 FROM session_people p WHERE p.session_id = sp.id AND p.user_id = $1::int)
-      ) ${SESSION_ORDER}`, [me?.id || 0, me?.cls || '']);
-  } else rows = await query(`SELECT * FROM session_places WHERE published ${SESSION_ORDER}`);
-  return rows.map(({ people, ...r }) => ({ ...r, state: stateOf(r), ...(all ? { people } : {}) }));
-};
-// Booking rows. date is always 'YYYY-MM-DD' and times 'HH:MM'.
-const listApps = async (where = '', params = []) => {
-  const rows = await withExtras(await withPeople(await query('SELECT * FROM application_details' + (where ? ' WHERE ' + where : '') + ' ORDER BY "at", id', params)));
-  return rows.map(a => ({ ...a, date: dayStr(a.date), from: HM(a.from), to: HM(a.to) }));
-};
-const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_places WHERE id = $1', [sid]))[0]?.left ?? 0;
-const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Booking not found.');
-const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
-const saveOption = (q, k, value) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(value)]);
-
-const seedOptions = async () => {
-  const cur = await getOptions();
-  for (const [k, v] of Object.entries(DEFAULTS)) {
-    let missing;
-    if (k === 'gradeCombos') missing = !cur[k] || Array.isArray(cur[k]);
-    else if (k in SETTING_PARSERS) missing = cur[k] === undefined || cur[k] === null;
-    else missing = !Array.isArray(cur[k]) || !cur[k].length;
-    if (missing) await saveOption(query, k, v);
-  }
-};
-
-const studentProfile = async (grade, combo, section) => {
-  const opts = await getOptions();
-  const grades = opts.grades?.length ? opts.grades : DEFAULTS.grades;
-  grade = String(grade || '').trim();
-  if (!grades.includes(grade)) fail(400, 'Choose a valid class.');
-  const combos = combosFor(opts, grade);
-  combo = String(combo || '').trim();
-  if (combos.length && !combos.includes(combo)) fail(400, `Choose a valid combination for ${grade}.`);
-  if (!combos.length) combo = '';
-  section = String(section || '').trim().toUpperCase();
-  if (section && !SECTION_RE.test(section)) fail(400, 'The section must be a letter (A to Z) or a number (1 to 12), or empty.');
-  return { grade, combo, section, cls: [grade, combo, section].filter(Boolean).join(' ') };
-};
-
-/* ---------- Booking engine: waiting list, fair-use rule, late students ---------- */
-
-const liveOn = (q, date) => q(`SELECT d.name, d.sid, d."from", d."to", d.status, sp."left" AS lft
-  FROM application_details d JOIN session_places sp ON sp.id = d.sid
-  WHERE d.status <> 'rejected' AND d.date = $1`, [date]);
-const holds = (b, sid) => +b.sid === +sid || b.status === 'approved' || +b.lft > 0;
-const overlaps = (b, s) => HM(b.from) < HM(s.to) && HM(s.from) < HM(b.to);
-
-const dropQueueOverlap = async (q, name, sid) => {
-  const s = (await q('SELECT date, "from", "to" FROM session_places WHERE id = $1', [sid]))[0];
-  if (!s) return;
-  await q(`DELETE FROM applications WHERE student = $1 AND status = 'pending' AND session_id <> $2
-    AND session_id IN (SELECT id FROM session_places WHERE date = $3 AND "from" < $5 AND $4 < "to" AND "left" < 1)`, [name, sid, s.date, s.from, s.to]);
-};
-
-const tooManyInRow = async (q, name, date, sid, max) => {
-  if (!(max >= 1)) return false;
-  const rows = await q(`SELECT DISTINCT d.date::text AS day FROM application_details d JOIN session_places sp ON sp.id = d.sid
-    WHERE lower(d.name) = lower($1) AND d.status IN ('approved', 'pending') AND NOT (d.status = 'pending' AND sp."left" < 1)
-    AND d.sid <> $2::int AND d.date::text BETWEEN $3::text AND $4::text`, [name, sid, addDay(date, -max), addDay(date, max)]);
-  const days = new Set(rows.map(r => String(r.day).slice(0, 10)));
-  let run = 1;
-  for (let i = 1; days.has(addDay(date, -i)); i++) run++;
-  for (let i = 1; days.has(addDay(date, i)); i++) run++;
-  return run > max;
-};
-
-const queueFor = async (q, s) => {
-  const max = maxOf(await getOptions());
-  const banned = new Set((await q('SELECT name FROM blacklist')).map(b => nameKey(b.name)));
-  const live = await liveOn(q, s.date);
-  const waiting = await q("SELECT id, student, booked_by FROM applications WHERE session_id = $1 AND status = 'pending' ORDER BY id", [s.id]);
-  const out = [];
-  for (const a of waiting) {
-    const k = nameKey(a.student);
-    if (banned.has(k)) continue;
-    if (live.some(b => nameKey(b.name) === k && +b.sid !== +s.id && holds(b, s.id) && overlaps(b, s))) continue;
-    if (a.booked_by !== ASSIGNED && await tooManyInRow(q, a.student, s.date, s.id, max)) continue;
-    out.push(a);
-  }
-  return out;
-};
-
-// Free places go to the waiting list in order (instant-booking lab times only).
-const promote = async (q, sid, touched = []) => {
-  const s = (await q('SELECT id, date, "from", "to", "left", "autoApprove" FROM session_places WHERE id = $1', [sid]))[0];
-  if (!s || !s.autoApprove || s.left < 1) return 0;
-  let left = s.left, n = 0;
-  for (const a of await queueFor(q, s)) {
-    if (left < 1) break;
-    await q("UPDATE applications SET status = 'approved', note = '' WHERE id = $1", [a.id]);
-    await dropQueueOverlap(q, a.student, sid);
-    left--; n++; touched.push(a.student, a.booked_by);
-  }
-  return n;
-};
-
-// The lab time is full, students are waiting, and some approved students did not arrive: release only what the queue needs.
-const releaseNoShows = async (q, sid, touched = []) => {
-  await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sid]);
-  await promote(q, sid, touched);
-  const s = (await q('SELECT id, date, "from", "to", "left" FROM session_places WHERE id = $1', [sid]))[0];
-  if (!s) return { released: 0, promoted: 0 };
-  const need = (await queueFor(q, s)).length - s.left;
-  if (need < 1) return { released: 0, promoted: 0 };
-  const cands = await q("SELECT id, student, booked_by FROM applications WHERE session_id = $1 AND status = 'approved' AND attendance IS NULL ORDER BY id DESC LIMIT $2", [sid, need]);
-  if (!cands.length) return { released: 0, promoted: 0 };
-  await q("UPDATE applications SET status = 'rejected', note = $2 WHERE id = ANY($1::int[])", [cands.map(c => c.id), 'Released: did not arrive in time']);
-  cands.forEach(c => touched.push(c.student, c.booked_by));
-  return { released: cands.length, promoted: await promote(q, sid, touched) };
-};
-
-/* ---------- Socket.io ---------- */
-
-io.use(async (socket, next) => {
-  const t = socket.handshake.auth?.token;
-  if (!t) { socket.user = null; return next(); }
-  try { socket.user = jwt.verify(t, SECRET); }
-  catch { return next(new Error('unauthorized')); }
-  try {
-    if (socket.user?.role === 'admin' && !isSuperAdmin(socket.user.email) && await isRevokedAdmin(socket.user.email)) {
-      return next(new Error('unauthorized'));
-    }
-  } catch (e) { return next(e); }
-  next();
-});
-io.on('connection', socket => {
-  if (!socket.user) { socket.join('public'); return; }
-  socket.join('auth');
-  if (socket.user.role === 'admin') {
-    const me = socket.user;
-    socket.join('admins');
-    socket.join(`admin:${me.email}`);
-    upsertAdmin(me);
-    presence.set(socket.id, { name: me.name, email: me.email, picture: me.picture || '', page: 'Overview', since: Date.now() });
-    pushPresence();
-    socket.on('page', p => {
-      const cur = presence.get(socket.id);
-      if (!cur) return;
-      cur.page = String(p || 'Overview').slice(0, 60);
-      cur.since = Date.now();
-      pushPresence();
-    });
-    // "is typing...": sent to the other admin, or to every other admin for the group chat.
-    socket.on('chat:typing', async to => {
-      const payload = { from: me.email, name: me.name, to: to === 'all' ? 'all' : String(to || '').toLowerCase() };
-      try {
-        if (payload.to === 'all') socket.to('admins').emit('chat:typing', payload);
-        else if (validEmail(payload.to)) io.to(`admin:${payload.to}`).emit('chat:typing', payload);
-        else if (/^group:\d+$/.test(payload.to)) {
-          const groupId = Number(payload.to.slice(6));
-          const member = await one("SELECT 1 AS ok FROM admin_chat_group_members WHERE group_id = $1 AND email = $2 AND status = 'accepted'", [groupId, me.email]);
-          if (!member) return;
-          const members = await query("SELECT email FROM admin_chat_group_members WHERE group_id = $1 AND status = 'accepted' AND email <> $2", [groupId, me.email]);
-          members.forEach(p => io.to(`admin:${p.email}`).emit('chat:typing', payload));
-        }
-      } catch (e) { console.error('chat typing:', e.message); }
-    });
-    // Calls: the server only passes the messages between the two admins. WebRTC carries the sound and the video.
-    const handleCallEvent = async (ev, p) => {
-      const to = String(p?.to || '').toLowerCase();
-      if (!validEmail(to) || to === me.email) return;
-      const callId = String(p?.callId || '').slice(0, 100);
-      if (!callId) return;
-      if (ev === 'call:invite') {
-        if (activeCalls.has(callId)) return;
-        const targetOnline = !!io.sockets.adapter.rooms.get(`admin:${to}`)?.size;
-        const targetHasPush = !targetOnline && !!await one('SELECT 1 FROM admin_push_subscriptions WHERE email = $1', [to]);
-        if (!targetOnline && !targetHasPush) {
-          socket.emit('call:unavailable', { callId, from: to });
-          return;
-        }
-        await query(`INSERT INTO admin_call_invites(call_id, caller_email, caller_name, caller_picture, callee_email, kind, expires_at)
-          VALUES($1,$2,$3,$4,$5,$6,now() + interval '45 seconds')`,
-        [callId, me.email, me.name || me.email, me.picture || '', to, p.kind === 'video' ? 'video' : 'audio']);
-        activeCalls.set(callId, { caller: me.email, callee: to });
-        const invite = {
-          callId, kind: p.kind === 'video' ? 'video' : 'audio',
-          from: me.email, name: me.name, picture: me.picture || '',
-        };
-        if (targetOnline) io.to(`admin:${to}`).emit(ev, invite);
-        else if (!await sendCallPush(to, {
-          title: `Incoming ${invite.kind} call`,
-          body: `${invite.name} is calling you.`,
-          url: `/?incomingCall=${encodeURIComponent(callId)}`,
-          callId,
-        })) {
-          activeCalls.delete(callId);
-          await query('DELETE FROM admin_call_invites WHERE call_id = $1', [callId]);
-          socket.emit('call:unavailable', { callId, from: to });
-        }
-        return;
-      } else {
-        let call = activeCalls.get(callId);
-        if (!call) {
-          const row = await one(`SELECT caller_email AS caller, callee_email AS callee FROM admin_call_invites
-            WHERE call_id = $1 AND expires_at > now()`, [callId]);
-          if (row) { call = row; activeCalls.set(callId, call); }
-        }
-        if (!call || !((call.caller === me.email && call.callee === to) || (call.callee === me.email && call.caller === to))) return;
-        if (ev === 'call:accept' || ['call:end', 'call:reject', 'call:busy'].includes(ev)) {
-          await query('DELETE FROM admin_call_invites WHERE call_id = $1', [callId]);
-        }
-        if (['call:end', 'call:reject', 'call:busy'].includes(ev)) activeCalls.delete(callId);
-      }
-      io.to(`admin:${to}`).emit(ev, {
-        callId, kind: p.kind === 'video' ? 'video' : 'audio', data: p.data,
-        // The current chat client uses WebRTC's call:signal protocol directly.
-        // Forward its fields (offer/answer/ICE candidate and mode) unchanged.
-        ...(ev === 'call:signal' ? {
-          type: p.type,
-          mode: p.mode === 'video' ? 'video' : 'audio',
-          offer: p.offer,
-          answer: p.answer,
-          candidate: p.candidate,
-        } : {}),
-        from: me.email, name: me.name, picture: me.picture || '',
-      });
-    };
-    ['call:invite', 'call:accept', 'call:reject', 'call:end', 'call:signal', 'call:busy'].forEach(ev => socket.on(ev, p => {
-      handleCallEvent(ev, p).catch(e => {
-        console.error('call event:', e.message);
-        if (p?.callId) socket.emit('call:unavailable', { callId: String(p.callId), from: p.to });
-      });
-    }));
-    socket.on('disconnect', () => {
-      for (const [callId, call] of activeCalls) {
-        if (call.caller === me.email || call.callee === me.email) {
-          const other = call.caller === me.email ? call.callee : call.caller;
-          io.to(`admin:${other}`).emit('call:end', { callId, from: me.email });
-          activeCalls.delete(callId);
-          query('DELETE FROM admin_call_invites WHERE call_id = $1', [callId]).catch(e => console.error('call cleanup:', e.message));
-        }
-      }
-      presence.delete(socket.id);
-      pushPresence();
-      query('UPDATE admin_people SET last_seen = now() WHERE email = $1', [me.email]).catch(() => {});
-    });
-  } else socket.join(`user:${socket.user.name}`);
-});
-const pushSeats = () => { io.emit('overview:update'); io.to('auth').emit('seats'); };
-const pushApps = (names = []) => {
-  io.to('admins').emit('applications:update');
-  [...new Set(names.filter(Boolean))].forEach(n => io.to(`user:${n}`).emit('applications:update'));
-  pushSeats();
-};
-
-/* ---------- Sign in: Google only ---------- */
-
-app.post('/api/google', wrap(async (req, res) => {
-  let p;
-  try { p = (await gClient.verifyIdToken({ idToken: req.body.credential, audience: process.env.GOOGLE_CLIENT_ID })).getPayload(); }
-  catch { fail(401, 'Google sign-in failed. Please try again.'); }
-  if (!p.email_verified) fail(403, 'Your Google email is not verified.');
-  const email = p.email.toLowerCase(), picture = p.picture || '';
-  if (isSuperAdmin(email) || ADMINS.includes(email)) {
-    if (!isSuperAdmin(email) && await isRevokedAdmin(email)) fail(403, 'This admin account has been removed.');
-    const name = cleanName(p.name || email.split('@')[0]);
-    await upsertAdmin({ email, name, picture });
-    return res.json({ token: sign({ id: 0, role: 'admin', name, email, picture }) });
-  }
-  const u = await one('SELECT id, username, role FROM users WHERE lower(email) = $1', [email]);
-  if (!u) fail(403, 'There is no account for this Google email. Ask your admin to add it.');
-  if (picture) await query("UPDATE users SET profile = profile || jsonb_build_object('picture', $1::text) WHERE id = $2 AND COALESCE(profile->>'pictureCustom', '') <> 'true'", [picture, u.id]);
-  res.json({ token: sign({ id: u.id, role: u.role, name: u.username, email, picture }) });
-}));
-
-app.get('/api/me', auth(), wrap(async (req, res) => {
-  let isComm = false, picture = req.user.picture || '';
-  if (req.user.id) {
-    const row = await one("SELECT profile->>'picture' AS picture, (profile->>'comm' = 'true') AS comm FROM users WHERE id = $1", [req.user.id]);
-    isComm = !!row?.comm;
-    picture = row?.picture || picture;
-  } else if (req.user.role === 'admin') {
-    const row = await one('SELECT picture FROM admin_profiles WHERE email = $1', [req.user.email]);
-    picture = row?.picture || picture;
-  }
-  res.json({ ...req.user, picture, comm: isComm, superAdmin: isSuperAdmin(req.user.email) });
-}));
-
-app.put('/api/me/profile', auth(), wrap(async (req, res) => {
-  const picture = directUrl(String(req.body.picture || '').trim());
-  const phone = String(req.body.phone || '').trim().slice(0, 40);
-  if (picture && !/^https?:\/\/\S+$/i.test(picture)) fail(400, 'The photo must be a link that starts with http:// or https://');
-  if (req.user.role === 'admin') {
-    await query('INSERT INTO admin_profiles(email, picture, phone) VALUES($1,$2,$3) ON CONFLICT (email) DO UPDATE SET picture = EXCLUDED.picture, phone = EXCLUDED.phone', [req.user.email, picture, phone]);
-    io.to('admins').emit('me:update');
-    return res.json({ ok: true });
-  }
-  if (picture) await query("UPDATE users SET profile = profile || jsonb_build_object('picture', $1::text, 'pictureCustom', 'true', 'phone', $2::text) WHERE id = $3", [picture, phone, req.user.id]);
-  else await query("UPDATE users SET profile = (profile - 'pictureCustom' - 'picture') || jsonb_build_object('phone', $1::text) WHERE id = $2", [phone, req.user.id]);
-  io.to(`user:${req.user.name}`).emit('me:update');
-  res.json({ ok: true });
-}));
-
-app.get('/api/profile', auth(), wrap(async (req, res) => {
-  const me = req.user;
-  let info = { name: me.name, email: me.email || '', role: me.role, picture: me.picture || '', cls: '', combo: '', section: '', phone: '', comm: false };
-  if (me.id) {
-    const u = await one(`SELECT username, email, role, profile->>'picture' AS picture, ${CLASS_SQL} AS cls, profile->>'combo' AS combo, profile->>'section' AS section, profile->>'phone' AS phone, (profile->>'comm' = 'true') AS comm FROM users WHERE id = $1`, [me.id]) || fail(404, 'Account not found.');
-    info = { name: u.username, email: u.email, role: u.role, picture: u.picture || me.picture || '', cls: u.cls, combo: u.combo || '', section: u.section || '', phone: u.phone || '', comm: !!u.comm };
-  } else if (me.role === 'admin') {
-    const a = await one('SELECT picture, phone FROM admin_profiles WHERE email = $1', [me.email]);
-    info.picture = a?.picture || info.picture;
-    info.phone = a?.phone || '';
-  }
-  let stats = null;
-  if (me.role !== 'admin') {
-    const rows = await listApps(me.role === 'student' ? 'name = $1' : '"bookedBy" = $1', [me.name]);
-    const n = k => rows.filter(a => a.status === k).length;
-    stats = { total: rows.length, approved: n('approved'), pending: n('pending'), rejected: n('rejected'), present: rows.filter(a => a.att === 'present').length };
-  }
-  res.json({ ...info, stats });
-}));
-
-app.get('/api/me/memberships', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
-  const me = req.user.id ? await one(`SELECT ${CLASS_SQL} AS cls FROM users WHERE id = $1`, [req.user.id]) : null;
-  const groups = req.user.id
-    ? await query('SELECT g.id, g.name, g.description FROM student_groups g JOIN student_group_members m ON m.group_id = g.id WHERE m.user_id = $1 ORDER BY g.name', [req.user.id])
-    : [];
-  res.json({ cls: me?.cls || '', groups });
-}));
-
-/* ---------- Accounts (admin) ---------- */
-
-app.get('/api/users', auth('admin'), wrap(async (_, res) =>
-  res.json(await query(`SELECT id, username AS name, email, role, profile->>'picture' AS picture, profile->>'phone' AS phone, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'grade' AS grade, profile->>'combo' AS combo, profile->>'section' AS section, (profile->>'comm' = 'true') AS comm FROM users ORDER BY role, username`))));
-
-const nameTaken = async (name, exceptId = 0) =>
-  (await query('SELECT id, username FROM users')).some(r => r.id !== exceptId && nameKey(r.username) === nameKey(name));
-const uniqueFail = e => { if (e.code === '23505') fail(409, 'This email or name already has an account.'); throw e; };
-
-app.post('/api/users', auth('admin'), wrap(async (req, res) => {
-  const { role, grade, combo, section } = req.body;
-  const name = cleanName(req.body.name), email = String(req.body.email || '').trim().toLowerCase();
-  if (!name) fail(400, 'Enter the full name.');
-  if (!validEmail(email)) fail(400, 'Enter a valid Google email address.');
-  if (!ROLES.includes(role)) fail(400, 'Choose a role.');
-  const profile = role === 'student' ? await studentProfile(grade, combo, section) : {};
-  if (req.body.phone) profile.phone = String(req.body.phone).trim().slice(0, 40);
-  if (await nameTaken(name)) fail(409, 'Someone with this name already has an account. Add a middle name or number to tell them apart.');
-  try {
-    let row;
-    try {
-      row = await one('INSERT INTO users(username, email, role, profile) VALUES($1,$2,$3,$4) RETURNING id, username AS name, email, role', [name, email, role, profile]);
-    } catch (e) {
-      if (e.code !== '23502') throw e;
-      row = await one("INSERT INTO users(username, email, hash, role, profile) VALUES($1,$2,'',$3,$4) RETURNING id, username AS name, email, role", [name, email, role, profile]);
-    }
-    await logAct(req.user, 'Added account', `${name} (${ROLE_NAMES[role]})`);
-    res.json(row);
-  } catch (e) { uniqueFail(e); }
-}));
-
-app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
-  const u = await one('SELECT id, username, email, role FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
-  const b = req.body, sets = [], p = [];
-  const add = (col, val) => { p.push(val); sets.push(`${col} = $${p.length}`); };
-  let expr = 'profile';
-  const merge = obj => { p.push(JSON.stringify(obj)); expr = `(${expr} || $${p.length}::jsonb)`; };
-  const drop = k => { expr = `(${expr} - '${k}')`; };
-
-  const role = b.role || u.role;
-  if (!ROLES.includes(role)) fail(400, 'Choose a role.');
-  let newName = null, emailChanged = false;
-  if (b.name != null && cleanName(b.name) !== u.username) {
-    newName = cleanName(b.name);
-    if (!newName) fail(400, 'The name cannot be empty.');
-    if (await nameTaken(newName, u.id)) fail(409, 'Someone with this name already has an account.');
-    add('username', newName);
-  }
-  if (b.email) {
-    const email = String(b.email).trim().toLowerCase();
-    if (!validEmail(email)) fail(400, 'Enter a valid Google email address.');
-    if (email !== String(u.email || '').toLowerCase()) { add('email', email); emailChanged = true; }
-  }
-  if (role !== u.role) add('role', role);
-  if (role === 'student') {
-    if (b.grade || role !== u.role) merge(await studentProfile(b.grade, b.combo, b.section));
-  } else if (u.role === 'student') {
-    ['grade', 'combo', 'section', 'cls'].forEach(drop);
-  }
-  if (emailChanged && b.picture === undefined) { drop('picture'); drop('pictureCustom'); }
-  if (b.picture !== undefined) {
-    const pic = directUrl(String(b.picture || '').trim());
-    if (pic && !/^https?:\/\/\S+$/i.test(pic)) fail(400, 'The photo must be a link that starts with http:// or https://');
-    if (pic) merge({ picture: pic, pictureCustom: 'true' });
-    else { drop('picture'); drop('pictureCustom'); }
-  }
-  if (b.phone !== undefined) merge({ phone: String(b.phone || '').trim().slice(0, 40) });
-  if (role === 'student') drop('comm');
-  if (expr !== 'profile') sets.push(`profile = ${expr}`);
-  if (!sets.length) return res.json({ ok: true });
-  p.push(u.id);
-  try {
-    await tx(async q => {
-      await q(`UPDATE users SET ${sets.join(', ')} WHERE id = $${p.length}`, p);
-      if (newName) {
-        await q('UPDATE applications SET student = $1 WHERE student = $2', [newName, u.username]);
-        await q('UPDATE applications SET booked_by = $1 WHERE booked_by = $2', [newName, u.username]);
-        await q('UPDATE blacklist SET name = $1 WHERE name = $2', [newName, u.username]);
-        await q('UPDATE trends SET posted_by = $1 WHERE posted_by = $2', [newName, u.username]);
-      }
-    });
-  } catch (e) { uniqueFail(e); }
-  await logAct(req.user, 'Edited account', newName || u.username);
-  io.to(`user:${u.username}`).emit('me:update');
-  if (newName) io.to(`user:${newName}`).emit('me:update');
-  pushApps(newName ? [u.username, newName] : [u.username]);
-  res.json({ ok: true });
-}));
-
-app.patch('/api/students/class', auth('admin'), wrap(async (req, res) => {
-  const ids = toIds(req.body.ids);
-  if (!ids.length) fail(400, 'Choose at least one student.');
-  const p = await studentProfile(req.body.grade, req.body.combo, req.body.section);
-  await query("UPDATE users SET profile = profile || $2::jsonb WHERE role = 'student' AND id = ANY($1::int[])", [ids, JSON.stringify(p)]);
-  await logAct(req.user, 'Moved students', `${ids.length} to ${p.cls}`);
-  pushSeats();
-  res.json({ updated: ids.length });
-}));
-
-// NEW: take students out of their class (they keep their account and bookings).
-app.patch('/api/students/class-remove', auth('admin'), wrap(async (req, res) => {
-  const ids = toIds(req.body.ids);
-  if (!ids.length) fail(400, 'Choose at least one student.');
-  const r = await query("UPDATE users SET profile = profile - 'grade' - 'combo' - 'section' - 'cls' WHERE role = 'student' AND id = ANY($1::int[]) RETURNING id", [ids]);
-  await logAct(req.user, 'Removed students from class', `${r.length} student(s)`);
-  pushSeats();
-  res.json({ updated: r.length });
-}));
-
-app.patch('/api/users/:id/communication', auth('admin'), wrap(async (req, res) => {
-  const u = await one('SELECT id, username FROM users WHERE id = $1', [req.params.id]) || fail(404, 'Account not found.');
-  if (req.body.on) await query(`UPDATE users SET profile = profile || '{"comm":"true"}'::jsonb WHERE id = $1`, [u.id]);
-  else await query("UPDATE users SET profile = profile - 'comm' WHERE id = $1", [u.id]);
-  await logAct(req.user, req.body.on ? 'Made Minister of Communication' : 'Removed Minister', u.username);
-  io.to(`user:${u.username}`).emit('me:update');
-  res.json({ ok: true });
-}));
-
-// Deleting an account also removes its bookings. Places it held go to the waiting list.
-const deleteUsers = async (user, ids) => {
-  if (!ids.length) return 0;
-  const { list, extra } = await tx(async q => {
-    const list = (await q('SELECT username FROM users WHERE id = ANY($1::int[])', [ids])).map(r => r.username);
-    const sids = (await q("SELECT DISTINCT session_id FROM applications WHERE student = ANY($1::text[]) AND status = 'approved'", [list])).map(r => r.session_id);
-    await q('DELETE FROM applications WHERE student = ANY($1::text[])', [list]);
-    await q('DELETE FROM users WHERE id = ANY($1::int[])', [ids]);
-    const extra = [];
-    for (const sid of sids) await promote(q, sid, extra);
-    return { list, extra };
-  });
-  await logAct(user, 'Deleted accounts', `${list.length}`);
-  pushApps([...list, ...extra]);
-  return list.length;
-};
-app.post('/api/users/bulk-delete', auth('admin'), wrap(async (req, res) => {
-  const ids = toIds(req.body.ids);
-  if (!ids.length) fail(400, 'Choose at least one account.');
-  res.json({ deleted: await deleteUsers(req.user, ids) });
-}));
-app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await deleteUsers(req.user, toIds([req.params.id])); res.sendStatus(204); }));
-
-/* ---------- Options ---------- */
-
-app.get('/api/options', wrap(async (_, res) => res.json(await getOptions())));
-app.put('/api/options', auth('admin'), wrap(async (req, res) => {
-  const changed = [];
-  await tx(async q => {
-    for (const [k, v] of Object.entries(req.body)) {
-      if (LISTS.includes(k) && Array.isArray(v)) { await saveOption(q, k, cleanList(v)); changed.push(k); }
-      else if (k === 'gradeCombos' && v && typeof v === 'object' && !Array.isArray(v)) {
-        await saveOption(q, k, Object.fromEntries(Object.entries(v).map(([g, list]) => [String(g).trim(), Array.isArray(list) ? cleanList(list) : []])));
-        changed.push(k);
-      }
-      else if (k in SETTING_PARSERS) { await saveOption(q, k, SETTING_PARSERS[k](v)); changed.push(k); }
-    }
-  });
-  if (changed.length) await logAct(req.user, 'Changed settings', changed.join(', '));
-  pushSeats();
-  res.json(await getOptions());
-}));
-
-app.get('/api/classes', auth('teacher', 'psychosocial', 'admin'), wrap(async (_, res) =>
-  res.json((await query(`SELECT DISTINCT ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND ${CLASS_SQL} <> '' ORDER BY cls`)).map(r => r.cls))));
-
-app.get('/api/students', auth('teacher', 'psychosocial', 'admin'), wrap(async (req, res) => {
-  const cols = `username AS name, email, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'combo' AS combo`;
-  const gid = Number(req.query.group) || 0;
-  if (gid) return res.json(await query(`SELECT ${cols} FROM users WHERE role = 'student' AND id IN (SELECT user_id FROM student_group_members WHERE group_id = $1) ORDER BY username`, [gid]));
-  const cls = req.query.class || '';
-  if (req.user.role === 'teacher' && !cls) fail(400, 'Choose a class or a group first.');
-  res.json(await query(`SELECT ${cols} FROM users WHERE role = 'student' AND ($1::text = '' OR ${CLASS_SQL} = $1::text) ORDER BY username`, [cls]));
-}));
-
-/* ---------- Student groups ---------- */
-
-const splitTokens = v => [...new Set((Array.isArray(v) ? v : String(v || '').split(/[\n,;]+/)).map(x => String(x).trim()).filter(Boolean))];
-const resolveStudents = async tokens => {
-  const studs = await query("SELECT id, username, lower(email) AS email FROM users WHERE role = 'student'");
-  const byEmail = new Map(studs.map(s => [s.email, s])), byName = new Map(studs.map(s => [nameKey(s.username), s]));
-  const ids = new Set(), notFound = [];
-  tokens.forEach(t => { const s = t.includes('@') ? byEmail.get(t.toLowerCase()) : byName.get(nameKey(t)); s ? ids.add(s.id) : notFound.push(t); });
-  return { ids: [...ids], notFound };
-};
-const addMembers = async (q, gid, ids) => {
-  if (!ids.length) return 0;
-  return (await q('INSERT INTO student_group_members(group_id, user_id) SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING RETURNING user_id', [gid, ids])).length;
-};
-const getGroup = async id => (Number.isInteger(+id) && await one('SELECT id, name, description FROM student_groups WHERE id = $1', [+id])) || fail(404, 'Group not found.');
-const groupName = async (name, exceptId = 0) => {
-  name = cleanName(name).slice(0, 80);
-  if (!name) fail(400, 'Enter a name for the group.');
-  if ((await query('SELECT id, name FROM student_groups')).some(g => g.id !== exceptId && g.name.toLowerCase() === name.toLowerCase())) fail(409, 'A group with this name already exists.');
-  return name;
-};
-
-app.get('/api/groups', auth('admin', 'teacher', 'psychosocial'), wrap(async (req, res) => {
-  const groups = await query('SELECT id, name, description FROM student_groups ORDER BY name');
-  const m = await query(`SELECT gm.group_id, id, username AS name, email, profile->>'picture' AS picture, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className"
-    FROM student_group_members gm JOIN users u ON u.id = gm.user_id ORDER BY username`);
-  res.json(groups.map(g => {
-    const members = m.filter(r => r.group_id === g.id).map(({ group_id, ...r }) => r);
-    return req.user.role === 'admin' ? { ...g, count: members.length, members } : { ...g, count: members.length };
-  }));
-}));
-
-app.post('/api/groups', auth('admin'), wrap(async (req, res) => {
-  const name = await groupName(req.body.name);
-  const { ids, notFound } = await resolveStudents(splitTokens(req.body.members));
-  const out = await tx(async q => {
-    const g = (await q('INSERT INTO student_groups(name, description) VALUES($1,$2) RETURNING id', [name, String(req.body.description || '').trim().slice(0, 300)]))[0];
-    return { id: g.id, added: await addMembers(q, g.id, ids) };
-  });
-  await logAct(req.user, 'Created group', `${name} (${out.added} students)`);
-  pushSeats();
-  res.json({ ...out, notFound });
-}));
-
-app.put('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
-  const g = await getGroup(req.params.id);
-  const name = await groupName(req.body.name ?? g.name, g.id);
-  await query('UPDATE student_groups SET name = $1, description = $2 WHERE id = $3', [name, String(req.body.description ?? g.description ?? '').trim().slice(0, 300), g.id]);
-  await logAct(req.user, 'Edited group', name);
-  pushSeats();
-  res.json({ ok: true });
-}));
-
-app.post('/api/groups/:id/members', auth('admin'), wrap(async (req, res) => {
-  const g = await getGroup(req.params.id);
-  const { ids, notFound } = await resolveStudents(splitTokens(req.body.members));
-  const added = await tx(q => addMembers(q, g.id, ids));
-  await logAct(req.user, 'Added to group', `${g.name}: ${added} students`);
-  pushSeats();
-  res.json({ added, notFound });
-}));
-
-app.delete('/api/groups/:id/members/:userId', auth('admin'), wrap(async (req, res) => {
-  const g = await getGroup(req.params.id);
-  await query('DELETE FROM student_group_members WHERE group_id = $1 AND user_id = $2', [g.id, +req.params.userId]);
-  await logAct(req.user, 'Removed from group', g.name);
-  pushSeats();
-  res.sendStatus(204);
-}));
-
-app.delete('/api/groups/:id', auth('admin'), wrap(async (req, res) => {
-  const g = await getGroup(req.params.id);
-  await query('DELETE FROM student_groups WHERE id = $1', [g.id]);
-  await logAct(req.user, 'Deleted group', g.name);
-  pushSeats();
-  res.sendStatus(204);
-}));
-
-/* ---------- Labs (with a picture each: uploaded file or link, changed one by one) ---------- */
-
-const labImage = v => {
-  const u = directUrl(String(v || '').trim());
-  if (u && !/^https?:\/\/\S+$/i.test(u)) fail(400, 'The lab image must be a link that starts with http:// or https://');
-  return u.slice(0, 600);
-};
-const LAB_IMG_OK = /^image\/(png|jpe?g|gif|webp|avif)$/i;
-const LAB_IMG_MAX = 8 * 1024 * 1024;
-
-app.get('/api/labs', auth(), wrap(async (_, res) => res.json(await query(`SELECT id, name, pcs, ${LAB_IMG} FROM labs ORDER BY name`))));
-app.post('/api/labs', auth('admin'), wrap(async (req, res) => {
-  const { name, pcs } = req.body;
-  if (!name?.trim() || !(+pcs >= 1)) fail(400, 'Enter a lab name and at least one computer.');
-  const image = labImage(req.body.image);
-  try {
-    const row = await one('INSERT INTO labs(name, pcs, image) VALUES($1,$2,$3) RETURNING id', [name.trim(), +pcs, image]);
-    await logAct(req.user, 'Added lab', `${name.trim()} (${+pcs} computers)`);
-    pushSeats();
-    res.json(row);
-  } catch (e) { fail(e.code === '23505' ? 409 : 500, e.code === '23505' ? 'A lab with this name already exists.' : e.message); }
-}));
-app.put('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
-  const { pcs } = req.body;
-  const name = req.body.name == null ? null : String(req.body.name).trim();
-  // An uploaded picture shows as a path that starts with /api/. Sending it back means "unchanged".
-  const raw = req.body.image;
-  const image = raw === undefined || (typeof raw === 'string' && raw.startsWith('/api/labs/')) ? null : labImage(raw);
-  if (name !== null && !name) fail(400, 'The lab name cannot be empty.');
-  if (pcs != null && !(+pcs >= 1)) fail(400, 'A lab needs at least one computer.');
-  if (pcs != null && (await listSessions(true)).some(s => s.labId == req.params.id && s.seats - s.left > +pcs)) fail(409, 'More students are approved than this many computers.');
-  try {
-    await tx(async q => {
-      await q(`UPDATE labs SET name = COALESCE($1, name), pcs = COALESCE($2, pcs), image = COALESCE($4::text, image),
-        image_data = CASE WHEN $4::text IS NULL THEN image_data ELSE NULL END,
-        image_ver = image_ver + (CASE WHEN $4::text IS NULL THEN 0 ELSE 1 END) WHERE id = $3`, [name, pcs ?? null, req.params.id, image]);
-      if (pcs != null) await q('UPDATE sessions SET places = LEAST(places, $1::int) WHERE lab_id = $2 AND places IS NOT NULL', [+pcs, req.params.id]);
-    });
-  } catch (e) { if (e.code === '23505') fail(409, 'A lab with this name already exists.'); throw e; }
-  await logAct(req.user, 'Edited lab', name || `lab ${req.params.id}`);
-  pushSeats(); res.json({ ok: true });
-}));
-app.delete('/api/labs/:id', auth('admin'), wrap(async (req, res) => {
-  await query('DELETE FROM labs WHERE id = $1', [req.params.id]);
-  await logAct(req.user, 'Deleted lab', `lab ${req.params.id}`);
-  pushApps(); res.sendStatus(204);
-}));
-
-// Upload a picture for one lab.
-app.post('/api/labs/:id/image', auth('admin'), wrap(async (req, res) => {
-  const mime = String(req.body.mime || '').toLowerCase(), buf = Buffer.from(String(req.body.data || ''), 'base64');
-  if (!LAB_IMG_OK.test(mime)) fail(400, 'Use a PNG, JPG, GIF, WebP or AVIF picture.');
-  if (!buf.length) fail(400, 'Choose a picture first.');
-  if (buf.length > LAB_IMG_MAX) fail(413, 'The picture is too big (8 MB maximum).');
-  const r = await query("UPDATE labs SET image_data = $1, image_mime = $2, image = '', image_ver = image_ver + 1 WHERE id = $3 RETURNING name", [buf, mime, +req.params.id]);
-  if (!r.length) fail(404, 'Lab not found.');
-  await logAct(req.user, 'Changed lab picture', r[0].name);
-  pushSeats(); res.json({ ok: true });
-}));
-// Back to the default picture.
-app.delete('/api/labs/:id/image', auth('admin'), wrap(async (req, res) => {
-  const r = await query("UPDATE labs SET image_data = NULL, image_mime = '', image = '', image_ver = image_ver + 1 WHERE id = $1 RETURNING name", [+req.params.id]);
-  if (!r.length) fail(404, 'Lab not found.');
-  await logAct(req.user, 'Reset lab picture', r[0].name);
-  pushSeats(); res.json({ ok: true });
-}));
-// The picture itself. Public, so the landing page can show it.
-app.get('/api/labs/:id/photo', wrap(async (req, res) => {
-  const f = (Number.isInteger(+req.params.id) && await one('SELECT name, image_mime AS mime, image_data AS data FROM labs WHERE id = $1 AND image_data IS NOT NULL', [+req.params.id])) || fail(404, 'Picture not found.');
-  sendData(req, res, { ...f, name: `${f.name}.img` });
-}));
-
-/* ---------- Who a lab time is for ---------- */
-
-// audience = { kind: '' | 'class' | 'group' | 'people', value, people: [names or emails], exclusive }
-const parseAudience = async (a = {}) => {
-  const kind = ['class', 'group', 'people'].includes(a?.kind) ? a.kind : '';
-  const none = { kind: '', forClass: '', forGroup: null, ids: [], notFound: [], exclusive: false };
-  if (!kind) return none;
-  const exclusive = a.exclusive !== false;
-  if (kind === 'class') {
-    const c = cleanName(a.value);
-    if (!c || !(await one(`SELECT 1 AS ok FROM users WHERE role = 'student' AND ${CLASS_SQL} = $1 LIMIT 1`, [c]))) fail(400, 'No student is in that class.');
-    return { ...none, kind, forClass: c, exclusive };
-  }
-  if (kind === 'group') {
-    const g = await getGroup(a.value);
-    return { ...none, kind, forGroup: g.id, exclusive };
-  }
-  const { ids, notFound } = await resolveStudents(splitTokens(a.people));
-  if (!ids.length) fail(400, 'Choose at least one student from the list.');
-  return { ...none, kind, ids, notFound, exclusive };
-};
-const setPeople = async (q, sid, ids) => {
-  await q('DELETE FROM session_people WHERE session_id = $1', [sid]);
-  if (ids.length) await q('INSERT INTO session_people(session_id, user_id) SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING', [sid, ids]);
-};
-const membersOf = (q, s) => q(`SELECT u.id, u.username, ${CLASS_SQL} AS cls FROM users u WHERE u.role = 'student' AND (
-    ($1::text <> '' AND ${CLASS_SQL} = $1::text)
-    OR ($2::int IS NOT NULL AND u.id IN (SELECT user_id FROM student_group_members WHERE group_id = $2::int))
-    OR u.id IN (SELECT user_id FROM session_people WHERE session_id = $3::int)
-  ) ORDER BY u.username`, [s.for_class || '', s.for_group || null, s.id]);
-
-// Books the assigned students. Removes automatic bookings of people no longer assigned.
-const syncAssigned = async (q, sid) => {
-  await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sid]);
-  const s = (await q(`SELECT id, to_char(date, 'YYYY-MM-DD') AS d, to_char(starts_at, 'HH24:MI') AS "from", to_char(ends_at, 'HH24:MI') AS "to", for_class, for_group FROM sessions WHERE id = $1`, [sid]))[0];
-  if (!s) return [];
-  const members = await membersOf(q, s);
-  const touched = members.map(m => m.username);
-  const stale = await q('DELETE FROM applications WHERE session_id = $1 AND booked_by = $2 AND NOT (student = ANY($3::text[])) RETURNING student', [sid, ASSIGNED, touched]);
-  stale.forEach(r => touched.push(r.student));
-  if (!members.length) return touched;
-  const banned = new Set((await q('SELECT name FROM blacklist')).map(b => nameKey(b.name)));
-  const live = await liveOn(q, s.d);
-  let left = await seatsLeft(q, sid);
-  for (const m of members) {
-    const k = nameKey(m.username);
-    if (banned.has(k)) continue;
-    const clash = live.some(b => nameKey(b.name) === k && holds(b, sid) && (+b.sid === +sid || overlaps(b, s)));
-    if (clash) continue;
-    const status = left > 0 ? 'approved' : 'pending';
-    const made = await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by, status) VALUES($1,$2,$3,'Assigned',$4,$5) ON CONFLICT (session_id, student) WHERE status <> 'rejected' DO NOTHING RETURNING id",
-      [sid, m.username, m.cls || '', ASSIGNED, status]);
-    if (made.length && status === 'approved') { left--; await dropQueueOverlap(q, m.username, sid); }
-  }
-  return touched;
-};
-
-/* ---------- Lab times ---------- */
-
-app.get('/api/sessions', auth(), wrap(async (req, res) => res.json(await listSessions(req.user.role === 'admin', req.user))));
-
-// Create lab times. "slots" = [{from,to}, ...] (for example before lunch and after lunch). "labIds" = one lab, two or three labs, or all.
-app.post('/api/sessions', auth('admin'), wrap(async (req, res) => {
-  const { date = nowLocal().date, labIds } = req.body;
-  const slots = (Array.isArray(req.body.slots) && req.body.slots.length ? req.body.slots : [{ from: req.body.from, to: req.body.to }])
-    .map(s => ({ from: HM(s.from), to: HM(s.to) }));
-  slots.forEach(s => { if (!s.from || !s.to || s.from >= s.to) fail(400, 'The start time must be before the end time.'); });
-  const published = req.body.published === true;
-  const autoApprove = req.body.autoApprove !== false;
-  const wanted = req.body.places === undefined || req.body.places === null || req.body.places === '' ? null : Math.floor(+req.body.places);
-  if (wanted !== null && !(wanted >= 1)) fail(400, 'Places open must be 1 or more.');
-  const ids = toIds(labIds);
-  const labs = (await query('SELECT id, name, pcs FROM labs')).filter(l => !ids.length || ids.includes(l.id));
-  if (!labs.length) fail(400, 'Choose a lab first.');
-  if (wanted !== null && labs.length === 1 && wanted > labs[0].pcs) fail(400, `This lab has only ${labs[0].pcs} computers.`);
-  const aud = await parseAudience(req.body.audience);
-  if (aud.kind && labs.length > 1) fail(400, 'Choose one lab when you assign a class, a group or people.');
-  const touched = [];
-  await tx(async q => {
-    for (const l of labs) for (const sl of slots) {
-      const row = (await q('INSERT INTO sessions(lab_id, date, starts_at, ends_at, places, published, for_class, for_group, exclusive, auto_approve) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
-        [l.id, date, sl.from, sl.to, wanted === null ? null : Math.min(wanted, l.pcs), published, aud.forClass, aud.forGroup, aud.exclusive, autoApprove]))[0];
-      await setPeople(q, row.id, aud.ids);
-      if (aud.kind) touched.push(...await syncAssigned(q, row.id));
-    }
-  });
-  const who = aud.kind ? (aud.kind === 'class' ? ` · for class ${aud.forClass}` : aud.kind === 'group' ? ' · for a group' : ` · for ${aud.ids.length} students`) : '';
-  const labText = labs.length === 1 ? labs[0].name : `${labs.length} labs`;
-  await logAct(req.user, published ? 'Published lab time' : 'Saved lab time draft', `${labText} · ${date} ${slots.map(s => `${s.from}–${s.to}`).join(' + ')}${who}`);
-  pushApps(touched);
-  res.json({ created: labs.length * slots.length, published, assigned: touched.length, notFound: aud.notFound });
-}));
-
-app.put('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
-  const { date, from, to } = req.body;
-  const s = await one('SELECT id, seats, "left", "labId", "from", "to", lab FROM session_places WHERE id = $1', [req.params.id]) || fail(404, 'That lab time does not exist.');
-  if ((from || s.from) >= (to || s.to)) fail(400, 'The start time must be before the end time.');
-  let places = null, clearPlaces = false;
-  if (req.body.places === '' || req.body.places === 'all') clearPlaces = true;
-  else if (req.body.places != null) {
-    places = Math.floor(+req.body.places);
-    const pcs = (await one('SELECT pcs FROM labs WHERE id = $1', [s.labId])).pcs;
-    if (!(places >= 1)) fail(400, 'Places open must be 1 or more.');
-    if (places > pcs) fail(400, `This lab has only ${pcs} computers.`);
-    if (s.seats - s.left > places) fail(409, `${s.seats - s.left} students are already approved. Move some first.`);
-  }
-  const auto = typeof req.body.autoApprove === 'boolean' ? req.body.autoApprove : null;
-  const aud = req.body.audience !== undefined ? await parseAudience(req.body.audience) : null;
-  const touched = [];
-  await tx(async q => {
-    await q('UPDATE sessions SET date = COALESCE($1::date, date), starts_at = COALESCE($2::time, starts_at), ends_at = COALESCE($3::time, ends_at), places = CASE WHEN $6::boolean THEN NULL ELSE COALESCE($4::int, places) END, auto_approve = COALESCE($7::boolean, auto_approve) WHERE id = $5',
-      [date ?? null, from ?? null, to ?? null, places, s.id, clearPlaces, auto]);
-    if (aud) {
-      await q('UPDATE sessions SET for_class = $1, for_group = $2, exclusive = $3 WHERE id = $4', [aud.forClass, aud.forGroup, aud.exclusive, s.id]);
-      await setPeople(q, s.id, aud.ids);
-      touched.push(...await syncAssigned(q, s.id));
-    }
-    await promote(q, s.id, touched);
-  });
-  await logAct(req.user, 'Edited lab time', `${s.lab} · ${s.from}–${s.to}`);
-  pushApps(touched);
-  res.json({ ok: true, assigned: touched.length, notFound: aud?.notFound || [] });
-}));
-
-app.patch('/api/sessions/:id/publish', auth('admin'), wrap(async (req, res) => {
-  const r = await query('UPDATE sessions SET published = $1 WHERE id = $2 RETURNING id', [req.body.published === true, req.params.id]);
-  if (!r.length) fail(404, 'That lab time does not exist.');
-  await logAct(req.user, req.body.published ? 'Published lab time' : 'Hid lab time', `#${req.params.id}`);
-  pushApps(); res.json({ ok: true });
-}));
-// Publish chosen drafts (ids) or every draft (no ids).
-app.post('/api/sessions/publish-all', auth('admin'), wrap(async (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : null;
-  const r = await query('UPDATE sessions SET published = true WHERE published = false AND ($1::int[] IS NULL OR id = ANY($1::int[])) RETURNING id', [ids]);
-  await logAct(req.user, 'Published lab times', `${r.length}`);
-  pushApps(); res.json({ published: r.length });
-}));
-// Hide chosen lab times (back to draft).
-app.post('/api/sessions/hide-many', auth('admin'), wrap(async (req, res) => {
-  const ids = toIds(req.body.ids);
-  if (!ids.length) fail(400, 'Choose at least one lab time.');
-  const r = await query('UPDATE sessions SET published = false WHERE id = ANY($1::int[]) RETURNING id', [ids]);
-  await logAct(req.user, 'Hid lab times', `${r.length}`);
-  pushApps(); res.json({ hidden: r.length });
-}));
-app.post('/api/sessions/bulk-delete', auth('admin'), wrap(async (req, res) => {
-  const ids = toIds(req.body.ids);
-  if (!ids.length) fail(400, 'Choose at least one lab time.');
-  const r = await query('DELETE FROM sessions WHERE id = ANY($1::int[]) RETURNING id', [ids]);
-  await logAct(req.user, 'Removed lab times', `${r.length}`);
-  pushApps(); res.json({ deleted: r.length });
-}));
-app.delete('/api/sessions/:id', auth('admin'), wrap(async (req, res) => {
-  await query('DELETE FROM sessions WHERE id = $1', [req.params.id]);
-  await logAct(req.user, 'Removed lab time', `#${req.params.id}`);
-  pushApps(); res.sendStatus(204);
-}));
-
-// The admin gives the places of students who did not arrive to the waiting list (only as many as needed).
-app.post('/api/sessions/:id/release-noshows', auth('admin'), wrap(async (req, res) => {
-  const sid = +req.params.id;
-  const s = await one('SELECT date, "from", "to" FROM session_places WHERE id = $1', [sid]) || fail(404, 'That lab time does not exist.');
-  if (!hasStarted(s)) fail(409, 'This lab time has not started yet.');
-  const touched = [];
-  const r = await tx(q => releaseNoShows(q, sid, touched));
-  if (r.released) await logAct(req.user, 'Released no-shows', `${r.released} place(s)`);
-  pushApps(touched);
-  res.json(r);
-}));
-
-// A student who came without a booking: the admin seats them if a place is free.
-app.post('/api/sessions/:id/walkin', auth('admin'), wrap(async (req, res) => {
-  const sid = +req.params.id;
-  const { ids, notFound } = await resolveStudents(splitTokens(req.body.students));
-  if (!ids.length) fail(400, 'Choose at least one student from the list.');
-  const studs = await query(`SELECT id, username, ${CLASS_SQL} AS cls FROM users WHERE id = ANY($1::int[]) ORDER BY username`, [ids]);
-  let added = 0; const skipped = [], touched = [];
-  await tx(async q => {
-    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sid]);
-    const s = (await q('SELECT date, "from", "to" FROM session_places WHERE id = $1', [sid]))[0] || fail(404, 'That lab time does not exist.');
-    const late = hasStarted(s);
-    const banned = new Set((await q('SELECT name FROM blacklist')).map(b => nameKey(b.name)));
-    let left = await seatsLeft(q, sid);
-    for (const st of studs) {
-      if (banned.has(nameKey(st.username))) { skipped.push(`${st.username} (blocked)`); continue; }
-      const ex = (await q("SELECT id, status FROM applications WHERE session_id = $1 AND student = $2 AND status <> 'rejected'", [sid, st.username]))[0];
-      if (ex?.status === 'approved') { skipped.push(`${st.username} (already booked)`); continue; }
-      if (left < 1) { skipped.push(`${st.username} (no free place)`); continue; }
-      if (ex) await q("UPDATE applications SET status = 'approved', note = '', attendance = 'present', late = $2 WHERE id = $1", [ex.id, late]);
-      else await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by, status, attendance, late) VALUES($1,$2,$3,'Walk-in','Walk-in (admin)','approved','present',$4)", [sid, st.username, st.cls || '', late]);
-      await dropQueueOverlap(q, st.username, sid);
-      left--; added++; touched.push(st.username);
-    }
-  });
-  if (added) await logAct(req.user, 'Seated walk-ins', `${added} student(s)`);
-  pushApps(touched);
-  res.json({ added, skipped, notFound });
-}));
-
-/* ---------- Public overview (no login, counts only, never names) ---------- */
-
-const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
-app.get('/api/overview', wrap(async (req, res) => {
-  const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
-  const [labRows, sessions, pend] = await Promise.all([
-    query(`SELECT id, name, pcs, ${LAB_IMG} FROM labs ORDER BY name`),
-    listSessions(),
-    query("SELECT sid, COUNT(*)::int AS n FROM application_details WHERE status = 'pending' GROUP BY sid"),
-  ]);
-  const pendBy = new Map(pend.map(r => [Number(r.sid), r.n]));
-  const dayOf = s => String(s.date).slice(0, 10);
-  const today = sessions.filter(s => dayOf(s) === date);
-  const labs = labRows.map(l => {
-    const list = today.filter(s => s.labId == l.id)
-      .map(s => {
-        const taken = Math.max(s.seats - s.left, 0), p = pendBy.get(Number(s.id)) || 0;
-        const waiting = Math.min(p, Math.max(s.left, 0));
-        return { id: s.id, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, taken, waiting, over: p - waiting, open: Math.max(s.left - waiting, 0), for: forText(s), exclusive: !!s.exclusive, auto: s.autoApprove !== false, state: s.state };
-      })
-      .sort((a, b) => a.from.localeCompare(b.from));
-    const sum = k => list.reduce((n, s) => n + s[k], 0);
-    const seats = sum('seats'), left = sum('left'), free = sum('open');
-    const status = !list.length ? 'none' : left === 0 ? 'full' : free === 0 ? 'requested' : free / seats <= 0.3 ? 'limited' : 'available';
-    return { id: l.id, name: l.name, pcs: l.pcs, image: l.image, status, seats, free, taken: sum('taken'), waiting: sum('waiting'), sessions: list };
-  });
-  res.json({
-    date,
-    days: [...new Set(sessions.map(dayOf))].sort(),
-    totals: {
-      labs: labs.length, computers: labs.reduce((n, l) => n + l.pcs, 0),
-      times: today.length, free: labs.reduce((n, l) => n + l.free, 0), seats: labs.reduce((n, l) => n + l.seats, 0),
-      waiting: labs.reduce((n, l) => n + l.waiting, 0),
-    },
-    labs,
-  });
-}));
-
-/* ---------- Roster for staff: every published lab time of a day with all its students, in one call ---------- */
-
-app.get('/api/roster', auth('teacher', 'psychosocial', 'admin'), wrap(async (req, res) => {
-  const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
-  const [sessions, apps] = await Promise.all([
-    listSessions(),
-    listApps('date = $1 AND sid IN (SELECT id FROM session_places WHERE published)', [date]),
-  ]);
-  const by = new Map();
-  apps.filter(a => a.status !== 'rejected').forEach(a => {
-    if (!by.has(a.sid)) by.set(a.sid, []);
-    by.get(a.sid).push({ id: a.id, name: a.name, cls: a.cls || '', picture: a.picture, gid: a.gid, status: a.status, att: a.att || null, late: !!a.late, reason: a.reason || '' });
-  });
-  res.json({
-    date,
-    sessions: sessions.filter(s => String(s.date).slice(0, 10) === date)
-      .sort((a, b) => `${a.from} ${a.lab}`.localeCompare(`${b.from} ${b.lab}`))
-      .map(s => ({ id: s.id, labId: s.labId, lab: s.lab, from: HM(s.from), to: HM(s.to), seats: s.seats, left: s.left, state: s.state, for: forText(s), exclusive: !!s.exclusive, people: by.get(s.id) || [] })),
-  });
-}));
-
-/* ---------- Admin board: each lab, its PUBLISHED lab times and the students in them ---------- */
-
-app.get('/api/board', auth('admin'), wrap(async (req, res) => {
-  const date = ISO_DAY.test(String(req.query.date || '')) ? String(req.query.date) : nowLocal().date;
-  const [labs, sessions, apps] = await Promise.all([
-    query(`SELECT id, name, pcs, ${LAB_IMG} FROM labs ORDER BY name`),
-    listSessions(true),
-    listApps('date = $1', [date]),
-  ]);
-  const day = sessions.filter(s => s.date === date && s.published).sort((a, b) => `${a.from} ${a.lab}`.localeCompare(`${b.from} ${b.lab}`));
-  const people = new Map();
-  apps.forEach(a => { if (!people.has(a.sid)) people.set(a.sid, []); people.get(a.sid).push(a); });
-  res.json({
-    date,
-    labs: labs.map(l => ({
-      id: l.id, name: l.name, pcs: l.pcs, image: l.image,
-      sessions: day.filter(s => s.labId == l.id).map(s => ({
-        id: s.id, from: s.from, to: s.to, date: s.date, lab: s.lab, seats: s.seats, left: s.left, published: s.published,
-        state: s.state, autoApprove: s.autoApprove !== false, forClass: s.forClass, forGroup: s.forGroup,
-        forGroupName: s.forGroupName, forPeople: s.forPeople, exclusive: !!s.exclusive,
-        people: people.get(s.id) || [],
-      })),
-    })),
-  });
-}));
-
-/* ---------- NEW: history. Who was in which lab over a period of time (admins) ---------- */
-// ?from=YYYY-MM-DD&to=YYYY-MM-DD&lab=<lab id or 0 for all labs>. Released and rejected bookings are left out.
-
-app.get('/api/history', auth('admin'), wrap(async (req, res) => {
-  const to = ISO_DAY.test(String(req.query.to || '')) ? String(req.query.to) : nowLocal().date;
-  const from = ISO_DAY.test(String(req.query.from || '')) ? String(req.query.from) : addDay(to, -30);
-  if (from > to) fail(400, 'The first day must be before the last day.');
-  if ((Date.parse(to) - Date.parse(from)) / 864e5 > 366) fail(400, 'Choose a period of one year or less.');
-  const lab = Math.floor(+req.query.lab) || 0;
-  const rows = await listApps(`date::text BETWEEN $1::text AND $2::text AND status <> 'rejected'
-    AND sid IN (SELECT id FROM session_places WHERE $3::int = 0 OR "labId" = $3::int)`, [from, to, lab]);
-  rows.sort((a, b) => `${b.date} ${b.from}`.localeCompare(`${a.date} ${a.from}`));
-  res.json({
-    from, to, lab,
-    rows: rows.slice(0, 5000).map(a => ({
-      id: a.id, sid: a.sid, name: a.name, cls: a.cls || '', lab: a.lab, date: a.date, from: a.from, to: a.to, status: a.status,
-      att: a.att || null, late: !!a.late, checkedInAt: a.checkedInAt || null, reason: a.reason || '', email: a.email, picture: a.picture, gid: a.gid, bookedBy: a.bookedBy || '',
-    })),
-  });
-}));
-
-/* ---------- Activity log (admins), filtered by day, number of days or admin ---------- */
-
-app.get('/api/activity', auth('admin'), wrap(async (req, res) => {
-  const where = [], p = [];
-  if (ISO_DAY.test(String(req.query.date || ''))) {
-    p.push(TZ, String(req.query.date));
-    where.push(`(created_at AT TIME ZONE $1::text)::date = $2::date`);
-  } else if (+req.query.days > 0) {
-    p.push(Math.min(+req.query.days, 90));
-    where.push(`created_at >= now() - ($${p.length}::int * interval '1 day')`);
-  }
-  if (req.query.actor) { p.push(String(req.query.actor)); where.push(`actor = $${p.length}`); }
-  res.json(await query(`SELECT id, actor, action, detail, created_at AS at FROM activity ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT 300`, p));
-}));
-
-app.get('/api/activity/chart', auth('admin'), wrap(async (req, res) => {
-  const days = Math.min(Math.max(+req.query.days || 7, 1), 60);
-  res.json(await query(`SELECT actor, to_char((created_at AT TIME ZONE $2::text)::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS n
-    FROM activity WHERE created_at >= (now() - ($1::int * interval '1 day'))
-    GROUP BY actor, day ORDER BY day`, [days, TZ]));
-}));
-
-/* ---------- NEW: spelling and grammar check (LanguageTool). Used by the chat and the lost and found posts ---------- */
-// Free public API: https://api.languagetool.org (about 20 requests a minute per IP). Set GRAMMAR_URL to your own server
-// (or a LanguageTool Premium URL with GRAMMAR_USER + GRAMMAR_KEY) for more.
-
-const GRAMMAR_URL = process.env.GRAMMAR_URL || 'https://api.languagetool.org/v2/check';
-app.post('/api/grammar', auth(), wrap(async (req, res) => {
-  const text = String(req.body.text || '').slice(0, 3000);
-  if (text.trim().length < 3) return res.json({ matches: [] });
-  const lang = ['auto', 'en-US', 'en-GB', 'fr'].includes(req.body.language) ? req.body.language : 'auto';
-  const form = new URLSearchParams({ text, language: lang, enabledOnly: 'false' });
-  if (lang === 'auto') form.set('preferredVariants', 'en-US,fr');
-  if (process.env.GRAMMAR_USER && process.env.GRAMMAR_KEY) { form.set('username', process.env.GRAMMAR_USER); form.set('apiKey', process.env.GRAMMAR_KEY); }
-  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 8000);
-  try {
-    const r = await fetch(GRAMMAR_URL, {
-      method: 'POST', signal: ctl.signal, body: form,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-    });
-    if (!r.ok) fail(502, 'The grammar checker is busy. Try again in a moment.');
-    const d = await r.json();
-    res.json({
-      language: d.language?.detectedLanguage?.name || d.language?.name || '',
-      matches: (d.matches || []).slice(0, 30).map(m => ({
-        offset: m.offset, length: m.length, message: m.message || '', short: m.shortMessage || '',
-        replacements: (m.replacements || []).slice(0, 4).map(x => x.value),
-        type: m.rule?.issueType || '', category: m.rule?.category?.id || '',
-      })),
-    });
-  } catch (e) {
-    if (Number.isInteger(e.code)) throw e;
-    fail(502, 'The grammar checker is not reachable right now.');
-  } finally { clearTimeout(timer); }
-}));
-
-/* ---------- Admin chat ---------- */
-// Rooms: 'all' = every admin. A private chat between two admins has the room 'dm:<email>|<email>' (emails sorted).
-// The screen only knows the "other side": 'all' or the other admin's email.
-// A message can have a reply (reply_to), a file (file_id), be forwarded, edited or deleted.
-// "Delete for me" hides it only for the person who deleted it. "Delete for everyone" empties it for all (own messages only).
-
-const dmRoom = (a, b) => 'dm:' + [a, b].sort().join('|');
-const groupIdOf = v => {
-  const m = /^group:([1-9]\d*)$/.exec(String(v || ''));
-  const id = m ? Number(m[1]) : 0;
-  return Number.isSafeInteger(id) && id <= 2147483647 ? id : 0;
-};
-const chatWith = v => {
-  const w = String(v || 'all').trim().toLowerCase();
-  return w === 'all' || validEmail(w) || groupIdOf(w) ? w : fail(400, 'Unknown chat.');
-};
-const roomOf = (me, w) => (w === 'all' || groupIdOf(w) ? w : dmRoom(me, w));
-const assertChatAccess = async (email, w) => {
-  const groupId = groupIdOf(w);
-  if (groupId && !await one("SELECT 1 AS ok FROM admin_chat_group_members WHERE group_id = $1 AND email = $2 AND status = 'accepted'", [groupId, email])) {
-    fail(403, 'You must accept the group invitation before opening this chat.');
-  }
-};
-const canSeeChatMessage = async (email, m) => {
-  if (m.room === 'all' || m.from_email === email || m.to_email === email) return true;
-  const groupId = groupIdOf(m.room);
-  return !!(groupId && await one("SELECT 1 AS ok FROM admin_chat_group_members WHERE group_id = $1 AND email = $2 AND status = 'accepted'", [groupId, email]));
-};
-
-const CHAT_COLS = `m.id, m.room, m.from_email AS "fromEmail", m.from_name AS "fromName", m.to_email AS "to", m.body, m.created_at AS at,
-  m.reply_to AS "replyTo", m.forwarded, m.deleted, m.edited_at AS "editedAt", m.file_id AS "fileId",
-  f.name AS "fileName", f.mime AS "fileMime", f.size AS "fileSize",
-  r.from_name AS "replyName", CASE WHEN r.deleted THEN '' ELSE LEFT(r.body, 120) END AS "replyBody",
-  (r.file_id IS NOT NULL AND NOT r.deleted) AS "replyFile", COALESCE(r.deleted, false) AS "replyDeleted",
-  (SELECT rf.name FROM admin_chat_files rf WHERE rf.id = r.file_id) AS "replyFileName"`;
-const CHAT_FROM = 'admin_chat m LEFT JOIN admin_chat_files f ON f.id = m.file_id LEFT JOIN admin_chat r ON r.id = m.reply_to';
-const chatOne = id => one(`SELECT ${CHAT_COLS} FROM ${CHAT_FROM} WHERE m.id = $1`, [id]);
-const emitChat = async (row, event, payload) => {
-  if (row.room === 'all') return io.to('admins').emit(event, payload);
-  const groupId = groupIdOf(row.room);
-  if (groupId) {
-    const members = await query("SELECT email FROM admin_chat_group_members WHERE group_id = $1 AND status = 'accepted'", [groupId]);
-    members.forEach(p => io.to(`admin:${p.email}`).emit(event, payload));
-    return;
-  }
-  io.to(`admin:${row.to}`).to(`admin:${row.fromEmail}`).emit(event, payload);
-};
-const CHAT_FILE_OK = /^(image\/(png|jpe?g|gif|webp|avif)|video\/(mp4|webm|ogg|quicktime|x-matroska)|audio\/[\w.+-]+|text\/plain|application\/(pdf|zip|x-zip-compressed|msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)))$/i;
-const CHAT_MAX_FILE = 25 * 1024 * 1024;
-const chatBody = v => String(v || '').replace(/\r\n/g, '\n').trim().slice(0, 2000);
-const markRead = (email, room, id) => query(`INSERT INTO admin_chat_reads(email, room, last_id) VALUES($1,$2,$3)
-  ON CONFLICT (email, room) DO UPDATE SET last_id = GREATEST(admin_chat_reads.last_id, EXCLUDED.last_id)`, [email, room, id]);
-
-// All admins: the ones in ADMIN_EMAILS plus everyone who ever signed in as admin.
-const adminDirectory = async () => {
-  const rows = await query(`SELECT p.email, p.name, COALESCE(NULLIF(a.picture, ''), p.picture) AS picture, p.last_seen AS "lastSeen"
-    FROM admin_people p LEFT JOIN admin_profiles a ON a.email = p.email`);
-  const map = new Map(rows.map(r => [r.email, r]));
-  const revoked = new Set((await query('SELECT email FROM admin_revocations')).map(r => r.email));
-  ADMINS.forEach(e => { if (!revoked.has(e) && !map.has(e)) map.set(e, { email: e, name: e.split('@')[0], picture: '', lastSeen: null }); });
-  if (!map.has(SUPER_ADMIN_EMAIL)) map.set(SUPER_ADMIN_EMAIL, { email: SUPER_ADMIN_EMAIL, name: SUPER_ADMIN_EMAIL.split('@')[0], picture: '', lastSeen: null });
-  return [...map.values()].filter(p => !revoked.has(p.email)).map(p => ({ ...p, superAdmin: isSuperAdmin(p.email) }));
-};
-
-app.get('/api/admins', auth('admin'), wrap(async (req, res) => {
-  if (!isSuperAdmin(req.user.email)) fail(403, 'Only the super admin can manage admins.');
-  res.json(await adminDirectory());
-}));
-
-app.delete('/api/admins/:email', auth('admin'), wrap(async (req, res) => {
-  if (!isSuperAdmin(req.user.email)) fail(403, 'Only the super admin can manage admins.');
-  const email = String(req.params.email || '').trim().toLowerCase();
-  if (!validEmail(email)) fail(400, 'Enter a valid admin email address.');
-  if (isSuperAdmin(email)) fail(400, 'The super admin cannot be removed.');
-  if (!await adminDirectory().then(admins => admins.some(p => p.email === email))) fail(404, 'Admin not found.');
-  await tx(async q => {
-    await q('INSERT INTO admin_revocations(email, removed_by) VALUES($1,$2) ON CONFLICT (email) DO NOTHING', [email, req.user.email]);
-    await q('DELETE FROM admin_people WHERE email = $1', [email]);
-    await q('DELETE FROM admin_push_subscriptions WHERE email = $1', [email]);
-  });
-  io.in(`admin:${email}`).disconnectSockets(true);
-  await logAct(req.user, 'Removed admin', email);
-  res.sendStatus(204);
-}));
-
-app.get('/api/push/config', auth('admin'), (_req, res) =>
-  res.json({ enabled: !!VAPID_PUBLIC_KEY, publicKey: VAPID_PUBLIC_KEY }));
-
-app.post('/api/push/subscriptions', auth('admin'), wrap(async (req, res) => {
-  if (!VAPID_PUBLIC_KEY) fail(503, 'Push notifications are not configured on the server.');
-  const sub = req.body;
-  if (!sub || typeof sub.endpoint !== 'string' || !validPushEndpoint(sub.endpoint)
-    || !sub.keys || typeof sub.keys.p256dh !== 'string' || typeof sub.keys.auth !== 'string') {
-    fail(400, 'A valid browser push subscription is required.');
-  }
-  const saved = await one(`INSERT INTO admin_push_subscriptions(email, endpoint, subscription) VALUES($1,$2,$3::jsonb)
-    ON CONFLICT (endpoint) DO UPDATE SET subscription = EXCLUDED.subscription
-    WHERE admin_push_subscriptions.email = EXCLUDED.email RETURNING email`,
-  [req.user.email, sub.endpoint, JSON.stringify(sub)]);
-  if (!saved) fail(409, 'This device is already registered to another admin.');
-  res.sendStatus(204);
-}));
-
-app.delete('/api/push/subscriptions', auth('admin'), wrap(async (req, res) => {
-  const endpoint = String(req.body?.endpoint || '');
-  if (!endpoint) fail(400, 'A push subscription endpoint is required.');
-  await query('DELETE FROM admin_push_subscriptions WHERE email = $1 AND endpoint = $2', [req.user.email, endpoint]);
-  res.sendStatus(204);
-}));
-
-app.get('/api/calls/incoming', auth('admin'), wrap(async (req, res) => {
-  await query('DELETE FROM admin_call_invites WHERE expires_at <= now()');
-  const rows = await query(`SELECT call_id AS "callId", caller_email AS "from", caller_name AS name,
-      caller_picture AS picture, kind
-    FROM admin_call_invites WHERE callee_email = $1 AND expires_at > now()
-    ORDER BY created_at DESC LIMIT 1`, [req.user.email]);
-  res.json(rows);
-}));
-
-app.post('/api/chat/groups', auth('admin'), wrap(async (req, res) => {
-  const name = cleanName(req.body.name).slice(0, 80);
-  if (!name) fail(400, 'Enter a name for the group.');
-  const members = [...new Set(cleanList(Array.isArray(req.body.members) ? req.body.members : [])
-    .map(email => email.toLowerCase()))].filter(email => email !== req.user.email);
-  if (!members.length) fail(400, 'Choose at least one admin to invite.');
-  const known = new Set((await adminDirectory()).map(p => p.email));
-  if (members.some(email => !known.has(email))) fail(400, 'One or more selected admins are unavailable. Refresh and try again.');
-  const group = await tx(async q => {
-    const row = (await q('INSERT INTO admin_chat_groups(name, created_by) VALUES($1,$2) RETURNING id', [name, req.user.email]))[0];
-    await q("INSERT INTO admin_chat_group_members(group_id, email, status, invited_by, responded_at) VALUES($1,$2,'accepted',$2,now())", [row.id, req.user.email]);
-    await q(`INSERT INTO admin_chat_group_members(group_id, email, status, invited_by)
-      SELECT $1, invited.email, 'pending', $3 FROM unnest($2::text[]) AS invited(email)`, [row.id, members, req.user.email]);
-    return row;
-  });
-  await logAct(req.user, 'Created admin chat group', `${name} (${members.length} invitations)`);
-  members.forEach(email => io.to(`admin:${email}`).emit('chat:invitation', { groupId: group.id, name, createdBy: req.user.name }));
-  res.status(201).json({ id: `group:${group.id}`, name });
-}));
-
-app.post('/api/chat/groups/:id/respond', auth('admin'), wrap(async (req, res) => {
-  const groupId = Number(req.params.id);
-  if (!Number.isSafeInteger(groupId) || groupId < 1) fail(400, 'Unknown group invitation.');
-  const action = req.body.action;
-  if (action !== 'accept' && action !== 'decline') fail(400, 'Choose whether to accept or decline the invitation.');
-  const updated = await one(`UPDATE admin_chat_group_members SET status = $1, responded_at = now()
-    WHERE group_id = $2 AND email = $3 AND status = 'pending' RETURNING invited_by`,
-  [action === 'accept' ? 'accepted' : 'declined', groupId, req.user.email]);
-  if (!updated) fail(404, 'This group invitation is no longer available.');
-  const group = await one('SELECT name FROM admin_chat_groups WHERE id = $1', [groupId]);
-  if (!group) fail(404, 'Group not found.');
-  await logAct(req.user, action === 'accept' ? 'Accepted admin group invitation' : 'Declined admin group invitation', group.name);
-  io.to(`admin:${updated.invited_by}`).emit('chat:invitation-updated', { groupId, email: req.user.email, action });
-  res.json({ ok: true, id: `group:${groupId}` });
-}));
-
-// People, last message and unread count of every chat, in one call. "me" carries your own picture for the chat screen.
-app.get('/api/chat/summary', auth('admin'), wrap(async (req, res) => {
-  const me = req.user.email;
-  const on = new Set(presenceList().map(p => p.email));
-  const dir = await adminDirectory();
-  const people = dir.filter(p => p.email !== me)
-    .map(p => ({ ...p, online: on.has(p.email) }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  const memberships = await query(`SELECT g.id, g.name, gm.status, gm.invited_by AS "createdBy"
-    FROM admin_chat_groups g JOIN admin_chat_group_members gm ON gm.group_id = g.id
-    WHERE gm.email = $1 AND gm.status IN ('accepted','pending') ORDER BY g.name`, [me]);
-  const acceptedIds = memberships.filter(g => g.status === 'accepted').map(g => g.id);
-  const groupPeople = acceptedIds.length
-    ? await query(`SELECT gm.group_id AS "groupId", gm.email, COALESCE(NULLIF(p.name, ''), split_part(gm.email, '@', 1)) AS name,
-      COALESCE(NULLIF(a.picture, ''), p.picture, '') AS picture
-      FROM admin_chat_group_members gm LEFT JOIN admin_people p ON p.email = gm.email LEFT JOIN admin_profiles a ON a.email = gm.email
-      WHERE gm.group_id = ANY($1::int[]) AND gm.status = 'accepted' ORDER BY name`, [acceptedIds])
-    : [];
-  const groups = memberships.filter(g => g.status === 'accepted').map(g => ({
-    id: `group:${g.id}`, name: g.name, members: groupPeople.filter(p => p.groupId === g.id).map(({ groupId, ...p }) => p),
-  }));
-  const invitations = memberships.filter(g => g.status === 'pending').map(g => ({
-    groupId: g.id, id: `group:${g.id}`, name: g.name, createdBy: dir.find(p => p.email === g.createdBy)?.name || g.createdBy,
-  }));
-  const groupRooms = groups.map(g => g.id);
-  const unreadRows = await query(`SELECT CASE WHEN m.room = 'all' THEN 'all' WHEN m.room = ANY($2::text[]) THEN m.room ELSE m.from_email END AS key, COUNT(*)::int AS n
-    FROM admin_chat m LEFT JOIN admin_chat_reads r ON r.email = $1 AND r.room = m.room
-    WHERE m.id > COALESCE(r.last_id, 0) AND m.from_email <> $1 AND (m.room = 'all' OR m.to_email = $1 OR m.room = ANY($2::text[])) AND NOT m.deleted
-    AND NOT EXISTS (SELECT 1 FROM admin_chat_hidden h WHERE h.msg_id = m.id AND h.email = $1)
-    GROUP BY 1`, [me, groupRooms]);
-  const lastRows = await query(`SELECT DISTINCT ON (c.room) c.room, c.to_email AS "to", c.from_email AS "fromEmail", c.from_name AS "fromName",
-      CASE WHEN c.deleted THEN 'Message deleted' WHEN c.file_id IS NOT NULL AND c.body = '' THEN '📎 ' || COALESCE((SELECT f.name FROM admin_chat_files f WHERE f.id = c.file_id), 'File') ELSE c.body END AS body,
-      c.created_at AS at
-    FROM admin_chat c WHERE (c.room = 'all' OR c.from_email = $1 OR c.to_email = $1 OR c.room = ANY($2::text[]))
-    AND NOT EXISTS (SELECT 1 FROM admin_chat_hidden h WHERE h.msg_id = c.id AND h.email = $1)
-    ORDER BY c.room, c.id DESC`, [me, groupRooms]);
-  const last = {};
-  lastRows.forEach(m => {
-    const key = m.room === 'all' || groupIdOf(m.room) ? m.room : (m.fromEmail === me ? m.to : m.fromEmail);
-    last[key] = { body: m.body, at: m.at, fromMe: m.fromEmail === me, fromName: m.fromName };
-  });
-  const mine = dir.find(p => p.email === me);
-  res.json({ me, myPicture: mine?.picture || req.user.picture || '', people, groups, invitations, unread: Object.fromEntries(unreadRows.map(r => [r.key, r.n])), last });
-}));
-
-app.get('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
-  const me = req.user.email, w = chatWith(req.query.with), before = Math.max(+req.query.before || 0, 0);
-  await assertChatAccess(me, w);
-  const rows = await query(`SELECT ${CHAT_COLS} FROM ${CHAT_FROM} WHERE m.room = $1 AND ($2::int = 0 OR m.id < $2::int)
-    AND NOT EXISTS (SELECT 1 FROM admin_chat_hidden h WHERE h.msg_id = m.id AND h.email = $3)
-    ORDER BY m.id DESC LIMIT 80`, [roomOf(me, w), before, me]);
-  res.json(rows.reverse());
-}));
-
-// Send a message: text, a reply (replyTo), a file ({name, mime, data: base64}) or a forward (forwardOf = id of the message).
-app.post('/api/chat/messages', auth('admin'), wrap(async (req, res) => {
-  const me = req.user, w = chatWith(req.body.with);
-  if (w === me.email) fail(400, 'You cannot write to yourself.');
-  await assertChatAccess(me.email, w);
-  const room = roomOf(me.email, w);
-  let body = chatBody(req.body.body), fileId = null, forwarded = false;
-  const replyTo = Number.isInteger(+req.body.replyTo) && +req.body.replyTo > 0 ? +req.body.replyTo : null;
-  if (replyTo) {
-    const r = await one('SELECT room FROM admin_chat WHERE id = $1', [replyTo]);
-    if (!r || r.room !== room) fail(400, 'You can only reply to a message of this chat.');
-  }
-  if (req.body.forwardOf) {
-    const src = await one('SELECT room, from_email, to_email, body, file_id, deleted FROM admin_chat WHERE id = $1', [+req.body.forwardOf]);
-    if (!src || src.deleted || !await canSeeChatMessage(me.email, src)) fail(404, 'That message cannot be forwarded.');
-    body = src.body; fileId = src.file_id; forwarded = true;
-  } else if (req.body.file) {
-    const f = req.body.file, mime = String(f.mime || '').toLowerCase().split(';')[0], buf = Buffer.from(String(f.data || ''), 'base64');
-    if (!buf.length) fail(400, 'The file is empty.');
-    if (!CHAT_FILE_OK.test(mime)) fail(400, 'This file type is not allowed. Use photos, videos, audio, PDF, Office files, zip or text.');
-    if (buf.length > CHAT_MAX_FILE) fail(413, 'The file is too big (25 MB maximum).');
-    fileId = (await one('INSERT INTO admin_chat_files(name, mime, size, data) VALUES($1,$2,$3,$4) RETURNING id', [cleanName(f.name).slice(0, 160) || 'file', mime, buf.length, buf])).id;
-  }
-  if (!body && !fileId) fail(400, 'Write a message first.');
-  const ins = await one('INSERT INTO admin_chat(room, from_email, from_name, to_email, body, reply_to, file_id, forwarded) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
-    [room, me.email, me.name, w, body, replyTo, fileId, forwarded]);
-  const row = await chatOne(ins.id);
-  await markRead(me.email, room, row.id);
-  await emitChat(row, 'chat:message', row);
-  res.json(row);
-}));
-
-// Edit your own message.
-app.patch('/api/chat/messages/:id', auth('admin'), wrap(async (req, res) => {
-  const m = await one('SELECT id, room, from_email, deleted, file_id FROM admin_chat WHERE id = $1', [+req.params.id]) || fail(404, 'Message not found.');
-  await assertChatAccess(req.user.email, m.room);
-  if (m.from_email !== req.user.email) fail(403, 'You can only edit your own messages.');
-  if (m.deleted) fail(409, 'This message was deleted.');
-  const body = chatBody(req.body.body);
-  if (!body && !m.file_id) fail(400, 'A message cannot be empty.');
-  await query('UPDATE admin_chat SET body = $1, edited_at = now() WHERE id = $2', [body, m.id]);
-  const row = await chatOne(m.id);
-  await emitChat(row, 'chat:edited', row);
-  res.json(row);
-}));
-
-// Delete: ?scope=me hides it for you only. ?scope=all removes it for everyone (your own messages).
-app.delete('/api/chat/messages/:id', auth('admin'), wrap(async (req, res) => {
-  const me = req.user.email;
-  const m = await one('SELECT id, room, from_email, to_email, deleted, file_id FROM admin_chat WHERE id = $1', [+req.params.id]) || fail(404, 'Message not found.');
-  if (!await canSeeChatMessage(me, m)) fail(403, 'You do not have access to this.');
-  if (req.query.scope === 'all') {
-    if (m.from_email !== me) fail(403, 'You can only delete your own messages for everyone.');
-    if (!m.deleted) {
-      await query("UPDATE admin_chat SET deleted = true, body = '', file_id = NULL WHERE id = $1", [m.id]);
-      if (m.file_id) await query('DELETE FROM admin_chat_files WHERE id = $1::int AND NOT EXISTS (SELECT 1 FROM admin_chat WHERE file_id = $1::int)', [m.file_id]);
-      await emitChat(m, 'chat:deleted', { id: m.id, room: m.room, to: m.to_email, fromEmail: m.from_email });
-    }
-  } else {
-    await query('INSERT INTO admin_chat_hidden(email, msg_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [me, m.id]);
-    io.to(`admin:${me}`).emit('chat:hidden', { id: m.id, to: m.to_email, fromEmail: m.from_email });
-  }
-  res.json({ ok: true });
-}));
-
-// Photos, videos, audio and files of the chat. Only admins who are part of the chat can open them (token in ?t=). ?dl=1 downloads.
-app.get('/api/chat/files/:id', qAuth, auth('admin'), wrap(async (req, res) => {
-  const f = (Number.isInteger(+req.params.id) && await one(`SELECT f.name, f.mime, f.data FROM admin_chat_files f WHERE f.id = $1 AND EXISTS (
-      SELECT 1 FROM admin_chat m WHERE m.file_id = f.id AND NOT m.deleted AND (m.room = 'all' OR m.from_email = $2 OR m.to_email = $2
-        OR (m.room LIKE 'group:%' AND EXISTS (SELECT 1 FROM admin_chat_group_members gm WHERE gm.group_id = split_part(m.room, ':', 2)::int AND gm.email = $2 AND gm.status = 'accepted'))))`, [+req.params.id, req.user.email])) || fail(404, 'File not found.');
-  sendData(req, res, f, { download: req.query.dl === '1', priv: true });
-}));
-
-app.post('/api/chat/read', auth('admin'), wrap(async (req, res) => {
-  const me = req.user.email, w = chatWith(req.body.with), room = roomOf(me, w);
-  await assertChatAccess(me, w);
-  await query(`INSERT INTO admin_chat_reads(email, room, last_id)
-    VALUES($1, $2, COALESCE((SELECT MAX(id) FROM admin_chat WHERE room = $2), 0))
-    ON CONFLICT (email, room) DO UPDATE SET last_id = GREATEST(admin_chat_reads.last_id, EXCLUDED.last_id)`, [me, room]);
-  res.json({ ok: true });
-}));
-
-/* ---------- Bookings ---------- */
-
-app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
-  const { reason, students } = req.body, sessionId = +req.body.sessionId;
-  const asked = req.user.role === 'student' ? [req.user.name] : (Array.isArray(students) ? students : []);
-  const byKey = new Map();
-  asked.map(cleanName).filter(Boolean).forEach(n => byKey.has(nameKey(n)) || byKey.set(nameKey(n), n));
-  const names = [...byKey.values()];
-  if (!names.length) fail(400, 'Choose at least one student.');
-
-  const banned = await query('SELECT name FROM blacklist');
-  const blocked = banned.filter(b => byKey.has(nameKey(b.name)));
-  if (blocked.length) fail(403, `Blocked students cannot book: ${blocked.map(b => b.name).join(', ')}`);
-
-  const rows = await query(`SELECT username, ${CLASS_SQL} AS cls FROM users WHERE role = 'student' AND username = ANY($1)`, [names]);
-  const classes = Object.fromEntries(rows.map(r => [r.username, r.cls]));
-  const unknown = names.filter(n => !(n in classes));
-  if (unknown.length) fail(400, `No student account found for: ${unknown.join(', ')}`);
-
-  const max = maxOf(await getOptions());
-  let created = 0, approved = 0; const skipped = [], tooMany = [], moved = [];
-  await tx(async q => {
-    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sessionId]);
-    const s = (await q('SELECT date, "from", "to", published, "autoApprove" FROM session_places WHERE id = $1', [sessionId]))[0];
-    if (!s || !s.published) fail(404, 'That lab time is not open for booking.');
-    if (isOver(s)) fail(409, 'This lab time is already over.');
-    const raw = (await q('SELECT id, exclusive, for_class, for_group FROM sessions WHERE id = $1', [sessionId]))[0];
-    if (raw?.exclusive) {
-      const allowed = new Set((await membersOf(q, raw)).map(m => nameKey(m.username)));
-      const out = names.filter(n => !allowed.has(nameKey(n)));
-      if (out.length) fail(403, req.user.role === 'student'
-        ? 'This lab time is only for the people the admin chose.'
-        : `This lab time is only for the people the admin chose. Not allowed: ${out.join(', ')}.`);
-    }
-    await promote(q, sessionId, moved);
-    let left = await seatsLeft(q, sessionId);
-    const live = await liveOn(q, s.date);
-    for (const n of names) {
-      const k = nameKey(n);
-      const clash = live.some(b => nameKey(b.name) === k && holds(b, sessionId) && (+b.sid === sessionId || overlaps(b, s)));
-      if (clash) { skipped.push(n); continue; }
-      if (await tooManyInRow(q, n, s.date, sessionId, max)) { tooMany.push(n); continue; }
-      const status = s.autoApprove && left > 0 ? 'approved' : 'pending';
-      const made = await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by, status) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (session_id, student) WHERE status <> 'rejected' DO NOTHING RETURNING id",
-        [sessionId, n, classes[n] || '', reason || 'Other', req.user.name, status]);
-      if (!made.length) continue;
-      created++;
-      if (status === 'approved') { approved++; left--; await dropQueueOverlap(q, n, sessionId); }
-    }
-  });
-  pushApps([...names, req.user.name, ...moved]);
-  res.json({ created, approved, queued: created - approved, skipped, tooMany, maxConsecutive: max });
-}));
-
-app.get('/api/apps', auth(), wrap(async (req, res) => res.json(req.user.role === 'admin'
-  ? await listApps()
-  : await listApps('(name = $1 OR "bookedBy" = $1) AND sid IN (SELECT id FROM session_places WHERE published)', [req.user.name]))));
-
-// "I am here": the student confirms their own arrival, 15 minutes before the start until the end.
-app.post('/api/apps/:id/checkin', auth('student', 'teacher', 'psychosocial'), wrap(async (req, res) => {
-  const a = await getApp(query, req.params.id);
-  if (a.student !== req.user.name) fail(403, 'You can only check in yourself.');
-  if (a.status !== 'approved') fail(409, /^Released/.test(a.note || '')
-    ? 'Your place was given to the waiting list because you did not arrive in time. Apply again: if a place is free you get it at once.'
-    : 'Only approved bookings can check in.');
-  const s = (await query('SELECT date, "from", "to" FROM session_places WHERE id = $1', [a.session_id]))[0] || fail(404, 'That lab time does not exist.');
-  const now = nowLocal(), grace = graceOf(await getOptions()), m = mins(now.time);
-  if (s.date !== now.date) fail(409, 'You can check in on the day of your lab time.');
-  if (m < mins(s.from) - 15) fail(409, `Check-in opens 15 minutes before the start (${s.from}).`);
-  if (m >= mins(s.to)) fail(409, 'This lab time is over.');
-  const late = m > mins(s.from) + grace;
-  await query("UPDATE applications SET attendance = 'present', late = $2, checked_in_at = now() WHERE id = $1", [a.id, late]);
-  pushApps([a.student]); res.json({ ok: true, late });
-}));
-
-app.patch('/api/apps/:id/status', auth('admin'), wrap(async (req, res) => {
-  const { status } = req.body;
-  if (!['approved', 'rejected', 'pending'].includes(status)) fail(400, 'Unknown status.');
-  const extra = [];
-  const a = await tx(async q => {
-    const a = await getApp(q, req.params.id);
-    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [a.session_id]);
-    if (status === 'approved' && a.status !== 'approved' && await seatsLeft(q, a.session_id) < 1) fail(409, 'No places left in this lab time.');
-    await q("UPDATE applications SET status = $1::text, note = CASE WHEN $1::text = 'rejected' THEN note ELSE '' END WHERE id = $2", [status, a.id]);
-    if (status === 'approved') await dropQueueOverlap(q, a.student, a.session_id);
-    else if (a.status === 'approved') await promote(q, a.session_id, extra);
-    return a;
-  });
-  await logAct(req.user, status === 'approved' ? 'Approved booking' : status === 'rejected' ? 'Rejected booking' : 'Set booking to waiting', a.student);
-  pushApps([a.student, a.booked_by, ...extra]); res.json({ ok: true });
-}));
-
-app.patch('/api/apps/:id/release', auth('admin'), wrap(async (req, res) => {
-  const extra = [];
-  const a = await tx(async q => {
-    const a = await getApp(q, req.params.id);
-    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [a.session_id]);
-    if (a.status !== 'approved') fail(409, 'Only an approved booking can be released.');
-    await q("UPDATE applications SET status = 'rejected', note = $2, attendance = NULL, late = false WHERE id = $1", [a.id, 'Released: did not arrive in time']);
-    await promote(q, a.session_id, extra);
-    return a;
-  });
-  await logAct(req.user, 'Released place', a.student);
-  pushApps([a.student, a.booked_by, ...extra]); res.json({ ok: true });
-}));
-
-app.patch('/api/apps/:id/move', auth('admin'), wrap(async (req, res) => {
-  const to = +req.body.sessionId;
-  const extra = [];
-  const a = await tx(async q => {
-    const a = await getApp(q, req.params.id);
-    await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [to]);
-    if (a.status !== 'rejected') {
-      const twice = await q("SELECT 1 FROM applications WHERE session_id = $1 AND lower(student) = lower($2) AND status <> 'rejected' AND id <> $3", [to, a.student, a.id]);
-      if (twice.length) fail(409, 'This student already has a booking in that lab time.');
-    }
-    if (a.status === 'approved' && a.session_id !== to && await seatsLeft(q, to) < 1) fail(409, 'The other lab time is full.');
-    await q('UPDATE applications SET session_id = $1 WHERE id = $2', [to, a.id]);
-    if (a.status === 'approved' && a.session_id !== to) {
-      await dropQueueOverlap(q, a.student, to);
-      await promote(q, a.session_id, extra);
-    }
-    return a;
-  });
-  await logAct(req.user, 'Moved booking', a.student);
-  pushApps([a.student, a.booked_by, ...extra]); res.json({ ok: true });
-}));
-
-// att: 'present', 'late' (counts as present), 'absent' or null (clear).
-app.patch('/api/apps/:id/attendance', auth('admin'), wrap(async (req, res) => {
-  const att = req.body.att ?? null;
-  if (![null, 'present', 'absent', 'late'].includes(att)) fail(400, 'Use present, late or absent.');
-  const a = await getApp(query, req.params.id);
-  await query('UPDATE applications SET attendance = $1, late = $2 WHERE id = $3', [att === 'late' ? 'present' : att, att === 'late', a.id]);
-  await logAct(req.user, 'Marked attendance', `${a.student}: ${att || 'cleared'}`);
-  pushApps([a.student]); res.json({ ok: true });
-}));
-
-// Many bookings at once. Places that become free go to the waiting list.
-app.post('/api/apps/bulk', auth('admin'), wrap(async (req, res) => {
-  const ids = toIds(req.body.ids), action = req.body.action;
-  if (!ids.length) fail(400, 'Choose at least one booking.');
-  if (!['approve', 'reject', 'pending', 'present', 'late', 'absent', 'clear', 'delete'].includes(action)) fail(400, 'Unknown action.');
-  let done = 0, skipped = 0, names = [];
-  await tx(async q => {
-    const rows = await q('SELECT id, session_id, status, student, booked_by FROM applications WHERE id = ANY($1::int[]) ORDER BY session_id, id', [ids]);
-    names = rows.flatMap(r => [r.student, r.booked_by]);
-    if (action === 'approve') {
-      const locked = new Set();
-      for (const r of rows) {
-        if (!locked.has(r.session_id)) { await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [r.session_id]); locked.add(r.session_id); }
-        if (r.status === 'approved') continue;
-        if (await seatsLeft(q, r.session_id) < 1) { skipped++; continue; }
-        await q("UPDATE applications SET status = 'approved', note = '' WHERE id = $1", [r.id]);
-        await dropQueueOverlap(q, r.student, r.session_id);
-        done++;
-      }
-    } else if (action === 'reject' || action === 'pending') {
-      done = (await q('UPDATE applications SET status = $2 WHERE id = ANY($1::int[]) RETURNING id', [ids, action === 'reject' ? 'rejected' : 'pending'])).length;
-    } else if (action === 'delete') {
-      done = (await q('DELETE FROM applications WHERE id = ANY($1::int[]) RETURNING id', [ids])).length;
-    } else {
-      const att = action === 'clear' ? null : action === 'late' ? 'present' : action;
-      done = (await q("UPDATE applications SET attendance = $2, late = $3 WHERE id = ANY($1::int[]) AND status = 'approved' RETURNING id", [ids, att, action === 'late'])).length;
-    }
-    if (['reject', 'pending', 'delete'].includes(action)) {
-      for (const sid of new Set(rows.filter(r => r.status === 'approved').map(r => r.session_id))) await promote(q, sid, names);
-    }
-  });
-  await logAct(req.user, `Bulk: ${action}`, `${done} booking(s)`);
-  pushApps(names);
-  res.json({ done, skipped });
-}));
-
-/* ---------- Blocked students and statistics ---------- */
-
-app.get('/api/blacklist', auth('admin'), wrap(async (_, res) => res.json((await query('SELECT name FROM blacklist ORDER BY name')).map(r => r.name))));
-app.post('/api/blacklist', auth('admin'), wrap(async (req, res) => {
-  const name = cleanName(req.body.name); if (!name) fail(400, 'Enter a student name.');
-  await tx(async q => {
-    await q('INSERT INTO blacklist(name, reason) VALUES($1,$2) ON CONFLICT (name) DO UPDATE SET reason = EXCLUDED.reason', [name, req.body.reason || '']);
-    await q("UPDATE applications SET status = 'rejected' WHERE student = $1 AND status = 'pending'", [name]);
-  });
-  await logAct(req.user, 'Blocked student', name);
-  pushApps([name]); res.json({ ok: true });
-}));
-app.delete('/api/blacklist/:name', auth('admin'), wrap(async (req, res) => {
-  await query('DELETE FROM blacklist WHERE name = $1', [req.params.name]);
-  await logAct(req.user, 'Unblocked student', req.params.name);
-  pushApps(); res.sendStatus(204);
-}));
-
-app.get('/api/stats/overview', auth('admin'), wrap(async (_, res) => {
-  const [apps, labRows] = await Promise.all([listApps(), query('SELECT id, name, pcs FROM labs ORDER BY name')]);
-  const by = k => apps.filter(a => a.status === k).length;
-  const marked = apps.filter(a => a.att), present = marked.filter(a => a.att === 'present').length;
-  res.json({
-    totals: { applications: apps.length, approved: by('approved'), pending: by('pending'), rejected: by('rejected') },
-    labs: labRows.length,
-    attendance: { present, absent: marked.length - present, late: apps.filter(a => a.att === 'present' && a.late).length, rate: marked.length ? Math.round(present / marked.length * 100) : null },
-  });
-}));
-
-/* ---------- Lost and Found ---------- */
-
-const DAY = 864e5, HOLD_DAYS = 7, MAX_FILES = 6, MAX_FILE = 12 * 1024 * 1024, MAX_TOTAL = 24 * 1024 * 1024;
-const FILE_OK = /^(image\/(png|jpe?g|gif|webp|avif)|video\/(mp4|webm|ogg|quicktime)|text\/plain|application\/(pdf|msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)))$/i;
-const fileKind = mime => (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : 'file');
-const IMG_EXT = /\.(png|jpe?g|gif|webp|avif)(\?|#|$)/i;
-const VID_EXT = /\.(mp4|webm|ogg|mov)(\?|#|$)/i;
-function directUrl(u) {
-  let m = u.match(/drive\.google\.com\/file\/d\/([\w-]+)/) || u.match(/drive\.google\.com\/(?:open|uc)\?(?:[^#]*&)?id=([\w-]+)/);
-  if (m) return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1600`;
-  if (/^https?:\/\/(www\.)?dropbox\.com\//i.test(u)) { try { const x = new URL(u); x.searchParams.delete('dl'); x.searchParams.set('raw', '1'); return x.toString(); } catch { return u; } }
-  m = u.match(/^https?:\/\/(?:www\.)?imgur\.com\/([A-Za-z0-9]{5,8})\/?$/);
-  return m ? `https://i.imgur.com/${m[1]}.jpg` : u;
+const ConfirmCtx = createContext(null);
+function ConfirmProvider({ children }) {
+  const [st, setSt] = useState(null);
+  const ask = useCallback((o) => new Promise((resolve) => setSt({ ...o, resolve })), []);
+  const close = (v) => { st.resolve(v); setSt(null); };
+  return (
+    <ConfirmCtx.Provider value={ask}>
+      {children}
+      {st && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4" onClick={() => close(false)}>
+          <div role="alertdialog" aria-modal="true" className="w-full max-w-sm overflow-hidden rounded-[10px] bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className={`border-l-4 p-6 ${st.danger ? 'border-[#ff4500]' : 'border-[#16a34a]'}`}>
+              <h3 className="text-base font-bold">{st.title || 'Are you sure?'}</h3>
+              <p className="mt-2 text-xs leading-relaxed text-black/65">{st.message}</p>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-black/10 bg-black/[0.02] px-6 py-4">
+              <Btn c="w" onClick={() => close(false)}>Cancel</Btn>
+              <Btn c={st.danger ? 'or' : 'ink'} onClick={() => close(true)}>{st.ok || 'Yes, continue'}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+    </ConfirmCtx.Provider>
+  );
 }
-const PRIVATE_HOST = /^(localhost|127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1)/i;
-const resolveLink = async raw => {
-  const url = directUrl(raw);
-  if (IMG_EXT.test(url) || /drive\.google\.com\/thumbnail|i\.imgur\.com/.test(url)) return { kind: 'image', url };
-  if (VID_EXT.test(url) || /(youtu\.be|youtube\.com|vimeo\.com)/i.test(url)) return { kind: 'video', url };
-  try {
-    if (PRIVATE_HOST.test(new URL(url).hostname)) return { kind: 'link', url };
-    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 4000);
-    const r = await fetch(url, { headers: { Range: 'bytes=0-0' }, signal: ctl.signal, redirect: 'follow' });
-    clearTimeout(timer); r.body?.cancel?.();
-    const type = r.headers.get('content-type') || '';
-    if (/^image\//i.test(type)) return { kind: 'image', url };
-    if (/^video\//i.test(type)) return { kind: 'video', url };
-  } catch { /* not reachable: keep as a plain link */ }
-  return { kind: 'link', url };
+const useConfirm = () => useContext(ConfirmCtx);
+
+// Runs a change, shows the result, then reloads the page data.
+function useAct(reload) {
+  const { busy, run } = useBusy();
+  const [note, setNote] = useState(null);
+  const ask = useConfirm();
+  const act = (key, fn, done = '') => run(key, async () => {
+    setNote(null);
+    try {
+      const r = await fn();
+      if (done) setNote({ ok: true, text: typeof done === 'function' ? done(r) : done });
+      await reload?.();
+      return true;
+    } catch (e) {
+      setNote({ ok: false, text: e.message });
+      return false;
+    }
+  });
+  const sure = async (o, key, fn, done) => ((await ask(o)) ? act(key, fn, done) : false);
+  return { busy, act, sure, note, setNote };
+}
+
+// Pick students by checkbox, with search. Value is a list of student names.
+function StudentPicker({ students, value, onChange }) {
+  const [q, setQ] = useState('');
+  const shown = students.filter((s) => match(q, s.name, s.className || '', s.email || '')).slice(0, 200);
+  const has = (n) => value.includes(n);
+  const toggle = (n) => onChange(has(n) ? value.filter((x) => x !== n) : [...value, n]);
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-[200px] flex-1"><SearchBox value={q} onChange={setQ} placeholder="Search students by name or class" /></div>
+        <span className="text-xs text-black/55">{value.length} selected</span>
+        <Btn c="w" onClick={() => onChange([...new Set([...value, ...shown.map((s) => s.name)])])}>Select shown</Btn>
+        <Btn c="w" onClick={() => onChange([])}>Clear</Btn>
+      </div>
+      <div className="mt-3 max-h-56 divide-y divide-black/10 overflow-y-auto rounded-[6px] border border-black/10">
+        {shown.map((s) => (
+          <label key={s.id ?? s.name} className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-black/[0.02]">
+            <input type="checkbox" className="h-4 w-4 accent-[#16a34a]" checked={has(s.name)} onChange={() => toggle(s.name)} />
+            <Person p={s} className="h-7 w-7 text-[10px]" />
+            <span className="ml-auto text-xs text-black/55">{s.className || 'No class'}</span>
+          </label>
+        ))}
+        {shown.length === 0 && <Empty>No student found.</Empty>}
+      </div>
+    </div>
+  );
+}
+
+// Who a lab time is for: everyone, a class, a group, or chosen students. Used when creating and when editing.
+const BLANK_AUD = { kind: '', value: '', people: [], exclusive: true };
+const audFrom = (s) => {
+  const ex = !!s.exclusive;
+  if (s.forClass) return { kind: 'class', value: s.forClass, people: [], exclusive: ex };
+  if (s.forGroup) return { kind: 'group', value: String(s.forGroup), people: [], exclusive: ex };
+  if (s.forPeople) return { kind: 'people', value: '', people: s.people || [], exclusive: ex };
+  return { ...BLANK_AUD };
+};
+const audOk = (a) => !a.kind || (a.kind === 'people' ? a.people.length > 0 : !!a.value);
+function AudiencePicker({ value, onChange, classes, groups, students }) {
+  const set = (p) => onChange({ ...value, ...p });
+  return (
+    <div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field l="Who is this lab time for?">
+          <Sel value={value.kind} onChange={(kind) => set({ kind, value: '', people: [] })} options={[
+            { value: '', label: 'Everyone' }, { value: 'class', label: 'A class' }, { value: 'group', label: 'A group' }, { value: 'people', label: 'Chosen students' },
+          ]} />
+        </Field>
+        {value.kind && (
+          <Field l="Can other students join?">
+            <Sel value={String(value.exclusive)} onChange={(v) => set({ exclusive: v === 'true' })} options={[
+              { value: 'true', label: 'No, only they can join' }, { value: 'false', label: 'Yes, they get places and the rest stay open' },
+            ]} />
+          </Field>
+        )}
+      </div>
+      {value.kind === 'class' && <div className="mt-4"><Field l="Class"><Sel value={value.value} onChange={(v) => set({ value: v })} options={[{ value: '', label: 'Choose a class…' }, ...classes.map((c) => ({ value: c, label: c }))]} /></Field></div>}
+      {value.kind === 'group' && <div className="mt-4"><Field l="Group"><Sel value={value.value} onChange={(v) => set({ value: v })} options={[{ value: '', label: 'Choose a group…' }, ...groups.map((g) => ({ value: String(g.id), label: `${g.name} (${g.count ?? g.members?.length ?? 0})` }))]} /></Field></div>}
+      {value.kind === 'people' && <div className="mt-4"><StudentPicker students={students} value={value.people} onChange={(people) => set({ people })} /></div>}
+      {value.kind && <p className="mt-3 text-xs text-black/55">The chosen students are booked into this lab time by themselves. You do not need to approve them.</p>}
+    </div>
+  );
+}
+
+// Grade + combination + section. Value is one class at a time.
+const ClassPick = ({ opts, grade, combo, section = '', onChange }) => {
+  const choices = gradesOf(opts).flatMap((g) => {
+    const cs = combosFor(opts, g);
+    return cs.length ? cs.map((c) => ({ value: `${g}|${c}`, label: `${g} ${c}` })) : [{ value: `${g}|`, label: g }];
+  });
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Field l="Class">
+        <Sel value={grade ? `${grade}|${combo || ''}` : ''} onChange={(v) => { const [g, c] = v.split('|'); onChange({ grade: g, combo: c || '', section }); }}
+          options={[{ value: '', label: 'Choose a class…' }, ...choices]} />
+      </Field>
+      <Field l="Section (optional)">
+        <Sel value={section} onChange={(v) => onChange({ grade, combo: combo || '', section: v })}
+          options={[{ value: '', label: 'No section' }, ...SECTIONS.map((s) => ({ value: s, label: `Section ${s}` }))]} />
+      </Field>
+    </div>
+  );
 };
 
-const trendRows = async (where = '', params = []) => {
-  const t = await query(`SELECT id, title, description, category, found_at AS "foundAt", contact_phone AS phone, contact_email AS email, status,
-    posted_by AS "postedBy", posted_at AS "postedAt", removed_at AS "removedAt", repost_count AS reposts
-    FROM trends ${where ? 'WHERE ' + where : ''} ORDER BY posted_at DESC, id DESC`, params);
-  if (!t.length) return [];
-  const media = await query('SELECT id, trend_id, kind, url, name, mime, (data IS NOT NULL) AS stored FROM trend_media WHERE trend_id = ANY($1) ORDER BY id', [t.map(x => x.id)]);
-  const now = Date.now();
-  return t.map(x => ({
-    ...x,
-    daysLeft: Math.max(0, Math.ceil(HOLD_DAYS - (now - new Date(x.postedAt).getTime()) / DAY)),
-    media: media.filter(m => m.trend_id === x.id).map(m => ({ id: m.id, kind: m.kind, name: m.name, mime: m.mime, src: m.stored ? `/api/trends/files/${m.id}` : m.url })),
-  }));
-};
-const getTrend = async id => (Number.isInteger(+id) && await one('SELECT * FROM trends WHERE id = $1', [+id])) || fail(404, 'Post not found.');
-const trendFields = b => {
-  const title = cleanName(b.title);
-  if (!title) fail(400, 'Enter a title for the item.');
-  const email = String(b.email || '').trim().toLowerCase();
-  if (email && !validEmail(email)) fail(400, 'Enter a valid contact email, or leave it empty.');
-  return {
-    title: title.slice(0, 140), category: cleanName(b.category).slice(0, 60) || 'Other',
-    description: String(b.description || '').trim().slice(0, 4000), foundAt: cleanName(b.foundAt).slice(0, 160),
-    phone: String(b.phone || '').trim().slice(0, 40), email,
+// Add / rename / remove text items (classes, reasons, categories).
+function ChipList({ items, placeholder, onAdd, onRemove, onEdit }) {
+  const [v, setV] = useState('');
+  const [ed, setEd] = useState(null);
+  const add = async () => {
+    const x = v.trim();
+    if (!x || items.includes(x)) return;
+    if (await onAdd(x)) setV('');
   };
-};
+  const saveEdit = async () => {
+    const n = ed.val.trim();
+    if (n && n !== ed.old && !items.includes(n) && onEdit) await onEdit(ed.old, n);
+    setEd(null);
+  };
+  return (
+    <div>
+      <div className="mb-3 flex min-h-[28px] flex-wrap gap-2">
+        {items.length === 0 && <span className="py-1 text-xs text-black/50">Nothing yet.</span>}
+        {items.map((x) => (ed?.old === x ? (
+          <span key={x} className="inline-flex items-center gap-1.5">
+            <Inp autoFocus className="!w-40" value={ed.val} onChange={(e) => setEd({ ...ed, val: e.target.value })}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') setEd(null); }} />
+            <Btn onClick={saveEdit}>Save</Btn>
+            <Btn c="w" onClick={() => setEd(null)}>Cancel</Btn>
+          </span>
+        ) : (
+          <span key={x} className="inline-flex items-center gap-2 rounded-[6px] border border-black/15 bg-white py-1.5 pl-3 pr-2 text-xs font-medium">
+            {x}
+            {onEdit && <button type="button" aria-label={`Rename ${x}`} onClick={() => setEd({ old: x, val: x })} className="text-[#2563eb] hover:underline">Edit</button>}
+            <button type="button" aria-label={`Remove ${x}`} onClick={() => onRemove(x)} className="grid h-4 w-4 place-items-center text-[#ff4500]"><X className="h-3.5 w-3.5" aria-hidden="true" /></button>
+          </span>
+        )))}
+      </div>
+      <div className="flex max-w-md gap-2">
+        <Inp placeholder={placeholder} value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
+        <Btn className="shrink-0" disabled={!v.trim()} onClick={add}>Add</Btn>
+      </div>
+    </div>
+  );
+}
 
-app.get('/api/trends', wrap(async (_, res) => res.json(await trendRows("status = 'active'"))));
+const LOGO_LETTERS = [['A', 'dark'], ['s', 'dark'], ['y', 'dark'], ['v', 'dark'], ['_', 'or'], ['l', 'green'], ['m', 'green'], ['s', 'green']];
+const Logo = ({ light }) => (
+  <div className="inline-flex items-center gap-3 text-base font-extrabold tracking-tight">
+    <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[6px] border border-black/10 bg-white">
+      <img src={logo} alt="Logo" className="h-9 w-9 object-contain" />
+    </span>
+    <span className="text-base sm:text-lg" aria-label="Asyv_lms">
+      {LOGO_LETTERS.map(([ch, tone], i) => (
+        <span key={i} aria-hidden="true" className="lb-bounce"
+          style={{ animationDelay: `${i * 0.12}s`, color: tone === 'or' ? '#ff4500' : tone === 'green' ? (light ? '#ffffff' : 'var(--ok, #16a34a)') : (light ? '#ffffff' : 'var(--ink, #111827)') }}>
+          {ch}
+        </span>
+      ))}
+    </span>
+  </div>
+);
 
-// Stored photos and files. Open to every site so the landing page can show them (images were blocked before).
-app.get('/api/trends/files/:id', wrap(async (req, res) => {
-  const f = (Number.isInteger(+req.params.id) && await one('SELECT name, mime, data FROM trend_media WHERE id = $1 AND data IS NOT NULL', [+req.params.id])) || fail(404, 'File not found.');
-  sendData(req, res, f);
-}));
+// Light and dark mode. Everything is wrapped in .lms-dark when dark mode is on.
+// Dark mode is TRUE BLACK (#000) with orangered (#ff4500) as the only accent. Green is not used in dark mode.
+const GLOBAL_CSS = `
+@property --p { syntax: '<number>'; inherits: false; initial-value: 0; }
+@keyframes lbIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes lbBounce{0%,55%,100%{transform:translateY(0)}25%{transform:translateY(-7px)}40%{transform:translateY(0)}47%{transform:translateY(-2px)}}
+@keyframes lbPulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes lbDot{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-3px);opacity:1}}
+@keyframes lbFloat{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-10px) rotate(1deg)}}
+@keyframes lbGlow{0%,100%{box-shadow:0 12px 30px rgba(22,163,74,.12)}50%{box-shadow:0 18px 45px rgba(22,163,74,.3)}}
+@keyframes lbZoom{from{transform:scale(1)}to{transform:scale(1.12)}}
+@keyframes lbRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes lbPing{0%{transform:scale(1);opacity:.7}100%{transform:scale(2.4);opacity:0}}
+.lb-float{animation:lbFloat 5s ease-in-out infinite}.lb-glow{animation:lbGlow 4s ease-in-out infinite}
+.lb-in{animation:lbIn .6s ease both}
+.lb-zoom{animation:lbZoom 9s ease-out both}
+.lb-rise{animation:lbRise .45s ease both}
+.lb-ping{animation:lbPing 1.6s ease-out infinite}
+.lb-bounce{display:inline-block;animation:lbBounce 2.2s ease-in-out infinite}
+.lb-pulse{animation:lbPulse 1.6s ease-in-out infinite}
+.lb-dot{display:inline-block;width:6px;height:6px;border-radius:9999px;background:#9ca3af;animation:lbDot 1.2s infinite}
+/* Border fills up as places are taken. --p is 0 to 100. */
+.lb-ring{padding:3px;border-radius:8px;background:conic-gradient(var(--c,#16a34a) calc(var(--p) * 1%),#e5e7eb 0);transition:--p 1.2s ease}
+@media (prefers-reduced-motion:reduce){.lb-bounce,.lb-pulse,.lb-in,.lb-dot,.lb-float,.lb-glow,.lb-zoom,.lb-rise,.lb-ping{animation:none!important}.lb-ring{transition:none}}
 
-app.get('/api/trends/manage', comm, wrap(async (_, res) => res.json(await trendRows())));
+/* Dark mode: true black, orangered accent, no green */
+.lms-dark{--ink:#ffffff;--ok:#ff4500;--full:#ffffff;--card:rgba(0,0,0,.88);background:#000;color:#f5f5f5;color-scheme:dark}
+.lms-dark .bg-white{background-color:#0a0a0a!important}
+.lms-dark [class~="bg-[#f7f8f7]"],.lms-dark [class~="bg-[#f0f2f5]"]{background-color:#000!important}
+.lms-dark [class~="bg-[#e8f5ec]"]{background-color:#1a0b05!important}
+.lms-dark [class*="from-[#e8f5ec]"]{background-image:none!important;background-color:#140a06!important}
+.lms-dark [class*="bg-white/"]{background-color:rgba(0,0,0,.92)!important}
+.lms-dark [class~="text-[#111827]"]{color:#f5f5f5!important}
+.lms-dark [class*="text-black/"]{color:#b8b8b8!important}
+.lms-dark [class*="border-black/"]{border-color:#2e2e2e!important}
+.lms-dark [class*="divide-black/"]>*+*{border-color:#2e2e2e!important}
+.lms-dark input,.lms-dark select,.lms-dark textarea{background-color:#000!important;color:#f5f5f5!important;border-color:#4a4a4a!important;accent-color:#ff4500}
+.lms-dark input::placeholder,.lms-dark textarea::placeholder{color:#8a8a8a!important}
+.lms-dark [class*="hover:bg-black/"]:hover{background-color:#1f1f1f!important}
+.lms-dark [class*="bg-black/["],.lms-dark [class~="bg-black/5"]{background-color:#181818!important}
+.lms-dark [class~="bg-black/10"]{background-color:#2a2a2a!important}
+.lms-dark [class~="bg-[#111827]"]{background-color:#2a2a2a!important}
+.lms-dark .lb-ring{background:conic-gradient(var(--c,#ff4500) calc(var(--p) * 1%),#2a2a2a 0)}
+/* green becomes orangered */
+.lms-dark [class*="bg-[#16a34a]"]{background-color:#ff4500!important}
+.lms-dark [class*="bg-[#16a34a]/"]{background-color:rgba(255,69,0,.2)!important}
+.lms-dark [class*="from-[#16a34a]"]{background-image:linear-gradient(135deg,#ff4500,#7a2200)!important}
+.lms-dark [class*="bg-[#4ade80]"]{background-color:#ff4500!important}
+.lms-dark [class*="text-[#16a34a]"],.lms-dark [class*="text-[#15803d]"]{color:#ff7a45!important}
+.lms-dark [class*="border-[#16a34a]"]{border-color:#ff4500!important}
+.lms-dark [class*="border-[#16a34a]/20"]{border-color:rgba(255,69,0,.28)!important}
+.lms-dark [class*="border-t-[#ff4500]"]{border-top-color:#ff4500!important}
+.lms-dark [class*="focus:border-[#16a34a]"]:focus{border-color:#ff4500!important}
+/* other colours that must stay readable on black */
+.lms-dark [class~="text-[#c2310a]"]{color:#ff7a45!important}
+.lms-dark [class~="text-[#b45309]"]{color:#ffb020!important}
+.lms-dark [class~="text-[#1d4ed8]"],.lms-dark [class~="text-[#2563eb]"]{color:#7db3ff!important}
+.lms-dark [class~="text-[#dc2626]"]{color:#ff6b6b!important}
+.lms-dark .rounded-full[class~="border-white"]{border-color:#000!important}
+`;
 
-app.post('/api/trends', comm, wrap(async (req, res) => {
-  const b = req.body, t = trendFields(b);
-  const links = (Array.isArray(b.links) ? b.links : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, 10);
-  links.forEach(l => { if (!/^https?:\/\/\S+$/i.test(l)) fail(400, `This link is not valid: ${l}`); });
-  const files = (Array.isArray(b.files) ? b.files : []).slice(0, MAX_FILES).map(f => ({
-    name: cleanName(f.name).slice(0, 120) || 'file', mime: String(f.mime || '').toLowerCase(), buf: Buffer.from(String(f.data || ''), 'base64'),
-  })).filter(f => f.buf.length);
-  files.forEach(f => {
-    if (!FILE_OK.test(f.mime)) fail(400, `This file type is not allowed: ${f.name}. Use photos, videos, PDF or Office files.`);
-    if (f.buf.length > MAX_FILE) fail(413, `${f.name} is too big (12 MB maximum). For long videos, paste a link instead.`);
-  });
-  if (files.reduce((s, f) => s + f.buf.length, 0) > MAX_TOTAL) fail(413, 'The files together are too big (24 MB maximum). Use links for videos.');
-  const resolved = await Promise.all(links.map(resolveLink));
-  const id = await tx(async q => {
-    const row = (await q('INSERT INTO trends(title, description, category, found_at, contact_phone, contact_email, posted_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
-      [t.title, t.description, t.category, t.foundAt, t.phone, t.email, req.user.name]))[0];
-    for (const f of files) await q('INSERT INTO trend_media(trend_id, kind, name, mime, data) VALUES($1,$2,$3,$4,$5)', [row.id, fileKind(f.mime), f.name, f.mime, f.buf]);
-    for (const l of resolved) await q('INSERT INTO trend_media(trend_id, kind, url, name) VALUES($1,$2,$3,$4)', [row.id, l.kind, l.url, l.url.slice(0, 120)]);
-    return row.id;
-  });
-  await logAct(req.user, 'Posted lost item', t.title);
-  io.emit('trends:update'); res.json({ id });
-}));
+/* ================================================================== */
+/* 3. PUBLIC LANDING: labs, free places, lost and found                */
+/* ================================================================== */
 
-app.put('/api/trends/categories', comm, wrap(async (req, res) => {
-  const list = cleanList(Array.isArray(req.body.list) ? req.body.list : []).slice(0, 40);
-  if (!list.length) fail(400, 'Keep at least one category.');
-  await saveOption(query, 'trendCategories', list);
-  io.emit('trends:update');
-  res.json({ list });
-}));
+function useOverview(day) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const load = useCallback(() => api(`/api/overview?date=${day}`).then((d) => { setData(d); setErr(''); }).catch((e) => setErr(e.message)), [day]);
+  useEffect(() => { setData(null); load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
+  useLive({ 'overview:update': load });
+  return { data, err, loading: !data || data.date !== day };
+}
 
-// Delete many posts that are already off the board (returned or removed).
-app.post('/api/trends/bulk-delete', comm, wrap(async (req, res) => {
-  const ids = toIds(req.body.ids);
-  if (!ids.length) fail(400, 'Choose at least one post.');
-  const r = await query("DELETE FROM trends WHERE id = ANY($1::int[]) AND status <> 'active' RETURNING id", [ids]);
-  await logAct(req.user, 'Deleted lost items', `${r.length}`);
-  io.emit('trends:update'); res.json({ deleted: r.length });
-}));
-
-app.put('/api/trends/:id', comm, wrap(async (req, res) => {
-  const cur = await getTrend(req.params.id), t = trendFields(req.body);
-  await query('UPDATE trends SET title = $1, description = $2, category = $3, found_at = $4, contact_phone = $5, contact_email = $6 WHERE id = $7',
-    [t.title, t.description, t.category, t.foundAt, t.phone, t.email, cur.id]);
-  io.emit('trends:update'); res.json({ ok: true });
-}));
-
-app.patch('/api/trends/:id/returned', comm, wrap(async (req, res) => {
-  const cur = await getTrend(req.params.id);
-  if (cur.status !== 'active') fail(409, 'This post is not active.');
-  await query("UPDATE trends SET status = 'returned', removed_at = now() WHERE id = $1", [cur.id]);
-  await logAct(req.user, 'Marked item returned', cur.title);
-  io.emit('trends:update'); res.json({ ok: true });
-}));
-
-app.patch('/api/trends/:id/remove', comm, wrap(async (req, res) => {
-  const cur = await getTrend(req.params.id);
-  if (cur.status !== 'active') fail(409, 'This post is already off the board.');
-  const left = Math.ceil(HOLD_DAYS - (Date.now() - new Date(cur.posted_at).getTime()) / DAY);
-  if (left > 0) fail(409, `A post can be removed ${HOLD_DAYS} days after it was posted. ${left} day${left === 1 ? '' : 's'} left.`);
-  await query("UPDATE trends SET status = 'removed', removed_at = now() WHERE id = $1", [cur.id]);
-  await logAct(req.user, 'Removed lost item', cur.title);
-  io.emit('trends:update'); res.json({ ok: true });
-}));
-
-app.patch('/api/trends/:id/repost', comm, wrap(async (req, res) => {
-  const cur = await getTrend(req.params.id);
-  if (cur.status === 'active') fail(409, 'This post is already on the board.');
-  await query("UPDATE trends SET status = 'active', posted_at = now(), removed_at = NULL, repost_count = repost_count + 1 WHERE id = $1", [cur.id]);
-  await logAct(req.user, 'Reposted lost item', cur.title);
-  io.emit('trends:update'); res.json({ ok: true });
-}));
-
-app.delete('/api/trends/:id', comm, wrap(async (req, res) => {
-  const cur = await getTrend(req.params.id);
-  if (cur.status === 'active') fail(409, 'Remove the post from the board first.');
-  await query('DELETE FROM trends WHERE id = $1', [cur.id]);
-  await logAct(req.user, 'Deleted lost item', cur.title);
-  io.emit('trends:update'); res.sendStatus(204);
-}));
-
-app.use((err, _req, res, _next) => res.status(Number.isInteger(err.code) && err.code >= 400 && err.code < 600 ? err.code : (err.type === 'entity.too.large' ? 413 : 500)).json({
-  error: err.type === 'entity.too.large' ? 'The files are too big. Use smaller photos or paste a link for videos.' : err.message || 'Something went wrong.',
-}));
-
-/* ---------- Database set-up (safe to run on every start) ---------- */
-
-const ensureTables = async () => {
-  await query(`CREATE TABLE IF NOT EXISTS admin_profiles (
-    email text PRIMARY KEY, picture text NOT NULL DEFAULT '', phone text NOT NULL DEFAULT '')`);
-  await query(`CREATE TABLE IF NOT EXISTS admin_revocations (
-    email text PRIMARY KEY, removed_by text NOT NULL, removed_at timestamptz NOT NULL DEFAULT now())`);
-  await query(`CREATE TABLE IF NOT EXISTS admin_push_subscriptions (
-    email text NOT NULL, endpoint text PRIMARY KEY, subscription jsonb NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now())`);
-  await query('CREATE INDEX IF NOT EXISTS admin_push_email_idx ON admin_push_subscriptions (email)');
-  await query(`CREATE TABLE IF NOT EXISTS admin_call_invites (
-    call_id text PRIMARY KEY, caller_email text NOT NULL, caller_name text NOT NULL DEFAULT '',
-    caller_picture text NOT NULL DEFAULT '', callee_email text NOT NULL, kind text NOT NULL CHECK (kind IN ('audio','video')),
-    created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL)`);
-  await query('CREATE INDEX IF NOT EXISTS admin_call_callee_expiry_idx ON admin_call_invites (callee_email, expires_at)');
-
-  // Activity log: every admin change. Used for the live feed and the chart.
-  await query(`CREATE TABLE IF NOT EXISTS activity (
-    id serial PRIMARY KEY, actor text NOT NULL, action text NOT NULL, detail text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT now())`);
-  await query('CREATE INDEX IF NOT EXISTS activity_created_idx ON activity (created_at DESC)');
-  await query('CREATE INDEX IF NOT EXISTS activity_actor_idx ON activity (actor, created_at)');
-
-  // Admin chat: who the admins are, their messages, and what each admin has already read.
-  await query(`CREATE TABLE IF NOT EXISTS admin_people (
-    email text PRIMARY KEY, name text NOT NULL DEFAULT '', picture text NOT NULL DEFAULT '', last_seen timestamptz NOT NULL DEFAULT now())`);
-  await query(`CREATE TABLE IF NOT EXISTS admin_chat_groups (
-    id serial PRIMARY KEY, name text NOT NULL, created_by text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
-  await query(`CREATE TABLE IF NOT EXISTS admin_chat_group_members (
-    group_id integer NOT NULL REFERENCES admin_chat_groups(id) ON DELETE CASCADE,
-    email text NOT NULL, status text NOT NULL CHECK (status IN ('pending','accepted','declined')),
-    invited_by text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), responded_at timestamptz,
-    PRIMARY KEY (group_id, email))`);
-  await query('CREATE INDEX IF NOT EXISTS admin_chat_group_member_email_idx ON admin_chat_group_members (email, status)');
-  await query(`CREATE TABLE IF NOT EXISTS admin_chat (
-    id serial PRIMARY KEY, room text NOT NULL, from_email text NOT NULL, from_name text NOT NULL DEFAULT '',
-    to_email text NOT NULL DEFAULT 'all', body text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
-  await query('CREATE INDEX IF NOT EXISTS admin_chat_room_idx ON admin_chat (room, id DESC)');
-  await query('CREATE INDEX IF NOT EXISTS admin_chat_to_idx ON admin_chat (to_email, id)');
-  await query(`CREATE TABLE IF NOT EXISTS admin_chat_reads (
-    email text NOT NULL, room text NOT NULL, last_id integer NOT NULL DEFAULT 0, PRIMARY KEY (email, room))`);
-  // Chat files (photos, videos, audio, documents) and the new message columns: reply, file, forwarded, deleted, edited.
-  await query(`CREATE TABLE IF NOT EXISTS admin_chat_files (
-    id serial PRIMARY KEY, name text NOT NULL DEFAULT '', mime text NOT NULL DEFAULT '', size integer NOT NULL DEFAULT 0,
-    data bytea NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
-  await query('ALTER TABLE admin_chat ADD COLUMN IF NOT EXISTS reply_to integer');
-  await query('ALTER TABLE admin_chat ADD COLUMN IF NOT EXISTS file_id integer REFERENCES admin_chat_files(id) ON DELETE SET NULL');
-  await query('ALTER TABLE admin_chat ADD COLUMN IF NOT EXISTS forwarded boolean NOT NULL DEFAULT false');
-  await query('ALTER TABLE admin_chat ADD COLUMN IF NOT EXISTS deleted boolean NOT NULL DEFAULT false');
-  await query('ALTER TABLE admin_chat ADD COLUMN IF NOT EXISTS edited_at timestamptz');
-  await query('CREATE INDEX IF NOT EXISTS admin_chat_file_idx ON admin_chat (file_id)');
-  await query(`CREATE TABLE IF NOT EXISTS admin_chat_hidden (
-    email text NOT NULL, msg_id integer NOT NULL REFERENCES admin_chat(id) ON DELETE CASCADE, PRIMARY KEY (email, msg_id))`);
-
-  await query(`CREATE TABLE IF NOT EXISTS trends (
-    id serial PRIMARY KEY, title text NOT NULL, description text NOT NULL DEFAULT '', category text NOT NULL DEFAULT 'Other',
-    found_at text NOT NULL DEFAULT '', contact_phone text NOT NULL DEFAULT '', contact_email text NOT NULL DEFAULT '',
-    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','returned','removed')), posted_by text NOT NULL DEFAULT '',
-    posted_at timestamptz NOT NULL DEFAULT now(), removed_at timestamptz, repost_count integer NOT NULL DEFAULT 0)`);
-  await query(`CREATE TABLE IF NOT EXISTS trend_media (
-    id serial PRIMARY KEY, trend_id integer NOT NULL REFERENCES trends(id) ON DELETE CASCADE,
-    kind text NOT NULL CHECK (kind IN ('image','video','file','link')), url text, name text NOT NULL DEFAULT '',
-    mime text NOT NULL DEFAULT '', data bytea, created_at timestamptz NOT NULL DEFAULT now())`);
-  await query('CREATE INDEX IF NOT EXISTS trends_status_posted_idx ON trends (status, posted_at DESC)');
-  await query('CREATE INDEX IF NOT EXISTS trend_media_trend_idx ON trend_media (trend_id)');
-
-  await query(`CREATE TABLE IF NOT EXISTS student_groups (
-    id serial PRIMARY KEY, name text NOT NULL, description text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now())`);
-  await query('CREATE UNIQUE INDEX IF NOT EXISTS student_groups_name_idx ON student_groups (lower(name))');
-  await query(`CREATE TABLE IF NOT EXISTS student_group_members (
-    group_id integer NOT NULL REFERENCES student_groups(id) ON DELETE CASCADE,
-    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    PRIMARY KEY (group_id, user_id))`);
-  await query('CREATE INDEX IF NOT EXISTS student_group_members_user_idx ON student_group_members (user_id)');
-
-  await query("ALTER TABLE labs ADD COLUMN IF NOT EXISTS image text NOT NULL DEFAULT ''");
-  // Uploaded lab pictures live in the database. image_ver changes on every new picture so browsers load the new one.
-  await query('ALTER TABLE labs ADD COLUMN IF NOT EXISTS image_data bytea');
-  await query("ALTER TABLE labs ADD COLUMN IF NOT EXISTS image_mime text NOT NULL DEFAULT ''");
-  await query('ALTER TABLE labs ADD COLUMN IF NOT EXISTS image_ver integer NOT NULL DEFAULT 0');
-  await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS published boolean NOT NULL DEFAULT true');
-  await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS places integer CHECK (places IS NULL OR places >= 1)');
-  await query("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_class text NOT NULL DEFAULT ''");
-  await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS for_group integer REFERENCES student_groups(id) ON DELETE SET NULL');
-  await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS exclusive boolean NOT NULL DEFAULT false');
-  await query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS auto_approve boolean NOT NULL DEFAULT true');
-  await query("ALTER TABLE applications ADD COLUMN IF NOT EXISTS note text NOT NULL DEFAULT ''");
-  await query('ALTER TABLE applications ADD COLUMN IF NOT EXISTS late boolean NOT NULL DEFAULT false');
-  await query('ALTER TABLE applications ADD COLUMN IF NOT EXISTS checked_in_at timestamptz');
-  await query('CREATE INDEX IF NOT EXISTS applications_session_idx ON applications (session_id, status)');
-  await query('CREATE INDEX IF NOT EXISTS applications_student_idx ON applications (student)');
-  // NEW: makes the History page fast when it looks at a long period.
-  await query('CREATE INDEX IF NOT EXISTS sessions_date_idx ON sessions (date)');
-  await query(`CREATE TABLE IF NOT EXISTS session_people (
-    session_id integer NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    PRIMARY KEY (session_id, user_id))`);
-  await query('CREATE INDEX IF NOT EXISTS session_people_user_idx ON session_people (user_id)');
-  // "autoApprove" is added at the END of the view (a view can only grow at the end).
-  await query(`CREATE OR REPLACE VIEW session_places AS
-    SELECT s.id, s.lab_id AS "labId", l.name AS lab,
-      to_char(s.date, 'YYYY-MM-DD') AS date,
-      to_char(s.starts_at, 'HH24:MI') AS "from", to_char(s.ends_at, 'HH24:MI') AS "to",
-      LEAST(COALESCE(s.places, l.pcs), l.pcs) AS seats,
-      GREATEST(LEAST(COALESCE(s.places, l.pcs), l.pcs) - COALESCE(a.n, 0), 0) AS "left",
-      s.published,
-      s.for_class AS "forClass", s.for_group AS "forGroup", g.name AS "forGroupName", s.exclusive AS exclusive,
-      (SELECT COUNT(*)::int FROM session_people p WHERE p.session_id = s.id) AS "forPeople",
-      (SELECT COALESCE(array_agg(u.username ORDER BY u.username), ARRAY[]::text[]) FROM session_people p JOIN users u ON u.id = p.user_id WHERE p.session_id = s.id) AS people,
-      s.auto_approve AS "autoApprove"
-    FROM sessions s
-    JOIN labs l ON l.id = s.lab_id
-    LEFT JOIN student_groups g ON g.id = s.for_group
-    LEFT JOIN (SELECT session_id, COUNT(*)::int AS n FROM applications WHERE status = 'approved' GROUP BY session_id) a ON a.session_id = s.id`);
-};
-
-// Every minute: in a running instant-booking lab time, when students are waiting and the lab is full,
-// places of approved students who have not arrived after the grace time go to the queue.
-const autoRelease = async () => {
-  const opts = await getOptions();
-  if (opts.autoRelease === false) return;
-  const grace = graceOf(opts), now = nowLocal(), m = mins(now.time);
-  const rows = await query('SELECT id, "from", "to" FROM session_places WHERE published AND "autoApprove" AND date = $1', [now.date]);
-  for (const s of rows) {
-    if (m < mins(s.from) + grace || m >= mins(s.to)) continue;
-    const touched = [];
-    const r = await tx(q => releaseNoShows(q, s.id, touched));
-    if (r.released || touched.length) pushApps(touched);
+// One lab time. Closed = thick red border with a red "Closed" strip. Otherwise the border fills as places get taken.
+function SessionPick({ s, day, past, onLogin }) {
+  const closed = past || s.state === 'over';
+  const pct = s.seats ? Math.round(((s.seats - s.left) / s.seats) * 100) : 0;
+  const color = s.left < 1 ? 'var(--full, #ff4500)' : 'var(--ok, #16a34a)';
+  const [p, setP] = useState(0);
+  useEffect(() => { const t = setTimeout(() => setP(pct), 80); return () => clearTimeout(t); }, [pct]);
+  const intent = { sessionId: s.id, date: day, lab: s.labName, from: s.from, to: s.to };
+  const inner = (
+    <div className={`flex items-center justify-between gap-3 rounded-[6px] bg-white p-3 ${closed ? 'opacity-75' : ''}`}>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <b className={`text-sm ${closed ? 'line-through decoration-[#dc2626]/60' : ''}`}>{s.from}–{s.to}</b>
+          {s.for && <Badge s="draft">{s.exclusive ? `Only ${s.for}` : `Reserved for ${s.for}`}</Badge>}
+        </div>
+        <div className={`mt-1 text-xs ${closed ? 'font-bold text-[#dc2626]' : s.left < 1 ? 'font-bold text-[#c2310a]' : 'font-medium text-[#15803d]'}`}>
+          {closed ? 'This lab time is over' : s.left < 1 ? `Full · ${s.waiting} waiting` : `${s.left} of ${s.seats} places free`}
+        </div>
+      </div>
+      <Btn c={closed ? 'w' : s.left < 1 ? 'or' : 'ink'} disabled={closed || s.exclusive} onClick={() => onLogin(intent)}>
+        {closed ? 'Closed' : s.exclusive ? 'Invited only' : s.left < 1 ? 'Join queue' : 'Apply'}
+      </Btn>
+    </div>
+  );
+  if (closed) {
+    return (
+      <div className="overflow-hidden rounded-[8px] border-[5px] border-[#dc2626]">
+        <div className="bg-[#dc2626] px-3 py-1 text-[11px] font-bold text-white">Closed · nobody can apply anymore</div>
+        {inner}
+      </div>
+    );
   }
-};
+  return <div className="lb-ring" style={{ '--c': color, '--p': p }}>{inner}</div>;
+}
 
-const port = process.env.PORT || 4000;
-query('SELECT 1').then(ensureTables).then(seedOptions).then(() => server.listen(port, () => {
-  console.log('LMS API and Socket.io running on port ' + port);
-  setInterval(() => autoRelease().catch(e => console.error('auto-release:', e.message)), 60000);
-}))
-  .catch(e => { console.error('Cannot start. Check the DB_* values in .env and that the database is set up.\n', e.message); process.exit(1); });
+function LabCard({ lab, index, day, past, onLogin }) {
+  const status = labStatus(lab.sessions.map((s) => ({ ...s, state: past ? 'over' : s.state })));
+  const text = { open: 'Places open', full: 'Full', over: 'Closed', none: 'No lab time', draft: 'Not open' }[status];
+  return (
+    <article className={`flex flex-col overflow-hidden rounded-[8px] border bg-white ${status === 'over' ? 'border-[#dc2626]/50' : 'border-black/10'}`}>
+      <div className="relative h-36 overflow-hidden bg-[#e8f5ec]">
+        <LabImg lab={lab} index={index} className="lb-float h-full w-full object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
+        <span className="absolute bottom-3 left-3 rounded-full bg-white/95 px-3 py-1 text-[11px] font-semibold text-[#15803d] shadow">{text}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3 border-b border-black/10 p-4">
+        <div className="min-w-0">
+          <h3 className="truncate text-base font-bold">{lab.name}</h3>
+          <p className="text-xs text-black/55">{lab.pcs} computers</p>
+        </div>
+        <Badge s={status}>{text}</Badge>
+      </div>
+      <div className="flex flex-1 flex-col gap-4 p-4">
+        {lab.sessions.length === 0 && <p className="py-4 text-center text-xs text-black/50">No lab time on this day.</p>}
+        {lab.sessions.map((s) => <SessionPick key={s.id} s={{ ...s, labName: lab.name }} day={day} past={past} onLogin={onLogin} />)}
+      </div>
+    </article>
+  );
+}
+
+function LabBoard({ onLogin }) {
+  const [day, setDay] = useState(() => pickBookableDay(today()));
+  const { data, err, loading } = useOverview(day);
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-[8px] border border-black/10 bg-white p-5">
+        <h3 className="text-lg font-bold">{niceDay(day)}</h3>
+        <DayBar day={day} onChange={setDay} />
+      </div>
+      {err && <div className="mt-4"><Alert>{err}</Alert></div>}
+      {loading && !err && <div className="mt-8"><Loader full label="Loading the labs" /></div>}
+      {!loading && data?.labs.length === 0 && <Empty>No labs have been added yet.</Empty>}
+      <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {!loading && data?.labs.map((l, i) => <LabCard key={l.id} lab={l} index={i} day={day} past={day < today()} onLogin={onLogin} />)}
+      </div>
+    </div>
+  );
+}
+
+// Animated live status of the labs, shown next to the headline on the landing page.
+const LIVE = {
+  available: ['var(--ok, #16a34a)', 'Places open'], limited: ['#f59e0b', 'Few places left'], requested: ['#2563eb', 'Waiting list'],
+  full: ['var(--full, #ff4500)', 'Full'], none: ['#9ca3af', 'No lab time'],
+};
+const DEMO_LABS = [
+  { id: 'd1', name: 'Lab A', seats: 24 }, { id: 'd2', name: 'Lab B', seats: 20 }, { id: 'd3', name: 'Lab C', seats: 16 },
+];
+function LiveLabs() {
+  const { data } = useOverview(today());
+  const [tick, setTick] = useState(0);
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    if (paused) return undefined;
+    const t = setInterval(() => setTick((n) => n + 1), 2600);
+    return () => clearInterval(t);
+  }, [paused]);
+  const real = (data?.labs || []).slice(0, 4);
+  const demo = !real.length;
+  const labs = demo
+    ? DEMO_LABS.map((l, i) => {
+      const taken = Math.round(l.seats * (0.45 + 0.45 * Math.sin(tick / 1.7 + i * 1.9) ** 2));
+      const free = l.seats - taken;
+      return { ...l, taken, free, status: free < 1 ? 'full' : free / l.seats <= 0.3 ? 'limited' : 'available', sessions: [{ from: '14:00', to: '16:00', seats: l.seats, left: free }] };
+    })
+    : real;
+  const hot = labs.length ? tick % labs.length : 0;
+  const selected = labs[hot];
+  const free = labs.reduce((n, l) => n + (l.free ?? l.sessions?.reduce((a, s) => a + (s.left || 0), 0) ?? 0), 0);
+  return (
+    <div className="lb-glow relative overflow-hidden rounded-2xl bg-[#e8f5ec] shadow-lg">
+      <div className="absolute inset-0">
+        {labs.slice(0, 3).map((l, i) => (
+          <div key={l.id} className="absolute inset-0 transition-opacity duration-1000" style={{ opacity: i === hot % Math.min(labs.length, 3) ? 1 : 0 }}>
+            <LabImg lab={demo ? { id: i } : l} index={i} w={1200} className="lb-zoom h-full w-full object-cover" />
+          </div>
+        ))}
+        {!labs.length && <img src={defaultLabPic(0, 1200)} alt="Computer lab" className="h-full w-full object-cover" />}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#000000]/55 via-[#000000]/25 to-[#000000]/80" />
+      </div>
+      <div className="relative flex min-h-[380px] flex-col justify-between p-5 text-white">
+        <div className="flex items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-semibold backdrop-blur">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="lb-ping absolute inline-flex h-full w-full rounded-full bg-[#4ade80]" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#4ade80]" />
+            </span>
+            {demo ? 'Live preview' : 'Live now'}
+          </span>
+          {selected && (
+            <span aria-live="polite" className="inline-flex max-w-[42%] min-w-0 items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-bold text-[#111827] shadow">
+              <span className="h-2 w-2 rounded-full" style={{ background: LIVE[selected.status]?.[0] || LIVE.none[0] }} />
+              <span className="truncate">{selected.name}: {LIVE[selected.status]?.[1] || LIVE.none[1]}</span>
+            </span>
+          )}
+          <span className="rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-semibold backdrop-blur"><Radio className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />{free} free places today</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2" aria-label="Choose a lab">
+          {labs.slice(0, 3).map((l, i) => (
+            <button key={`photo-${l.id}`} type="button" aria-pressed={i === hot} aria-label={`Show ${l.name}`} onClick={() => { setTick(i); setPaused(true); }} className={`relative h-16 overflow-hidden rounded-lg border shadow-md sm:h-20 ${i === hot ? 'border-white ring-2 ring-white' : 'border-white/40'}`}>
+              <LabImg lab={demo ? { id: i } : l} index={i} w={360} className="h-full w-full object-cover" />
+              <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-2 py-1 text-[10px] font-semibold text-white">{l.name}</span>
+            </button>
+          ))}
+        </div>
+        {selected && (() => {
+            const l = selected;
+            const [color, text] = LIVE[l.status] || LIVE.none;
+            const ss = l.sessions || [];
+            const cur = ss.length ? ss[tick % ss.length] : null;
+            const seats = cur?.seats || l.seats || 0;
+            const places = cur?.left ?? l.free ?? 0;
+            const applied = cur?.applied ?? cur?.applications ?? cur?.people?.length ?? (seats ? Math.max(0, seats - places) : 0);
+            const pct = seats ? Math.round((applied / seats) * 100) : 0;
+            return (
+              <div key={l.id} className="lb-rise rounded-xl bg-white/92 p-4 text-[#111827] shadow ring-2 ring-white" style={{ background: 'var(--card, rgba(255,255,255,.93))' }}>
+                <div className="flex items-center justify-between gap-3">
+                  <b className="truncate text-sm">{l.name}</b>
+                  <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-bold" style={{ color }}>
+                    <span className="h-2 w-2 rounded-full" style={{ background: color }} />{text}
+                  </span>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-black/10">
+                  <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${pct}%`, background: color }} />
+                </div>
+                <div className="mt-2 flex flex-wrap justify-between gap-2 text-[11px] font-medium text-black/70">
+                  <span>{cur ? `${cur.from}–${cur.to}` : 'No lab time today'}</span>
+                  {cur && <><span>{applied} applied</span><span>{places} of {seats} places free</span></>}
+                </div>
+              </div>
+            );
+          })()}
+        <div className="flex items-center justify-between text-[11px] text-white/90">
+          <span>Lab {labs.length ? hot + 1 : 0} of {labs.length}</span>
+          <div className="flex gap-2">
+            <button type="button" className="rounded-full bg-white/15 px-3 py-1.5 font-semibold hover:bg-white/25" onClick={() => { setTick((n) => (n - 1 + labs.length) % labs.length); setPaused(true); }}>Previous</button>
+            <button type="button" className="rounded-full bg-white/15 px-3 py-1.5 font-semibold hover:bg-white/25" onClick={() => setPaused((v) => !v)}>{paused ? 'Play' : 'Pause'}</button>
+            <button type="button" className="rounded-full bg-white/15 px-3 py-1.5 font-semibold hover:bg-white/25" onClick={() => { setTick((n) => (n + 1) % labs.length); setPaused(true); }}>Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrendDetail({ item, onClose }) {
+  const digits = (item.phone || '').replace(/[^\d]/g, '');
+  const subject = encodeURIComponent(`Lost item: ${item.title}`);
+  const photos = item.media.map(itemPhoto).filter(Boolean);
+  const [pi, setPi] = useState(0);
+  return (
+    <Modal title={item.title} onClose={onClose} wide>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <Badge s="open">{item.category}</Badge>
+        <span className="text-black/55">Posted {ago(item.postedAt)}</span>
+        {item.foundAt && <span className="text-black/55">· Found at {item.foundAt}</span>}
+      </div>
+      {photos[pi] && (
+        <Photo src={photos[pi]} alt={item.title} className="mt-4 max-h-[400px] w-full rounded-[6px] bg-black/5 object-contain"
+          fallback={<div className="mt-4 grid h-48 place-items-center rounded-[6px] bg-black/5 text-xs text-black/50">The photo could not be loaded.</div>} />
+      )}
+      {photos.length > 1 && (
+        <div className="mt-3 flex gap-2 overflow-x-auto">
+          {photos.map((p, i) => (
+            <button key={p + i} type="button" onClick={() => setPi(i)} className={`h-14 w-14 shrink-0 overflow-hidden rounded-[6px] border-2 ${i === pi ? 'border-[#16a34a]' : 'border-transparent'}`}>
+              <Photo src={p} className="h-full w-full object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+      {item.description && <p className="mt-4 whitespace-pre-line text-xs leading-relaxed text-black/70">{item.description}</p>}
+      <div className="mt-6 rounded-[8px] border border-[#16a34a]/40 bg-[#16a34a]/5 p-4">
+        <h4 className="text-xs font-bold text-[#15803d]">Is this yours?</h4>
+        <p className="mt-1 text-xs text-black/65">Contact the Minister of Communication, describe something only the owner knows, and come to collect it.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {item.phone && <a href={`tel:${item.phone}`} className="rounded-[6px] bg-[#16a34a] px-4 py-2 text-xs font-semibold text-white">Call {item.phone}</a>}
+          {digits && <a target="_blank" rel="noreferrer" href={`https://wa.me/${digits}?text=${subject}`} className="rounded-[6px] bg-[#2563eb] px-4 py-2 text-xs font-semibold text-white">WhatsApp</a>}
+          {item.email && <a href={`mailto:${item.email}?subject=${subject}`} className="rounded-[6px] bg-[#ff4500] px-4 py-2 text-xs font-semibold text-white">Email</a>}
+          {!item.phone && !item.email && <span className="text-xs text-black/60">Ask {item.postedBy || 'the Minister of Communication'} at school.</span>}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+const NoPhoto = ({ label }) => (
+  <div className="flex flex-col items-center gap-2"><PackageSearch className="h-10 w-10 text-[#16a34a]/70" aria-hidden="true" /><span>{label}</span></div>
+);
+
+function TrendsBoard() {
+  const [items, setItems] = useState(null);
+  const [q, setQ] = useState('');
+  const [cat, setCat] = useState('all');
+  const [open, setOpen] = useState(null);
+  const load = () => api('/api/trends').then(setItems).catch(() => setItems((c) => c || []));
+  useEffect(() => { load(); }, []);
+  useLive({ 'trends:update': load });
+  const list = items || [];
+  const cats = [...new Set(list.map((t) => t.category))].sort();
+  const shown = list.filter((t) => (cat === 'all' || t.category === cat) && match(q, t.title, t.category, t.description, t.foundAt));
+  return (
+    <section id="trends" className="scroll-mt-16 border-t border-black/10 bg-[#f7f8f7]">
+      <div className="mx-auto max-w-6xl px-6 py-16">
+        <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Lost something? Look here first.</h2>
+        <p className="mt-3 max-w-xl text-xs text-black/60">Items found at school are posted here. Tap yours and contact the Minister of Communication.</p>
+        {list.length > 0 && (
+          <div className="mt-8 grid gap-4 md:grid-cols-[1fr_300px] md:items-center">
+            <Pills value={cat} onChange={setCat} items={[['all', 'All', list.length], ...cats.map((c) => [c, c, list.filter((t) => t.category === c).length])]} />
+            <SearchBox value={q} onChange={setQ} placeholder="Search keys, bag, jacket…" />
+          </div>
+        )}
+        <div className="mt-8">
+          {items === null && <Loader full label="Loading the board" />}
+          {items !== null && list.length === 0 && <Empty>Nothing is waiting for an owner right now.</Empty>}
+          {list.length > 0 && shown.length === 0 && <Empty>No item matches your search.</Empty>}
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {shown.map((t) => {
+              const ph = t.media?.map(itemPhoto).find(Boolean);
+              return (
+                <button key={t.id} type="button" onClick={() => setOpen(t)} className="flex flex-col overflow-hidden rounded-[8px] border border-black/10 bg-white text-left hover:shadow-lg">
+                  <div className="flex aspect-[4/3] items-center justify-center overflow-hidden bg-gradient-to-br from-[#e8f5ec] via-[#f4f6f8] to-[#fff0e9] text-xs text-black/40">
+                    <Photo src={ph} alt={t.title} className="h-full w-full object-cover" fallback={<NoPhoto label={t.category} />} />
+                  </div>
+                  <div className="p-4">
+                    <h3 className="text-sm font-semibold">{t.title}</h3>
+                    <p className="mt-2 text-[11px] text-black/50">{t.foundAt ? `Found at ${t.foundAt}` : `Posted ${ago(t.postedAt)}`}</p>
+                    <p className="mt-2 text-xs font-semibold text-[#ff4500]">View and contact</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      {open && <TrendDetail item={open} onClose={() => setOpen(null)} />}
+    </section>
+  );
+}
+
+function Landing({ onLogin, dark, onToggleDark }) {
+  return (
+    <div className="bg-white text-[#111827] antialiased text-sm">
+      <header className="sticky top-0 z-20 border-b border-black/10 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+          <Logo />
+          <nav className="hidden gap-2 text-xs font-medium md:flex">
+            <a href="#labs" className="rounded-[6px] px-3 py-2 text-black/70 hover:bg-black/5">Labs</a>
+            <a href="#trends" className="rounded-[6px] px-3 py-2 text-black/70 hover:bg-black/5">Lost and found</a>
+          </nav>
+          <div className="flex items-center gap-2">
+            <ThemeBtn dark={dark} onToggle={onToggleDark} />
+            <Btn onClick={() => onLogin()}>Log in</Btn>
+          </div>
+        </div>
+      </header>
+      <section className="mx-auto grid max-w-6xl items-center gap-8 px-6 pt-14 pb-6 md:grid-cols-[1.05fr_.95fr]">
+        <div>
+          <span className="lb-in inline-block rounded-[6px] border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[11px] font-semibold text-[#15803d]">Live places, updated automatically</span>
+          <h1 className="lb-in mt-5 max-w-2xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
+          <p className="mt-5 max-w-md text-sm leading-relaxed text-black/65">Pick a lab time and press Apply. Free places are approved at once. When a lab time is full you join the waiting list.</p>
+          <div className="mt-7 flex flex-wrap gap-3">
+            <a href="#labs" className="rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white">See the labs</a>
+            <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
+          </div>
+        </div>
+        <LiveLabs />
+      </section>
+      <section id="labs" className="mx-auto max-w-6xl scroll-mt-16 px-6 py-12">
+        <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Labs and free places</h2>
+        <p className="mb-8 mt-2 max-w-xl text-xs text-black/60">The border of each lab time fills as places are taken. A red border with the word Closed means the lab time is over and nobody can apply.</p>
+        <LabBoard onLogin={onLogin} />
+      </section>
+      <TrendsBoard />
+      <footer className="border-t border-black/10 text-xs text-black/55">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-8">
+          <Logo />
+          <span>© 2026 Computer Lab Management System</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* 4. SIGN IN (Google only): moving pictures on one side, form on the other */
+/* ================================================================== */
+
+function GoogleBtn({ onResult, onError }) {
+  const ref = useRef(null);
+  const live = useRef({});
+  live.current = { onResult, onError };
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  useEffect(() => {
+    if (!clientId) return;
+    const start = () => {
+      if (!window.google || !ref.current) return;
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: async (r) => {
+          try {
+            const data = await api('/api/google', 'POST', { credential: r.credential });
+            await live.current.onResult(data.token);
+          } catch (e) { live.current.onError(e.message); }
+        },
+      });
+      window.google.accounts.id.renderButton(ref.current, { theme: 'outline', size: 'large', text: 'continue_with', shape: 'rectangular', width: 300 });
+    };
+    if (window.google) { start(); return; }
+    let tag = document.getElementById('gsi-script');
+    if (!tag) {
+      tag = document.createElement('script');
+      tag.id = 'gsi-script';
+      tag.src = 'https://accounts.google.com/gsi/client';
+      tag.async = true;
+      document.head.appendChild(tag);
+    }
+    tag.addEventListener('load', start);
+    return () => tag.removeEventListener('load', start);
+  }, [clientId]);
+  return <div className="flex min-h-[44px] justify-center"><div ref={ref} /></div>;
+}
+
+// Pictures that fade into each other, slowly zooming. Used on the sign-in page.
+function Slideshow({ className = '' }) {
+  const [i, setI] = useState(0);
+  useEffect(() => { const t = setInterval(() => setI((n) => (n + 1) % LOGIN_SLIDES.length), 4500); return () => clearInterval(t); }, []);
+  return (
+    <div className={`relative overflow-hidden bg-[#e8f5ec] ${className}`}>
+      {LOGIN_SLIDES.map((s, k) => (
+        <div key={s.id} className="absolute inset-0 transition-opacity duration-[1400ms]" style={{ opacity: k === i ? 1 : 0 }} aria-hidden={k !== i}>
+          <img src={s.id} alt="" className={`h-full w-full object-cover ${k === i ? 'lb-zoom' : ''}`} />
+        </div>
+      ))}
+      <div className="absolute inset-0 bg-gradient-to-t from-[#000000]/85 via-[#000000]/10 to-[#000000]/20" />
+      <div className="absolute bottom-6 left-6 right-6 text-white">
+        <div key={i} className="lb-rise">
+          <p className="text-xl font-bold md:text-2xl">{LOGIN_SLIDES[i].t}</p>
+          <p className="mt-1.5 text-xs text-white/80 md:text-sm">{LOGIN_SLIDES[i].s}</p>
+        </div>
+        <div className="mt-4 flex gap-1.5">
+          {LOGIN_SLIDES.map((s, k) => <span key={s.id} className={`h-1.5 rounded-full transition-all duration-500 ${k === i ? 'w-6 bg-white' : 'w-1.5 bg-white/50'}`} />)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Auth({ onDone, onBack, intent, dark, onToggleDark }) {
+  const [err, setErr] = useState('');
+  const [signing, setSigning] = useState(false);
+  const hasGoogle = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const finish = async (t) => {
+    setSigning(true);
+    try { await onDone(t); } catch (e) { setSigning(false); setErr(e.message); }
+  };
+  return (
+    <div className="fixed inset-0 grid place-items-center overflow-y-auto bg-[#f7f8f7] p-4 text-[13px] text-[#111827] sm:p-6">
+      <div className="grid w-full max-w-5xl overflow-hidden rounded-2xl border border-black/10 bg-white shadow-xl md:grid-cols-2">
+        <Slideshow className="h-44 md:h-auto md:min-h-[600px]" />
+        <div className="w-full p-7 md:py-12 md:px-10">
+          <div className="mb-8 flex items-center justify-between">
+            <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-medium text-[#2563eb] hover:underline"><ArrowLeft className="h-4 w-4" aria-hidden="true" />Back to home</button>
+            <ThemeBtn dark={dark} onToggle={onToggleDark} />
+          </div>
+          <Logo />
+          <h1 className="mt-8 text-xl font-bold tracking-tight">Welcome back</h1>
+          <p className="mb-6 mt-1.5 text-black/60">Sign in with the Google account your school has on record for you.</p>
+          {intent && <Alert ok>You chose <b>{intent.lab}</b> on <b>{intent.date}</b> at <b>{intent.from}–{intent.to}</b>. Sign in and we send your booking.</Alert>}
+          {err && <div className="mt-4"><Alert>{err}</Alert></div>}
+          <div className="mt-6">
+            {hasGoogle ? <GoogleBtn onResult={finish} onError={setErr} /> : <Alert>Google sign-in is not set up yet. Add VITE_GOOGLE_CLIENT_ID to the frontend .env file.</Alert>}
+          </div>
+          <p className="mt-8 text-center text-xs text-black/50">Account not recognised? Ask your school admin to add your email.</p>
+        </div>
+      </div>
+      {signing && <div className="fixed inset-0 z-50 grid place-items-center bg-white/85"><Loader label="Signing you in" /></div>}
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* 5. STUDENT and TEACHER pages: apply only. No printing.              */
+/* ================================================================== */
+
+function Booker({ user, opts, intent, onIntentDone }) {
+  const isStudent = user.role === 'student';
+  const [labPhoto, setLabPhoto] = useState(null);
+  const [ready, setReady] = useState(false);
+  const [day, setDay] = useState(() => pickBookableDay(intent?.date || today()));
+  const [sessions, setSessions] = useState([]);
+  const [apps, setApps] = useState([]);
+  const [labsList, setLabsList] = useState([]);
+  const [reason, setReason] = useState(opts.reasons?.[0] || '');
+  const [classes, setClasses] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [src, setSrc] = useState('');
+  const [students, setStudents] = useState([]);
+  const [picked, setPicked] = useState([]);
+  const [sid, setSid] = useState('');
+  const [note, setNote] = useState(null);
+  const [approvalWelcome, setApprovalWelcome] = useState(null);
+  const { busy, run } = useBusy();
+  const sent = useRef(false);
+
+  const loadSessions = () => {
+    api('/api/labs').then(setLabsList).catch(() => {});
+    return api('/api/sessions').then(setSessions).catch((e) => setNote({ ok: false, text: e.message }));
+  };
+  const loadApps = () => api('/api/apps').then(setApps).catch(() => {});
+  useLive({ seats: loadSessions, 'applications:update': loadApps });
+
+  useEffect(() => {
+    const jobs = [loadSessions(), loadApps()];
+    if (!isStudent) jobs.push(api('/api/classes').then(setClasses).catch(() => {}), api('/api/groups').then(setGroups).catch(() => {}));
+    Promise.all(jobs).finally(() => setReady(true));
+  }, []);
+
+  useEffect(() => {
+    if (isStudent) return;
+    setPicked([]);
+    if (!src) { setStudents([]); return; }
+    const [k, v] = src.split(':');
+    const url = k === 'g' ? `/api/students?group=${v}` : `/api/students?class=${encodeURIComponent(v)}`;
+    api(url).then(setStudents).catch((e) => setNote({ ok: false, text: e.message }));
+  }, [src]);
+
+  // Sends bookings for one lab time. Used by Apply buttons and by teachers' bulk booking.
+  const sendBooking = async (id, names = null) => {
+    setNote(null);
+    try {
+      const body = names ? { sessionId: id, reason, students: names } : { sessionId: id, reason };
+      const r = await api('/api/apply', 'POST', body);
+      if (r.approved > 0) {
+        const session = sessions.find((s) => s.id === id);
+        setApprovalWelcome({ lab: session?.lab || intent?.lab || 'the lab', labId: session?.labId, count: r.approved });
+      }
+      const parts = [`${r.created} booking${r.created === 1 ? '' : 's'} sent`];
+      if (r.approved) parts.push(`${r.approved} approved at once`);
+      if (r.queued) parts.push(`${r.queued} in the waiting list`);
+      if (r.skipped?.length) parts.push(`already booked: ${r.skipped.join(', ')}`);
+      if (r.tooMany?.length) parts.push(`too many days in a row: ${r.tooMany.join(', ')}`);
+      setNote({ ok: r.created > 0, text: parts.join(' · ') + '.' });
+      setPicked([]);
+      await loadApps();
+      return true;
+    } catch (e) { setNote({ ok: false, text: e.message }); return false; }
+  };
+  const apply = (id) => {
+    if (isStudent && apps.some((a) => a.date === sessions.find((s) => s.id === id)?.date && a.name === user.name && a.status !== 'rejected')) return;
+    return run('a' + id, () => sendBooking(id));
+  };
+  const bookStudents = () => run('bk', () => sendBooking(+sid, picked));
+
+  // A lab time chosen on the home page is booked once, right after sign-in.
+  useEffect(() => {
+    if (!ready || !intent || sent.current || !isStudent) return;
+    sent.current = true;
+    run('a' + intent.sessionId, () => sendBooking(intent.sessionId)).finally(() => onIntentDone?.());
+  }, [ready]);
+
+  const checkIn = (id) => run('ci' + id, async () => {
+    try {
+      const r = await api(`/api/apps/${id}/checkin`, 'POST');
+      setNote({ ok: true, text: r.late ? 'You are checked in. You were marked late.' : 'You are checked in. Thank you!' });
+      await loadApps();
+    } catch (e) { setNote({ ok: false, text: e.message }); }
+  });
+
+  if (!ready) return <Loader full label="Loading" />;
+
+  const todayStr = today();
+  const dayLabs = sessions.filter((s) => s.date === day);
+  const mine = (id) => apps.find((a) => a.sid === id && a.status !== 'rejected');
+  const myApps = apps.filter((a) => a.name === user.name || a.bookedBy === user.name).sort((a, b) => `${b.date} ${b.from}`.localeCompare(`${a.date} ${a.from}`));
+  const hasAppliedToday = isStudent && myApps.some((a) => a.date === day && a.status !== 'rejected');
+  const sessionById = new Map(sessions.map((s) => [s.id, s]));
+  const imgOf = (labId) => labsList.find((x) => x.id === labId)?.image || '';
+  const count = (k) => myApps.filter((a) => a.status === k).length;
+  const srcOpts = [
+    { value: '', label: 'Choose a class or group…' },
+    ...classes.map((c) => ({ value: `c:${c}`, label: c })),
+    ...groups.map((g) => ({ value: `g:${g.id}`, label: `Group: ${g.name}` })),
+  ];
+  const reasonOpts = (opts.reasons || []).map((r) => ({ value: r, label: r }));
+
+  return (
+    <div className="space-y-6">
+      {approvalWelcome && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="approval-welcome-title">
+          <div className="w-full max-w-md rounded-2xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-green-100 px-6 py-7 text-center text-slate-900 shadow-2xl">
+            <div className="mb-4 flex items-center justify-center gap-3">
+              <img src={logo} alt="System logo" className="h-10 w-10 rounded-lg object-contain" />
+              <img src={imgOf(approvalWelcome.labId)} alt={`${approvalWelcome.lab} lab`} className="h-10 w-14 rounded-lg object-cover" />
+            </div>
+            <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-emerald-600 text-2xl font-bold text-white shadow-md" aria-hidden="true">✓</div>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Booking approved</p>
+            <h2 id="approval-welcome-title" className="mt-2 text-2xl font-black leading-tight tracking-tight text-slate-900">Congratulations!</h2>
+            <p className="mx-auto mt-3 text-base leading-relaxed text-slate-700">
+              Welcome to <strong className="text-emerald-800">{approvalWelcome.lab}</strong>! {approvalWelcome.count === 1 ? 'Your booking has' : `${approvalWelcome.count} bookings have`} been approved.
+            </p>
+            <button type="button" autoFocus onClick={() => setApprovalWelcome(null)} className="mt-5 rounded-xl bg-emerald-700 px-7 py-2.5 text-sm font-bold text-white shadow-md transition hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">Continue</button>
+          </div>
+        </div>
+      )}
+      {note && <Alert ok={note.ok}>{note.text}</Alert>}
+      <div className="grid grid-cols-3 gap-4">
+        <Stat v={count('approved')} t="Approved" tone="gr" />
+        <Stat v={count('pending')} t="Waiting or in queue" tone="or" />
+        <Stat v={myApps.filter((a) => a.att === 'present').length} t="Times attended" />
+      </div>
+
+      <Card t={isStudent ? 'Book a lab' : 'Lab times'} sub={`${niceDay(day)} · free places are approved at once. Full lab times have a waiting list.`}>
+        <div className="mb-4 grid gap-3 md:grid-cols-[1fr_240px]">
+          <DayBar day={day} onChange={setDay} />
+          <Field l="Reason"><Sel value={reason} onChange={setReason} options={reasonOpts.length ? reasonOpts : [{ value: 'Other', label: 'Other' }]} /></Field>
+        </div>
+        {hasAppliedToday ? <Alert ok>You have already applied for a lab on this day. Your booking is shown below.</Alert> : null}
+        {!hasAppliedToday && dayLabs.length === 0 && <Empty>No lab time on this day. Try another day.</Empty>}
+        {!hasAppliedToday && dayLabs.map((s) => {
+          const m = mine(s.id);
+          const alreadyBookedToday = isStudent && myApps.some((a) => a.date === s.date && a.status !== 'rejected');
+          const pct = s.seats ? ((s.seats - s.left) / s.seats) * 100 : 100;
+          const past = s.date < todayStr || s.state === 'over';
+          return (
+            <div key={s.id} className="flex flex-wrap items-center justify-between gap-4 border-t border-black/10 py-4">
+              <button type="button" aria-label={`View ${s.lab} photo`} onClick={() => setLabPhoto({ name: s.lab, id: s.labId ?? s.id, image: imgOf(s.labId) })}
+                className="h-20 w-full overflow-hidden rounded-[8px] border border-black/10 sm:w-36">
+                <LabImg lab={{ name: s.lab, id: s.labId ?? s.id, image: imgOf(s.labId) }} index={s.id} className="h-full w-full object-cover transition-transform hover:scale-105" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <b>{s.lab}</b>
+                  <span className="text-black/60">{s.from}–{s.to}</span>
+                  {forLabel(s) && <Badge s="draft">{audText(s)}</Badge>}
+                  {past && <Badge s="over">Closed</Badge>}
+                </div>
+                <div className="mt-3 h-5 w-full max-w-md overflow-hidden rounded-full bg-black/10" role="progressbar" aria-label={`${s.seats - s.left} of ${s.seats} places taken`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
+                  <div className={`flex h-full items-center justify-end rounded-full px-2 text-[10px] font-bold text-white transition-[width] duration-700 ${past ? 'bg-[#dc2626]' : s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#ff4500]'}`} style={{ width: `${Math.max(pct, 8)}%` }}>{Math.round(pct)}%</div>
+                </div>
+                <div className={`mt-1.5 text-xs ${past ? 'font-bold text-[#dc2626]' : s.left > 0 ? 'font-medium text-[#15803d]' : 'font-bold text-[#c2310a]'}`}>
+                  {past ? 'This lab time is over' : s.left > 0 ? `${s.left} of ${s.seats} places left` : 'Full · you can join the waiting list'}
+                </div>
+              </div>
+              {m ? <Badge s={statusKey(m, s)}>{STATUS_LABEL[statusKey(m, s)]}</Badge> : (
+                <ActBtn c="ink" busy={busy === 'a' + s.id} doing="Sending…" label={past ? 'Closed' : s.left < 1 ? 'Full' : 'Apply'}
+                  disabled={past || s.exclusive || alreadyBookedToday || s.left < 1} onClick={() => apply(s.id)} />
+              )}
+            </div>
+          );
+        })}
+      </Card>
+
+      {labPhoto && <Modal title={`${labPhoto.name} · lab photo`} onClose={() => setLabPhoto(null)} wide>
+        <LabImg lab={labPhoto} index={labPhoto.id} w={1400} className="max-h-[70vh] w-full rounded-[8px] object-contain" />
+        <p className="mt-3 text-xs text-black/55">Review the lab photo before applying.</p>
+      </Modal>}
+
+      {!isStudent && (
+        <Card t="Book students" sub="Choose a class or group, then the lab time and the students.">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field l="Class or group"><Sel value={src} onChange={setSrc} options={srcOpts} /></Field>
+            <Field l="Lab time"><Sel value={sid} onChange={setSid} options={[{ value: '', label: 'Choose a lab time…' }, ...sessions.filter((s) => s.date >= todayStr && s.state !== 'over').map((s) => ({ value: String(s.id), label: `${s.lab} · ${shortDay(s.date)} ${s.from}–${s.to}` }))]} /></Field>
+          </div>
+          <div className="mt-5">
+            <StudentPicker students={students} value={picked} onChange={setPicked} />
+          </div>
+          <div className="mt-5">
+            <ActBtn busy={busy === 'bk'} doing="Sending…" label={`Book ${picked.length} student${picked.length === 1 ? '' : 's'}`}
+              disabled={!picked.length || !sid} onClick={bookStudents} />
+          </div>
+        </Card>
+      )}
+
+      <Card t={isStudent ? 'My bookings' : 'Bookings I sent'}>
+        {myApps.length === 0 && <Empty>No booking yet.</Empty>}
+        {myApps.map((a) => {
+          const s = sessionById.get(a.sid);
+          return (
+            <div key={a.id} className="flex flex-wrap items-center justify-between gap-3 border-t border-black/10 py-3.5 first:border-t-0">
+              <span className="min-w-0">
+                <b>{a.lab}</b> <span className="text-black/60">· {shortDay(a.date)} {a.from}–{a.to} · {a.reason}</span>
+                {!isStudent && <span className="block text-xs text-black/55">{a.name}</span>}
+                {a.released && <span className="block text-xs text-[#c2310a]">Your place was given to the waiting list because you did not arrive in time.</span>}
+              </span>
+              <span className="flex flex-wrap items-center gap-2">
+                {a.status === 'approved' && a.att && <Badge s={attKey(a) || 'none'}>{attLabel(a)}</Badge>}
+                <Badge s={statusKey(a, s)}>{STATUS_LABEL[statusKey(a, s)] || a.status}</Badge>
+              </span>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* 6. ADMIN: Overview, History, Labs, Schedule, People, Chat, Settings */
+/* ================================================================== */
+
+const ACT_FILTERS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['date', 'Pick a day']];
+
+// Live presence: which admin is on which page, and recent activity (filtered by day and by admin).
+function OverviewPage({ me }) {
+  const [stats, setStats] = useState(null);
+  const [presence, setPresence] = useState([]);
+  const [acts, setActs] = useState([]);
+  const [chart, setChart] = useState([]);
+  const [days, setDays] = useState(7);
+  const [mode, setMode] = useState('today');
+  const [pickDate, setPickDate] = useState(today());
+  const [actor, setActor] = useState('');
+  const [many, setMany] = useState(15);
+  const load = useCallback(() => {
+    const p = new URLSearchParams();
+    if (mode === 'today') p.set('date', today());
+    else if (mode === 'yesterday') p.set('date', dayOffset(-1));
+    else if (mode === 'date') p.set('date', pickDate);
+    else p.set('days', mode);
+    if (actor) p.set('actor', actor);
+    api('/api/stats/overview').then(setStats).catch(() => {});
+    api(`/api/activity?${p}`).then(setActs).catch(() => {});
+    api(`/api/activity/chart?days=${days}`).then(setChart).catch(() => {});
+  }, [days, mode, pickDate, actor]);
+  useEffect(load, [load]);
+  useEffect(() => setMany(15), [mode, pickDate, actor]);
+  useLive({ 'activity:update': load, presence: (p) => setPresence(p) });
+
+  const t = stats?.totals || {};
+  const att = stats?.attendance || {};
+  const dayList = Array.from({ length: days }, (_, i) => shiftDay(today(), i - days + 1));
+  const actors = [...new Set([...presence.map((p) => p.name), ...chart.map((c) => c.actor), ...acts.map((a) => a.actor)])].sort();
+  const maxDay = Math.max(1, ...chart.map((c) => c.n));
+  const total = (name) => chart.filter((c) => c.actor === name).reduce((n, c) => n + c.n, 0);
+  const visible = acts.slice(0, many);
+  const groups = [];
+  visible.forEach((a) => {
+    const h = dayHead(a.at);
+    const g = groups[groups.length - 1];
+    if (g && g.h === h) g.items.push(a); else groups.push({ h, items: [a] });
+  });
+  const periodText = mode === 'today' ? 'today' : mode === 'yesterday' ? 'yesterday' : mode === 'date' ? niceDay(pickDate) : `the last ${mode} days`;
+
+  return (
+    <div className="space-y-6">
+      <CallPanel />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <Stat v={t.approved ?? 0} t="Approved bookings" tone="gr" />
+        <Stat v={t.pending ?? 0} t="Waiting or in queue" tone="or" />
+        <Stat v={att.rate == null ? '-' : `${att.rate}%`} t="Attendance rate" tone="gr" />
+        <Stat v={att.late ?? 0} t="Late arrivals" tone="am" />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card t="Who is online" sub="Admins currently signed in and the page they are on.">
+          {presence.length === 0 && <Empty>No admin is online.</Empty>}
+          {presence.map((p) => (
+            <div key={p.email || p.name} className="flex items-center justify-between gap-3 border-t border-black/10 py-3 first:border-t-0">
+              <span className="flex items-center gap-3">
+                <Avatar name={p.name} picture={p.picture} className="h-8 w-8 text-[10px]" />
+                <span className="lb-pulse inline-block h-2 w-2 rounded-full bg-[#16a34a]" />
+                <b className="text-xs">{p.name}{p.name === me.name && ' (you)'}</b>
+              </span>
+              <Badge s="open">{p.page}</Badge>
+            </div>
+          ))}
+        </Card>
+
+        <Card t="Activity by admin" sub="What each admin did over the chosen days."
+          action={<Pills value={String(days)} onChange={(v) => setDays(+v)} items={[['7', '7 days'], ['14', '14 days'], ['30', '30 days']]} />}>
+          {actors.length === 0 && <Empty>No activity yet.</Empty>}
+          {actors.map((name) => (
+            <div key={name} className="border-t border-black/10 py-3 first:border-t-0">
+              <div className="mb-2 flex items-center justify-between text-xs">
+                <b>{name}</b>
+                <span className="text-black/55">{total(name)} actions</span>
+              </div>
+              <div className="flex h-16 items-end gap-1.5">
+                {dayList.map((d) => {
+                  const n = chart.find((c) => c.actor === name && c.day === d)?.n || 0;
+                  return (
+                    <div key={d} className="flex flex-1 flex-col items-center gap-1" title={`${shortDay(d)}: ${n}`}>
+                      <div className="w-full rounded-t-[3px] bg-[#16a34a]" style={{ height: `${Math.max((n / maxDay) * 100, n ? 6 : 2)}%`, opacity: n ? 1 : 0.15 }} />
+                      <span className="text-[9px] text-black/45">{weekdayShort(d).slice(0, 2)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </Card>
+      </div>
+
+      <Card t="Recent activity" sub={`Changes made by admins ${periodText}, newest first.`}>
+        <div className="mb-4 flex flex-wrap items-end gap-3">
+          <Pills value={mode} onChange={setMode} items={ACT_FILTERS} />
+          {mode === 'date' && <Inp type="date" aria-label="Choose a day" className="!w-40" value={pickDate} max={today()} onChange={(e) => e.target.value && setPickDate(e.target.value)} />}
+          <Sel className="!w-48" value={actor} onChange={setActor} options={[{ value: '', label: 'All admins' }, ...actors.map((a) => ({ value: a, label: a }))]} aria-label="Admin" />
+          <span className="ml-auto text-xs text-black/55">{plural(acts.length, 'action')}</span>
+        </div>
+        {acts.length === 0 && <Empty>No activity for this choice.</Empty>}
+        {groups.map((g) => (
+          <div key={g.h} className="mb-3">
+            <div className="mb-1 rounded-[4px] bg-black/[0.04] px-3 py-1.5 text-[11px] font-bold text-black/60">{g.h}</div>
+            <div className="divide-y divide-black/10">
+              {g.items.map((a) => (
+                <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-1 py-2.5 text-xs">
+                  <span><b>{a.actor}</b> <span className="text-black/70">{a.action}</span>{a.detail && <span className="text-black/55"> · {a.detail}</span>}</span>
+                  <span className="text-black/45">{clock(a.at)} · {ago(a.at)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        {acts.length > many && <div className="pt-2 text-center"><Btn c="w" onClick={() => setMany((n) => n + 15)}>Show more ({acts.length - many} left)</Btn></div>}
+      </Card>
+    </div>
+  );
+}
+
+function HistoryPage() {
+  const [labs, setLabs] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [from, setFrom] = useState(() => shiftDay(today(), -30));
+  const [to, setTo] = useState(today());
+  const [lab, setLab] = useState('0');
+  const [attendance, setAttendance] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const load = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({ from, to, lab });
+      const [labList, history] = await Promise.all([api('/api/labs'), api(`/api/history?${params}`)]);
+      setLabs(labList);
+      setRows(history.rows);
+      setErr('');
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [from, to, lab]);
+  useEffect(() => { load(); }, [load]);
+  const visible = rows.filter((r) => !attendance || (attendance === 'unmarked' ? !r.att : r.att === attendance));
+  return (
+    <div className="space-y-6">
+      <Card t="Lab attendance history" sub="Review who booked and attended each lab session, including their scheduled time and recorded check-in.">
+        <div className="mb-4 flex flex-wrap items-end gap-3">
+          <Field l="From"><Inp type="date" value={from} max={today()} onChange={(e) => { setLoading(true); setFrom(e.target.value); }} /></Field>
+          <Field l="To"><Inp type="date" value={to} max={today()} onChange={(e) => { setLoading(true); setTo(e.target.value); }} /></Field>
+          <Field l="Lab">
+            <Sel value={lab} onChange={(value) => { setLoading(true); setLab(value); }} options={[{ value: '0', label: 'All labs' }, ...labs.map((l) => ({ value: String(l.id), label: l.name }))]} />
+          </Field>
+          <Field l="Attendance">
+            <Sel value={attendance} onChange={setAttendance} options={[
+              { value: '', label: 'All records' }, { value: 'present', label: 'Present' },
+              { value: 'absent', label: 'Absent' }, { value: 'unmarked', label: 'Not marked' },
+            ]} />
+          </Field>
+          <Btn c="w" onClick={() => { setLoading(true); load(); }} disabled={loading}>Refresh</Btn>
+          <span className="ml-auto text-xs text-black/55">{plural(visible.length, 'record')}</span>
+        </div>
+        {err && <div className="mb-4"><Alert>{err}</Alert></div>}
+        {loading && <Loader label="Loading attendance history" />}
+        {!loading && !err && visible.length === 0 && <Empty>No attendance records match these filters.</Empty>}
+        {!loading && visible.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] border-collapse text-left text-xs">
+              <thead><tr className="border-b border-black/10 text-black/55">
+                <th className="px-3 py-2 font-semibold">Student</th><th className="px-3 py-2 font-semibold">Lab</th>
+                <th className="px-3 py-2 font-semibold">Date and session</th><th className="px-3 py-2 font-semibold">Attendance</th>
+                <th className="px-3 py-2 font-semibold">Check-in time</th><th className="px-3 py-2 font-semibold">Booking</th>
+              </tr></thead>
+              <tbody className="divide-y divide-black/10">
+                {visible.map((r) => (
+                  <tr key={r.id}>
+                    <td className="px-3 py-3"><b>{r.name}</b><span className="block text-[11px] text-black/50">{r.cls || 'No class'}</span></td>
+                    <td className="px-3 py-3">{r.lab}</td>
+                    <td className="px-3 py-3">{niceDay(r.date)}<span className="block text-[11px] text-black/50">{r.from}–{r.to}</span></td>
+                    <td className="px-3 py-3"><Badge s={attKey(r) || 'none'}>{attLabel(r)}</Badge></td>
+                    <td className="px-3 py-3">{r.checkedInAt || 'Not recorded'}</td>
+                    <td className="px-3 py-3">{STATUS_LABEL[r.status] || r.status}<span className="block text-[11px] text-black/50">{r.bookedBy || '—'}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// All students of a lab time, one page at a time, with their profile pictures.
+function StudentsModal({ lab, s, onClose }) {
+  const PER = 6;
+  const list = liveOf(s);
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(list.length / PER));
+  const slice = list.slice(page * PER, page * PER + PER);
+  return (
+    <Modal title={`${lab.name} · ${s.from}–${s.to}`} onClose={onClose} wide>
+      <p className="mb-4 text-xs text-black/55">{plural(list.length, 'student')} · {s.seats - s.left} of {s.seats} places taken · {audText(s)}</p>
+      {list.length === 0 && <Empty>Nobody has applied yet.</Empty>}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {slice.map((a, i) => (
+          <div key={a.id} className="flex items-center gap-4 rounded-[8px] border border-black/10 p-3">
+            <Avatar name={a.name} picture={a.picture} gid={a.gid} className="h-16 w-16 text-lg" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] text-black/40">#{page * PER + i + 1}</div>
+              <b className="block truncate text-sm">{a.name}</b>
+              <span className="block truncate text-xs text-black/55">{a.cls || 'No class'}{a.reason ? ` · ${a.reason}` : ''}</span>
+              <span className="block truncate text-xs text-black/45">{a.email || 'No email'}</span>
+              <span className="mt-1.5 flex flex-wrap gap-1.5">
+                <Badge s={statusKey(a, s)}>{STATUS_LABEL[statusKey(a, s)]}</Badge>
+                {attKey(a) && <Badge s={attKey(a)}>{attLabel(a)}</Badge>}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <Pager page={page} pages={pages} onChange={setPage} label={`Showing ${page * PER + 1}–${Math.min(list.length, page * PER + PER)} of ${list.length}`} />
+    </Modal>
+  );
+}
+
+// Labs page: only PUBLISHED lab times. For each lab: its picture, status, how many applied and the students.
+// Click "View all students" to go through everyone, "Open lab" to mark attendance, or "Print" for the list.
+function LabsPage({ onOpenLab }) {
+  const [day, setDay] = useState(() => pickBookableDay(today()));
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [viewer, setViewer] = useState(null);
+  const load = useCallback(() => api(`/api/board?date=${day}`).then((d) => { setData(d); setErr(''); }).catch((e) => setErr(e.message)), [day]);
+  useEffect(() => { setData(null); load(); }, [load]);
+  useLive({ 'applications:update': load, seats: load });
+
+  if (!data) return err ? <Alert>{err}</Alert> : <Loader full label="Loading labs" />;
+  const labs = data.labs;
+  const all = labs.flatMap((l) => l.sessions);
+  const applied = all.reduce((n, s) => n + liveOf(s).length, 0);
+  const withTime = labs.filter((l) => l.sessions.length);
+
+  return (
+    <div className="space-y-6">
+      {err && <Alert>{err}</Alert>}
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-bold">{niceDay(day)}</h3>
+            <p className="text-xs text-black/55">Published lab times and the students in each. Drafts are in Schedule.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <DayBar day={day} onChange={setDay} />
+            <Btn c="w" disabled={!withTime.length} onClick={() => printLabs(withTime, day)}><Printer className="h-4 w-4" aria-hidden="true" />Print all labs</Btn>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <Stat v={all.length} t="Lab times" />
+        <Stat v={applied} t="Students applied" tone="gr" />
+        <Stat v={all.filter((s) => s.state === 'open').length} t="Open now" tone="gr" />
+        <Stat v={all.filter((s) => s.state === 'over').length} t="Over" tone="rd" />
+      </div>
+
+      {labs.length === 0 && <Card><Empty>No labs have been added yet. Add one in Settings.</Empty></Card>}
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {labs.map((l, li) => {
+          const status = labStatus(l.sessions);
+          return (
+            <article key={l.id} className={`flex flex-col overflow-hidden rounded-[8px] border bg-white ${status === 'over' ? 'border-[#dc2626]/40' : 'border-black/10'}`}>
+              <div className="relative h-56 overflow-hidden bg-[#e8f5ec]">
+                <LabImg lab={l} index={li} w={700} className="h-full w-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/55 to-transparent" />
+                <div className="absolute bottom-2.5 left-4 right-4 flex items-end justify-between gap-3 text-white">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-base font-bold">{l.name}</h3>
+                    <p className="text-xs text-white/80">{l.pcs} computers · {plural(l.sessions.length, 'lab time')}</p>
+                  </div>
+                  <Badge s={status}>{LAB_STATUS_TEXT[status]}</Badge>
+                </div>
+              </div>
+              <div className="flex-1 space-y-4 p-4">
+                {l.sessions.length === 0 && <p className="py-4 text-center text-xs text-black/50">No lab time on this day.</p>}
+                {l.sessions.map((s) => {
+                  const list = liveOf(s);
+                  const shown = list.slice(0, 6);
+                  const capacityPct = s.seats > 0 ? Math.min(100, Math.max(0, ((s.seats - s.left) / s.seats) * 100)) : 0;
+                  return (
+                    <div key={s.id} className="rounded-[6px] bg-black/[0.03] p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <b className="text-sm">{s.from}–{s.to}</b>
+                        <Badge s={s.state}>{STATE_LABEL[s.state]}</Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-black/60">
+                        <b className="text-[#111827]">{list.length}</b> applied · {s.seats - s.left} of {s.seats} places taken
+                        {forLabel(s) && <span className="text-[#c2310a]"> · {audText(s)}</span>}
+                      </p>
+                      <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-black/10" role="progressbar" aria-label={`${s.seats - s.left} of ${s.seats} places taken`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(capacityPct)}>
+                        <div className={`h-full rounded-full transition-[width] duration-500 ${capacityPct >= 100 ? 'bg-[#ff4500]' : 'bg-[#16a34a]'}`} style={{ width: `${capacityPct}%` }} />
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {list.length === 0 && <span className="text-xs text-black/45">Nobody yet.</span>}
+                        {shown.map((a) => (
+                          <span key={a.id} title={STATUS_LABEL[statusKey(a, s)]}
+                            className={`inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 text-[11px] font-medium ${a.status === 'approved' ? 'bg-[#16a34a]/10 text-[#15803d]' : 'bg-[#2563eb]/10 text-[#1d4ed8]'}`}>
+                            <Avatar name={a.name} picture={a.picture} gid={a.gid} className="h-5 w-5 text-[8px]" />{a.name}
+                          </span>
+                        ))}
+                        {list.length > shown.length && <span className="py-1 text-[11px] font-semibold text-black/55">+{list.length - shown.length} more</span>}
+                      </div>
+                      {list.length > 0 && (
+                        <Btn c="w" className="mt-3 w-full" onClick={() => setViewer({ lab: l, s })}><Eye className="h-4 w-4" aria-hidden="true" />View all students ({list.length})</Btn>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex gap-2 border-t border-black/10 p-3">
+                <Btn onClick={() => onOpenLab(l.id, day, l.name)}>Open lab</Btn>
+                <Btn c="w" disabled={!l.sessions.length} onClick={() => printLabs([l], day)}><Printer className="h-4 w-4" aria-hidden="true" />Print this lab</Btn>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      <p className="flex flex-wrap gap-4 text-[11px] text-black/55">
+        <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#16a34a]" />Approved student</span>
+        <span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#2563eb]" />In the waiting list</span>
+      </p>
+      {viewer && <StudentsModal lab={viewer.lab} s={data.labs.find((x) => x.id === viewer.lab.id)?.sessions.find((x) => x.id === viewer.s.id) || viewer.s} onClose={() => setViewer(null)} />}
+    </div>
+  );
+}
+
+// One lab on one day: its lab times, the students of each (a page at a time), attendance, selection and printing.
+function LabDetail({ labId, day, onBack }) {
+  const PER = 8;
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [pages, setPages] = useState({});
+  const [sel, setSel] = useState([]);
+  const load = useCallback(() => api(`/api/board?date=${day}`).then((d) => { setData(d); setErr(''); }).catch((e) => setErr(e.message)), [day]);
+  useEffect(() => { load(); }, [load]);
+  useLive({ 'applications:update': load, seats: load });
+  const { busy, act, sure, note } = useAct(load);
+
+  if (!data) return err ? <Alert>{err}</Alert> : <Loader full label="Loading lab" />;
+  const labIndex = data.labs.findIndex((l) => l.id === labId);
+  const lab = data.labs[labIndex];
+  if (!lab) return <Card><Empty>This lab was not found.</Empty></Card>;
+  const started = (s) => s.date < today() || (s.date === today() && s.from <= new Date().toTimeString().slice(0, 5));
+  const setAtt = (a, v) => act('att' + a.id, () => api(`/api/apps/${a.id}/attendance`, 'PATCH', { att: attKey(a) === v ? null : v }));
+  const toggle = (id) => setSel((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]));
+
+  return (
+    <div className="space-y-6">
+      <div className="relative overflow-hidden rounded-[10px] bg-[#e8f5ec]">
+        <LabImg lab={lab} index={labIndex} w={1200} className="h-56 w-full object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/30 to-transparent" />
+        <div className="absolute inset-0 flex flex-wrap items-center justify-between gap-3 p-5 text-white">
+          <div>
+            <h2 className="text-xl font-bold">{lab.name}</h2>
+            <p className="text-xs text-white/80">{niceDay(day)} · {lab.pcs} computers</p>
+          </div>
+          <div className="flex gap-2">
+            <Btn c="w" onClick={onBack}><ArrowLeft className="h-4 w-4" aria-hidden="true" />All labs</Btn>
+            <Btn c="w" disabled={!lab.sessions.length} onClick={() => printLabs([lab], day)}><Printer className="h-4 w-4" aria-hidden="true" />Print this lab</Btn>
+          </div>
+        </div>
+      </div>
+      {note && <Alert ok={note.ok}>{note.text}</Alert>}
+      {err && <Alert>{err}</Alert>}
+      {lab.sessions.length === 0 && <Card><Empty>No published lab time for this lab on this day. Add one in Schedule.</Empty></Card>}
+
+      {lab.sessions.map((s) => {
+        const list = liveOf(s);
+        const approved = list.filter((a) => a.status === 'approved');
+        const waiting = list.filter((a) => a.status !== 'approved');
+        const gone = s.people.filter((a) => a.status === 'rejected');
+        const present = approved.filter((a) => a.att === 'present').length;
+        const pageCount = Math.max(1, Math.ceil(list.length / PER));
+        const page = Math.min(pages[s.id] || 0, pageCount - 1);
+        const slice = list.slice(page * PER, page * PER + PER);
+        const ids = list.map((a) => a.id);
+        const chosen = ids.filter((id) => sel.includes(id));
+        return (
+          <Card key={s.id} t={`${s.from}–${s.to}`}
+            sub={`${audText(s)} · ${s.seats - s.left} of ${s.seats} places taken`}
+            action={(
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge s={s.state}>{STATE_LABEL[s.state]}</Badge>
+                <Btn c="w" disabled={!list.length} onClick={() => printSession(lab, s)}><Printer className="h-4 w-4" aria-hidden="true" />Print list</Btn>
+                {waiting.length > 0 && started(s) && s.state !== 'over' && (
+                  <ActBtn c="bl" busy={busy === 'rel' + s.id} doing="Releasing…" label="Release no-shows"
+                    onClick={() => act('rel' + s.id, () => api(`/api/sessions/${s.id}/release-noshows`, 'POST'),
+                      (r) => `${plural(r.released, 'place')} released, ${plural(r.promoted, 'student')} moved up from the queue.`)} />
+                )}
+              </div>
+            )}>
+            <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <Stat v={list.length} t="Applied" />
+              <Stat v={approved.length} t="Approved" tone="gr" />
+              <Stat v={waiting.length} t="Waiting" tone="or" />
+              <Stat v={present} t="Present" tone="gr" />
+            </div>
+            {list.length === 0 && <Empty>Nobody has applied to this lab time yet.</Empty>}
+            {list.length > 0 && (
+              <SelectBar total={list.length} selected={chosen.length}
+                onAll={() => setSel((x) => [...new Set([...x, ...ids])])} onNone={() => setSel((x) => x.filter((id) => !ids.includes(id)))}>
+                {chosen.length > 0 && (
+                  <>
+                    <ActBtn busy={busy === 'bap' + s.id} doing="Approving…" label={`Approve ${chosen.length}`}
+                      onClick={() => act('bap' + s.id, () => api('/api/apps/bulk', 'POST', { ids: chosen, action: 'approve' }),
+                        (r) => `${r.done} approved${r.skipped ? `, ${r.skipped} skipped because the lab time is full` : ''}.`)} />
+                    <Btn c="or" onClick={() => sure({ message: `Remove ${chosen.length} student(s) from this lab time?`, ok: 'Remove', danger: true }, 'bx' + s.id,
+                      async () => { await api('/api/apps/bulk', 'POST', { ids: chosen, action: 'delete' }); setSel((x) => x.filter((id) => !chosen.includes(id))); }, `${chosen.length} removed.`)}>
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />Remove {chosen.length}
+                    </Btn>
+                  </>
+                )}
+              </SelectBar>
+            )}
+            <div className="divide-y divide-black/10">
+              {slice.map((a, i) => (
+                <div key={a.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                  <span className="flex min-w-0 items-center gap-3">
+                    <input type="checkbox" aria-label={`Select ${a.name}`} className="h-4 w-4 accent-[#16a34a]" checked={sel.includes(a.id)} onChange={() => toggle(a.id)} />
+                    <span className="w-5 text-right text-xs text-black/40">{page * PER + i + 1}</span>
+                    <Person p={a} sub={`${a.cls || 'No class'}${a.reason ? ` · ${a.reason}` : ''}`} className="h-12 w-12 text-sm" />
+                  </span>
+                  <span className="flex flex-wrap items-center gap-2">
+                    {a.status !== 'approved' && <Badge s={statusKey(a, s)}>{STATUS_LABEL[statusKey(a, s)]}</Badge>}
+                    {a.status === 'approved' && (
+                      <>
+                        <Btn c={attKey(a) === 'present' ? 'ink' : 'w'} onClick={() => setAtt(a, 'present')}>Present</Btn>
+                        <Btn c={attKey(a) === 'late' ? 'am' : 'w'} onClick={() => setAtt(a, 'late')}>Late</Btn>
+                        <Btn c={attKey(a) === 'absent' ? 'or' : 'w'} onClick={() => setAtt(a, 'absent')}>Absent</Btn>
+                        {!a.att && started(s) && (
+                          <Btn c="w" onClick={() => sure({ message: `Give ${a.name}'s place to the waiting list?`, ok: 'Release', danger: true }, 'rl' + a.id,
+                            () => api(`/api/apps/${a.id}/release`, 'PATCH'), 'Place released.')}>Release</Btn>
+                        )}
+                      </>
+                    )}
+                    {a.status === 'pending' && (
+                      <ActBtn busy={busy === 'ap' + a.id} doing="…" label="Approve" onClick={() => act('ap' + a.id, () => api(`/api/apps/${a.id}/status`, 'PATCH', { status: 'approved' }), 'Approved.')} />
+                    )}
+                    <Btn c="w" onClick={() => sure({ message: `Remove ${a.name} from this lab time?`, ok: 'Remove', danger: true }, 'x' + a.id,
+                      () => api('/api/apps/bulk', 'POST', { ids: [a.id], action: 'delete' }), `${a.name} was removed.`)}>Remove</Btn>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <Pager page={page} pages={pageCount} onChange={(n) => setPages((p) => ({ ...p, [s.id]: n }))}
+              label={`Students ${page * PER + 1}–${Math.min(list.length, page * PER + PER)} of ${list.length}`} />
+            {waiting.some((a) => a.status === 'pending') && (
+              <div className="mt-4 border-t border-black/10 pt-4">
+                <ActBtn busy={busy === 'apw' + s.id} doing="Approving…" label={`Approve all waiting (${waiting.length})`}
+                  onClick={() => act('apw' + s.id, () => api('/api/apps/bulk', 'POST', { ids: waiting.map((a) => a.id), action: 'approve' }),
+                    (r) => `${r.done} approved${r.skipped ? `, ${r.skipped} skipped because the lab time is full` : ''}.`)} />
+              </div>
+            )}
+            {gone.length > 0 && (
+              <details className="mt-4 text-xs text-black/60">
+                <summary className="cursor-pointer font-semibold">Released or rejected ({gone.length})</summary>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {gone.map((a) => <span key={a.id} className="rounded-full bg-black/5 px-2 py-0.5">{a.name}{a.released ? ' · did not arrive' : ''}</span>)}
+                </div>
+              </details>
+            )}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+// Choose one lab, two or three labs, or all of them.
+function LabPicker({ labs, value, onChange }) {
+  const all = labs.length > 0 && value.length === labs.length;
+  const toggle = (id) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" aria-pressed={all} onClick={() => onChange(all ? [] : labs.map((l) => String(l.id)))}
+          className={`rounded-[6px] border px-3 py-2 text-xs font-bold ${all ? 'border-[#16a34a] bg-[#16a34a] text-white' : 'border-black/15 bg-white hover:bg-black/5'}`}>All labs</button>
+        {labs.map((l) => {
+          const on = value.includes(String(l.id));
+          return (
+            <button key={l.id} type="button" aria-pressed={on} onClick={() => toggle(String(l.id))}
+              className={`flex items-center gap-2 rounded-[6px] border py-1.5 pl-1.5 pr-3 text-xs font-semibold ${on ? 'border-[#16a34a] bg-[#16a34a]/10 text-[#15803d]' : 'border-black/15 bg-white hover:bg-black/5'}`}>
+              <span className="h-7 w-9 overflow-hidden rounded-[4px] bg-black/10"><LabImg lab={l} index={l.id} w={120} className="h-full w-full object-cover" /></span>
+              {l.name}<span className="font-normal text-black/50">· {l.pcs}</span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-[11px] text-black/50">{value.length === 0 ? 'Choose at least one lab.' : value.length === labs.length ? `All ${labs.length} labs get the same schedule.` : `${plural(value.length, 'lab')} chosen.`}</p>
+    </div>
+  );
+}
+
+const PERIOD_CHOICES = [['before', 'Morning · before lunch', Sunrise], ['after', 'After lunch', Sunset], ['both', 'Morning + after lunch', Sun], ['custom', 'Custom time', CalendarClock]];
+
+// Schedule: prepare lab times (for lunch periods, one or many labs, a class, a group or chosen students) and manage the ones that exist.
+function SchedulePage() {
+  const [day, setDay] = useState(() => pickBookableDay(today()));
+  const [labs, setLabs] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [opts, setOpts] = useState({});
+  const [f, setF] = useState({ date: pickBookableDay(today()), period: 'both', from: '14:00', to: '16:00', labIds: [], places: '', auto: 'true' });
+  const [aud, setAud] = useState({ ...BLANK_AUD });
+  const [edit, setEdit] = useState(null);
+  const [selS, setSelS] = useState([]);
+  const loadAll = useCallback(() => Promise.all([
+    api('/api/labs'), api('/api/sessions'), api('/api/users'), api('/api/groups'), api('/api/options'),
+  ]).then(([l, s, u, g, o]) => { setLabs(l); setSessions(s); setUsers(u); setGroups(g); setOpts(o); }).catch(() => {}), []);
+  useEffect(() => { loadAll(); }, []);
+  useLive({ seats: loadAll, 'applications:update': loadAll });
+  const { busy, act, sure, note } = useAct(loadAll);
+
+  const students = users.filter((u) => u.role === 'student');
+  const classes = [...new Set(students.map((s) => s.className).filter(Boolean))].sort();
+  const P = periodsOf(opts);
+  const scheduleWeekday = f.date ? new Date(`${f.date}T12:00:00`).getDay() : -1;
+  const scheduleDayName = scheduleWeekday === 5 ? 'Friday' : scheduleWeekday === 6 ? 'Saturday' : '';
+  const schedulePeriodDescription = f.period === 'before'
+    ? `Morning (before lunch): ${P.before.from}–${P.before.to}${scheduleWeekday === 6 ? ' · after farm' : ''}`
+    : f.period === 'after'
+      ? `After lunch: ${P.after.from}–${P.after.to}`
+      : f.period === 'both'
+        ? `Morning (before lunch): ${P.before.from}–${P.before.to}${scheduleWeekday === 6 ? ' · after farm' : ''}; after lunch: ${P.after.from}–${P.after.to}`
+        : `Custom time: ${f.from}–${f.to}`;
+  const slots = f.period === 'before' ? [P.before] : f.period === 'after' ? [P.after] : f.period === 'both' ? [P.before, P.after] : [{ from: f.from, to: f.to }];
+  const timeOk = !!f.date && slots.every((s) => s.from && s.to && s.from < s.to);
+  const labsOk = f.labIds.length > 0;
+  const audMulti = !!aud.kind && f.labIds.length > 1;
+  const canCreate = timeOk && labsOk && audOk(aud) && !audMulti;
+
+  const create = (published) => act(published ? 'pub' : 'draft', async () => {
+    const r = await api('/api/sessions', 'POST', {
+      date: f.date, slots, published, audience: aud, autoApprove: f.auto === 'true',
+      labIds: f.labIds.map(Number), places: f.places === '' ? undefined : +f.places,
+    });
+    setAud({ ...BLANK_AUD });
+    setDay(f.date);
+    return r;
+  }, (r) => `${published ? 'Published' : 'Saved as a draft'}: ${plural(r.created, 'lab time')}.${r.assigned ? ` ${plural(r.assigned, 'student')} booked automatically.` : ''}${r.notFound?.length ? ` Not found: ${r.notFound.join(', ')}.` : ''}`);
+
+  const dayList = sessions.filter((s) => s.date === day).sort(byTime);
+  const dayIds = dayList.map((s) => s.id);
+  const chosen = dayIds.filter((id) => selS.includes(id));
+  const toggleS = (id) => setSelS((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]));
+  const periodHint = f.period === 'custom' ? '' : slots.map((s) => `${s.from}–${s.to}`).join(' and ');
+
+  return (
+    <div className="space-y-6">
+      {note && <Alert ok={note.ok}>{note.text}</Alert>}
+      <Card t="Prepare a lab time" sub="Choose the labs and the time. You can give it to a class, a group or chosen students now, so they are already booked when you publish.">
+        <div className="space-y-5">
+          <Field l="Labs"><LabPicker labs={labs} value={f.labIds} onChange={(labIds) => setF({ ...f, labIds })} /></Field>
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field l="Day"><Inp type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+            <Field l="Places open" hint="Empty = every computer."><Inp type="number" min="1" value={f.places} onChange={(e) => setF({ ...f, places: e.target.value })} /></Field>
+            <Field l="How students are approved">
+              <Sel value={f.auto} onChange={(v) => setF({ ...f, auto: v })} options={[
+                { value: 'true', label: 'Approve at once (waiting list when full)' }, { value: 'false', label: 'Admin approves each student' },
+              ]} />
+            </Field>
+          </div>
+          <div>
+            <span className="mb-1.5 block text-xs font-medium">Time of the day</span>
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+              {PERIOD_CHOICES.map(([v, label, Icon]) => (
+                <button key={v} type="button" aria-pressed={f.period === v} onClick={() => setF({ ...f, period: v })}
+                  className={`flex items-center gap-2 rounded-[8px] border px-3 py-2.5 text-left text-xs font-semibold ${f.period === v ? 'border-[#16a34a] bg-[#16a34a]/10 text-[#15803d]' : 'border-black/15 bg-white hover:bg-black/5'}`}>
+                  <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+                  <span>{label}
+                    {v !== 'custom' && <span className="block font-normal text-black/50">{v === 'both' ? `${P.before.from}–${P.before.to} + ${P.after.from}–${P.after.to}` : `${P[v].from}–${P[v].to}`}</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] text-black/60">{scheduleDayName && `${scheduleDayName}: `}{schedulePeriodDescription}. Lunch times can be changed in Settings.</p>
+          </div>
+          {f.period === 'custom' && (
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field l="From"><Inp type="time" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
+              <Field l="To"><Inp type="time" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
+            </div>
+          )}
+        </div>
+        <div className="mt-6 rounded-[8px] border border-black/10 bg-black/[0.02] p-4">
+          <AudiencePicker value={aud} onChange={setAud} classes={classes} groups={groups} students={students} />
+        </div>
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <ActBtn c="w" busy={busy === 'draft'} doing="Saving…" label="Save as draft" disabled={!canCreate} onClick={() => create(false)} />
+          <ActBtn busy={busy === 'pub'} doing="Publishing…" label="Publish now" disabled={!canCreate} onClick={() => create(true)} />
+          {!labsOk && <span className="text-xs text-black/55">Choose a lab to continue.</span>}
+          {labsOk && !timeOk && <span className="text-xs text-[#c2310a]">The start time must be before the end time.</span>}
+          {audMulti && <span className="text-xs text-[#c2310a]">Choose only one lab when you give the lab time to a class, a group or chosen students.</span>}
+        </div>
+      </Card>
+
+      <Card t="Lab times on this day" sub="Drafts are only visible to admins. Select several to publish, hide or delete them together."
+        action={<DayBar day={day} onChange={(d) => { setDay(d); setSelS([]); }} />}>
+        {dayList.length === 0 && <Empty>No lab time on this day.</Empty>}
+        {dayList.length > 0 && (
+          <SelectBar total={dayList.length} selected={chosen.length} onAll={() => setSelS(dayIds)} onNone={() => setSelS([])}>
+            {chosen.length > 0 && (
+              <>
+                <ActBtn busy={busy === 'bpub'} doing="Publishing…" label={`Publish ${chosen.length}`}
+                  onClick={() => act('bpub', () => api('/api/sessions/publish-all', 'POST', { ids: chosen }), (r) => `${plural(r.published, 'lab time')} published.`)} />
+                <ActBtn c="w" busy={busy === 'bhide'} doing="Hiding…" label={`Hide ${chosen.length}`}
+                  onClick={() => act('bhide', () => api('/api/sessions/hide-many', 'POST', { ids: chosen }), (r) => `${plural(r.hidden, 'lab time')} hidden.`)} />
+                <Btn c="or" onClick={() => sure({ message: `Remove ${chosen.length} lab time(s)? Their bookings are removed too.`, ok: 'Remove', danger: true }, 'bdel',
+                  async () => { await api('/api/sessions/bulk-delete', 'POST', { ids: chosen }); setSelS([]); }, `${chosen.length} lab time(s) removed.`)}>
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />Delete {chosen.length}
+                </Btn>
+              </>
+            )}
+          </SelectBar>
+        )}
+        <div className="divide-y divide-black/10">
+          {dayList.map((s) => (
+            <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 py-3.5">
+              <label className="flex min-w-0 cursor-pointer items-start gap-3">
+                <input type="checkbox" aria-label={`Select ${s.lab} ${s.from}`} className="mt-1 h-4 w-4 accent-[#16a34a]" checked={selS.includes(s.id)} onChange={() => toggleS(s.id)} />
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <Badge s={s.state}>{STATE_LABEL[s.state]}</Badge>
+                    <b>{s.lab} · {s.from}–{s.to}</b>
+                  </span>
+                  <span className="mt-1 block text-xs text-black/55">{s.seats - s.left} of {s.seats} taken · {audText(s)} · {s.autoApprove !== false ? 'Approved at once' : 'Admin approves'}</span>
+                </span>
+              </label>
+              <span className="flex flex-wrap gap-2">
+                <ActBtn c={s.published ? 'w' : 'ink'} busy={busy === 'p' + s.id} doing="…" label={s.published ? 'Hide' : 'Publish'}
+                  onClick={() => act('p' + s.id, () => api(`/api/sessions/${s.id}/publish`, 'PATCH', { published: !s.published }), s.published ? 'Hidden from students.' : 'Published.')} />
+                <Btn c="w" onClick={() => setEdit({ s, date: s.date, from: s.from, to: s.to, places: String(s.seats), auto: String(s.autoApprove !== false), aud: audFrom(s) })}>Edit</Btn>
+                <Btn c="or" onClick={() => sure({ message: 'Remove this lab time? Its bookings are removed too.', ok: 'Remove', danger: true }, 'x' + s.id,
+                  () => api(`/api/sessions/${s.id}`, 'DELETE'), 'Lab time removed.')}>Remove</Btn>
+              </span>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {edit && (
+        <Modal title={`Edit ${edit.s.lab} · ${shortDay(edit.s.date)}`} onClose={() => setEdit(null)} wide>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field l="Day"><Inp type="date" value={edit.date} onChange={(e) => setEdit({ ...edit, date: e.target.value })} /></Field>
+            <Field l="Places open"><Inp type="number" min="1" value={edit.places} onChange={(e) => setEdit({ ...edit, places: e.target.value })} /></Field>
+            <Field l="From"><Inp type="time" value={edit.from} onChange={(e) => setEdit({ ...edit, from: e.target.value })} /></Field>
+            <Field l="To"><Inp type="time" value={edit.to} onChange={(e) => setEdit({ ...edit, to: e.target.value })} /></Field>
+            <div className="flex flex-wrap gap-2 md:col-span-2">
+              <Btn c="w" onClick={() => setEdit({ ...edit, from: P.before.from, to: P.before.to })}><Sunrise className="h-4 w-4" aria-hidden="true" />Before lunch</Btn>
+              <Btn c="w" onClick={() => setEdit({ ...edit, from: P.after.from, to: P.after.to })}><Sunset className="h-4 w-4" aria-hidden="true" />After lunch</Btn>
+            </div>
+            <div className="md:col-span-2">
+              <Field l="How students are approved">
+                <Sel value={edit.auto} onChange={(v) => setEdit({ ...edit, auto: v })} options={[
+                  { value: 'true', label: 'Approve at once (waiting list when full)' }, { value: 'false', label: 'Admin approves each student' },
+                ]} />
+              </Field>
+            </div>
+          </div>
+          <div className="mt-5 rounded-[8px] border border-black/10 bg-black/[0.02] p-4">
+            <AudiencePicker value={edit.aud} onChange={(a) => setEdit({ ...edit, aud: a })} classes={classes} groups={groups} students={students} />
+          </div>
+          <div className="mt-5 flex gap-2">
+            <ActBtn busy={busy === 'edit'} doing="Saving…" label="Save changes" disabled={!audOk(edit.aud) || edit.from >= edit.to} onClick={async () => {
+              if (await act('edit', () => api(`/api/sessions/${edit.s.id}`, 'PUT', {
+                date: edit.date, from: edit.from, to: edit.to, places: edit.places === '' ? '' : +edit.places,
+                autoApprove: edit.auto === 'true', audience: edit.aud,
+              }), 'Lab time saved.')) setEdit(null);
+            }} />
+            <Btn c="w" onClick={() => setEdit(null)}>Cancel</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// People: accounts, groups, and moving students between classes.
+function PeoplePage() {
+  const [users, setUsers] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [opts, setOpts] = useState(EMPTY_OPTS);
+  const [q, setQ] = useState('');
+  const [role, setRole] = useState('');
+  const [sel, setSel] = useState([]);
+  const [limit, setLimit] = useState(100);
+  const [target, setTarget] = useState({ grade: '', combo: '', section: '' });
+  const [edit, setEdit] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [nw, setNw] = useState({ name: '', email: '', role: 'student', phone: '', grade: '', combo: '', section: '' });
+  const [newGroup, setNewGroup] = useState({ name: '', members: [] });
+  const [openGroup, setOpenGroup] = useState(null);
+  const load = useCallback(() => Promise.all([api('/api/users'), api('/api/groups'), api('/api/options')])
+    .then(([u, g, o]) => { setUsers(u); setGroups(g); setOpts({ ...EMPTY_OPTS, ...o }); }).catch(() => {}), []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => setLimit(100), [q, role]);
+  useLive({ 'me:update': load, 'applications:update': load, seats: load });
+  const { busy, act, sure, note } = useAct(load);
+
+  const students = users.filter((u) => u.role === 'student');
+  const shown = users.filter((u) => (!role || u.role === role) && match(q, u.name, u.email || '', u.className || '', ROLE_LABEL[u.role]));
+  const shownIds = shown.map((u) => u.id);
+  const shownSel = shownIds.filter((id) => sel.includes(id));
+  const selStudents = sel.filter((id) => users.find((u) => u.id === id)?.role === 'student');
+  const count = (r) => users.filter((u) => u.role === r).length;
+  const targetLabel = [target.grade, target.combo, target.section].filter(Boolean).join(' ');
+  const toggle = (id) => setSel((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]));
+
+  return (
+    <div className="space-y-6">
+      {note && <Alert ok={note.ok}>{note.text}</Alert>}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Pills value={role} onChange={setRole} items={[['', 'Everyone', users.length], ...ROLE_CHOICES.map((r) => [r, ROLE_LABEL[r] + 's', count(r)])]} />
+        <Btn onClick={() => setAdding(true)}><Plus className="h-4 w-4" aria-hidden="true" />Add person</Btn>
+      </div>
+      <SearchBox value={q} onChange={setQ} placeholder="Search by name, email or class" />
+
+      {sel.length > 0 && (
+        <div className="sticky top-2 z-20 flex flex-wrap items-end gap-3 rounded-[8px] border border-[#ff4500]/40 bg-white p-4 shadow-lg">
+          <span className="mr-auto self-center text-xs font-bold text-[#c2310a]">{sel.length} selected</span>
+          {selStudents.length > 0 && (
+            <>
+              <div className="w-full sm:w-[420px]"><ClassPick opts={opts} grade={target.grade} combo={target.combo} section={target.section} onChange={setTarget} /></div>
+              <ActBtn c="bl" busy={busy === 'move'} doing="Moving…" label={`Move ${selStudents.length} to this class`} disabled={!target.grade}
+                onClick={async () => {
+                  if (await sure({ message: `Move ${selStudents.length} student(s) to ${targetLabel}?`, ok: 'Yes, move' }, 'move',
+                    () => api('/api/students/class', 'PATCH', { ids: selStudents, ...target }), `Moved to ${targetLabel}.`)) setSel([]);
+                }} />
+            </>
+          )}
+          <Btn c="w" onClick={() => setSel([])}>Clear</Btn>
+          <ActBtn c="or" busy={busy === 'bdel'} doing="Deleting…" label={`Delete ${sel.length}`}
+            onClick={async () => {
+              if (await sure({ message: `Delete ${sel.length} account(s) and their bookings? This cannot be undone.`, ok: 'Delete', danger: true }, 'bdel',
+                () => api('/api/users/bulk-delete', 'POST', { ids: sel }), 'Accounts deleted.')) setSel([]);
+            }} />
+        </div>
+      )}
+
+      <Card t={`People (${shown.length})`}>
+        {shown.length === 0 && <Empty>No one matches.</Empty>}
+        {shown.length > 0 && (
+          <SelectBar total={shown.length} selected={shownSel.length}
+            onAll={() => setSel((x) => [...new Set([...x, ...shownIds])])} onNone={() => setSel((x) => x.filter((id) => !shownIds.includes(id)))} />
+        )}
+        <div className="divide-y divide-black/10">
+          {shown.slice(0, limit).map((u) => (
+            <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <span className="flex min-w-0 items-center gap-3">
+                <input type="checkbox" aria-label={`Select ${u.name}`} className="h-4 w-4 accent-[#ff4500]" checked={sel.includes(u.id)} onChange={() => toggle(u.id)} />
+                <Person p={u} />
+              </span>
+              <span className="flex flex-wrap items-center gap-2">
+                <Badge s="none">{u.role === 'student' ? (u.className || 'No class') : ROLE_LABEL[u.role]}</Badge>
+                {u.comm && <Badge s="draft">Minister of Communication</Badge>}
+                <Btn c={u.comm ? 'dk' : 'bl'} onClick={() => sure({ title: u.comm ? 'Remove the Minister?' : 'Appoint the Minister?', message: u.comm ? `${u.name} will no longer manage Lost and Found.` : `${u.name} will manage Lost and Found items.`, ok: u.comm ? 'Remove' : 'Appoint', danger: !!u.comm },
+                  'comm' + u.id, () => api(`/api/users/${u.id}/communication`, 'PATCH', { on: !u.comm }), u.comm ? 'Minister removed.' : 'Minister appointed.')}>
+                  {u.comm ? 'Remove Minister' : 'Make Minister'}
+                </Btn>
+                <Btn c="w" onClick={() => setEdit({ ...u, section: u.section || '', combo: u.combo || '', phone: u.phone || '', picture: u.picture || '', origPicture: u.picture || '' })}>Edit</Btn>
+                <Btn c="or" onClick={() => sure({ message: `Delete ${u.name} and their bookings? This cannot be undone.`, ok: 'Delete', danger: true }, 'del' + u.id,
+                  () => api(`/api/users/${u.id}`, 'DELETE'), `${u.name} was deleted.`)}>Delete</Btn>
+              </span>
+            </div>
+          ))}
+        </div>
+        {shown.length > limit && (
+          <div className="pt-4 text-center">
+            <p className="mb-2 text-xs text-black/50">Showing {limit} of {shown.length}. Search to narrow the list.</p>
+            <Btn c="w" onClick={() => setLimit((n) => n + 100)}>Show 100 more</Btn>
+          </div>
+        )}
+      </Card>
+
+      <Card t="Groups" sub="A group can mix students from any class. In Schedule you can give a lab time to a whole group.">
+        <div className="mb-5 rounded-[8px] border border-black/10 bg-black/[0.02] p-4">
+          <Inp value={newGroup.name} onChange={(e) => setNewGroup({ ...newGroup, name: e.target.value })} placeholder="New group name, for example Isomo circle" />
+          <div className="mt-3"><StudentPicker students={students} value={newGroup.members} onChange={(m) => setNewGroup({ ...newGroup, members: m })} /></div>
+          <ActBtn className="mt-3" busy={busy === 'group'} doing="Creating…" label="Create group" disabled={!newGroup.name.trim()}
+            onClick={async () => {
+              if (await act('group', () => api('/api/groups', 'POST', { name: newGroup.name, members: newGroup.members }),
+                (r) => `Group created with ${r.added} student${r.added === 1 ? '' : 's'}.`)) setNewGroup({ name: '', members: [] });
+            }} />
+        </div>
+        {groups.length === 0 && <Empty>No groups yet.</Empty>}
+        <div className="divide-y divide-black/10">
+          {groups.map((g) => (
+            <GroupRow key={g.id} g={g} students={students} open={openGroup === g.id}
+              onToggle={() => setOpenGroup(openGroup === g.id ? null : g.id)} act={act} sure={sure} busy={busy} />
+          ))}
+        </div>
+      </Card>
+
+      {adding && (
+        <Modal title="Add a person" onClose={() => setAdding(false)}>
+          <div className="space-y-4">
+            <Field l="Role"><Sel value={nw.role} onChange={(v) => setNw({ ...nw, role: v })} options={ROLE_CHOICES.map((r) => ({ value: r, label: ROLE_LABEL[r] }))} /></Field>
+            <Field l="Full name"><Inp value={nw.name} onChange={(e) => setNw({ ...nw, name: e.target.value })} /></Field>
+            <Field l="Google email"><Inp type="email" value={nw.email} onChange={(e) => setNw({ ...nw, email: e.target.value })} /></Field>
+            <Field l="Phone or WhatsApp" hint="Optional."><Inp value={nw.phone} onChange={(e) => setNw({ ...nw, phone: e.target.value })} /></Field>
+            {nw.role === 'student' && <ClassPick opts={opts} grade={nw.grade} combo={nw.combo} section={nw.section} onChange={(c) => setNw({ ...nw, ...c })} />}
+            <div className="flex gap-2 pt-2">
+              <ActBtn busy={busy === 'add'} doing="Adding…" label="Add account" disabled={!nw.name.trim() || !nw.email.trim() || (nw.role === 'student' && !nw.grade)}
+                onClick={async () => {
+                  if (await act('add', () => api('/api/users', 'POST', { name: nw.name, email: nw.email, role: nw.role, phone: nw.phone,
+                    ...(nw.role === 'student' && { grade: nw.grade, combo: nw.combo, section: nw.section }) }), `${nw.name} can now sign in with Google.`)) {
+                    setAdding(false); setNw({ name: '', email: '', role: 'student', phone: '', grade: '', combo: '', section: '' });
+                  }
+                }} />
+              <Btn c="w" onClick={() => setAdding(false)}>Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {edit && (
+        <Modal title={`Edit ${edit.name}`} onClose={() => setEdit(null)}>
+          <div className="space-y-4">
+            <Field l="Photo link" hint="Empty = default picture."><Inp value={edit.picture} onChange={(e) => setEdit({ ...edit, picture: e.target.value })} placeholder="https://…" /></Field>
+            <Field l="Role"><Sel value={edit.role} onChange={(v) => setEdit({ ...edit, role: v })} options={ROLE_CHOICES.map((r) => ({ value: r, label: ROLE_LABEL[r] }))} /></Field>
+            <Field l="Full name"><Inp value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
+            <Field l="Google email"><Inp type="email" value={edit.email} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></Field>
+            <Field l="Phone or WhatsApp"><Inp value={edit.phone} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></Field>
+            {edit.role === 'student' && <ClassPick opts={opts} grade={edit.grade} combo={edit.combo} section={edit.section} onChange={(c) => setEdit({ ...edit, ...c })} />}
+            <div className="flex gap-2 pt-2">
+              <ActBtn busy={busy === 'edit'} doing="Saving…" label="Save changes" onClick={async () => {
+                if (await act('edit', () => api(`/api/users/${edit.id}`, 'PUT', { name: edit.name, email: edit.email, role: edit.role, phone: edit.phone,
+                  ...(edit.picture.trim() !== edit.origPicture && { picture: edit.picture.trim() }),
+                  ...(edit.role === 'student' && { grade: edit.grade, combo: edit.combo, section: edit.section }) }), 'Saved.')) setEdit(null);
+              }} />
+              <Btn c="w" onClick={() => setEdit(null)}>Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function GroupRow({ g, students, open, onToggle, act, sure, busy }) {
+  const [add, setAdd] = useState([]);
+  const members = g.members || [];
+  const nonMembers = students.filter((s) => !members.some((m) => m.id === s.id));
+  return (
+    <div className="py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <button type="button" onClick={onToggle} className="text-left">
+          <b className="text-sm">{g.name}</b> <span className="text-xs text-black/55">· {g.count ?? members.length} student{(g.count ?? members.length) === 1 ? '' : 's'}</span>
+        </button>
+        <span className="flex gap-2">
+          <Btn c="w" onClick={onToggle}>{open ? 'Close' : 'Manage'}</Btn>
+          <Btn c="or" onClick={() => sure({ message: `Delete the group ${g.name}? Students keep their accounts.`, ok: 'Delete group', danger: true }, 'gdel' + g.id,
+            () => api(`/api/groups/${g.id}`, 'DELETE'), 'Group deleted.')}>Delete</Btn>
+        </span>
+      </div>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap gap-1.5">
+            {members.length === 0 && <span className="text-xs text-black/50">No students yet.</span>}
+            {members.map((m) => (
+              <span key={m.id} className="inline-flex items-center gap-1.5 rounded-full bg-[#ff4500]/10 py-1 pl-1 pr-1.5 text-xs font-medium text-[#c2310a]">
+                <Avatar name={m.name} picture={m.picture} gid={m.gid} className="h-5 w-5 text-[8px]" />
+                {m.name}<span className="text-black/50">· {m.className}</span>
+                <button type="button" aria-label={`Remove ${m.name}`} onClick={() => act('rm' + m.id, () => api(`/api/groups/${g.id}/members/${m.id}`, 'DELETE'), 'Removed from group.')}
+                  className="px-1 text-[#ff4500]"><X className="h-3.5 w-3.5" aria-hidden="true" /></button>
+              </span>
+            ))}
+          </div>
+          <StudentPicker students={nonMembers} value={add} onChange={setAdd} />
+          <ActBtn busy={busy === 'gadd' + g.id} doing="Adding…" label={`Add ${add.length || ''} to group`} disabled={!add.length}
+            onClick={async () => { if (await act('gadd' + g.id, () => api(`/api/groups/${g.id}/members`, 'POST', { members: add }), 'Students added.')) setAdd([]); }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Admin chat: like Messenger. A group chat for all admins and private chats. Shows real profile pictures. ---------- */
+
+// Group picture: the profile pictures of the admins, side by side.
+const GroupIcon = ({ people = [], className = 'h-11 w-11' }) => {
+  const list = people.slice(0, 2);
+  if (list.length < 2) {
+    return <span className={`grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#16a34a] to-[#2563eb] text-white ${className}`} aria-hidden="true"><Users className="h-1/2 w-1/2" /></span>;
+  }
+  return (
+    <span className={`relative shrink-0 ${className}`} aria-hidden="true">
+      <Avatar name={list[0].name} picture={list[0].picture} className="absolute left-0 top-0 h-[68%] w-[68%] text-[8px] ring-2 ring-white" />
+      <Avatar name={list[1].name} picture={list[1].picture} className="absolute bottom-0 right-0 h-[68%] w-[68%] text-[8px] ring-2 ring-white" />
+    </span>
+  );
+};
+const Presence = ({ on, children }) => (
+  <span className="relative shrink-0">
+    {children}
+    <span className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${on ? 'bg-[#16a34a]' : 'bg-black/25'}`} />
+  </span>
+);
+
+// Display supported media inline, with a download link for other file types.
+function Attachment({ m }) {
+  const url = chatFileUrl(m.fileId);
+  const downloadUrl = chatFileUrl(m.fileId, true);
+  const mime = m.fileMime || '';
+  if (mime.startsWith('image/')) return <a href={url} target="_blank" rel="noreferrer"><img src={url} alt={m.fileName || 'Photo'} className="mb-1 max-h-64 max-w-full rounded-[12px] object-cover" /></a>;
+  if (mime.startsWith('video/')) return <video src={url} controls preload="metadata" className="mb-1 max-h-64 max-w-full rounded-[12px] bg-black" />;
+  if (mime.startsWith('audio/')) return <audio src={url} controls preload="metadata" className="mb-1 h-10 w-60 max-w-full" />;
+  return (
+    <span className="mb-1 flex items-center gap-3 rounded-[12px] bg-black/5 p-2.5">
+      <FileIcon className="h-7 w-7 shrink-0" />
+      <span className="min-w-0 text-left"><b className="block max-w-[170px] truncate text-xs">{m.fileName || 'File'}</b><span className="text-[10px] opacity-75">{fileSize(m.fileSize || 0)}</span></span>
+      <span className="flex flex-col gap-0.5 text-[11px] font-semibold underline">
+        {mime === 'application/pdf' && <a href={url} target="_blank" rel="noreferrer">Open</a>}
+        <a href={downloadUrl}>Download</a>
+      </span>
+    </span>
+  );
+}
+
+function ChatPage({ me, onUnread }) {
+  const [sum, setSum] = useState({ people: [], unread: {}, last: {}, myPicture: '' });
+  const [active, setActive] = useState('all');
+  const [msgs, setMsgs] = useState(null);
+  const [text, setText] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [q, setQ] = useState('');
+  const [online, setOnline] = useState(null);
+  const [typing, setTyping] = useState(null);
+  const [showList, setShowList] = useState(true);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [groupMembers, setGroupMembers] = useState([]);
+  const [memberPickerOpen, setMemberPickerOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [err, setErr] = useState('');
+  const { start, call } = useCall();
+  const { busy, run } = useBusy();
+  const box = useRef(null);
+  const fileInput = useRef(null);
+  const lastType = useRef(0);
+  const typingTimer = useRef(null);
+  const soundRef = useRef(null);
+  const recorderRef = useRef(null);
+  const playChatSound = () => {
+    try {
+      const Audio = window.AudioContext || window.webkitAudioContext;
+      if (!Audio) return;
+      const ctx = soundRef.current || (soundRef.current = new Audio());
+      if (ctx.state === 'suspended') ctx.resume();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.frequency.value = 660;
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      oscillator.connect(gain); gain.connect(ctx.destination);
+      oscillator.start(); oscillator.stop(ctx.currentTime + 0.12);
+    } catch { /* Audio may not be available in this browser. */ }
+  };
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  const loadSum = useCallback(() => api('/api/chat/summary').then((s) => {
+    setSum(s);
+    onUnread?.(Object.values(s.unread).reduce((a, b) => a + b, 0));
+  }).catch(() => {}), []);
+  const markRead = (k) => api('/api/chat/read', 'POST', { with: k }).then(loadSum).catch(() => {});
+
+  useEffect(() => { loadSum(); }, []);
+  useEffect(() => {
+    setMsgs(null); setTyping(null); setErr('');
+    api(`/api/chat/messages?with=${encodeURIComponent(active)}`)
+      .then((m) => { setMsgs(m); markRead(active); })
+      .catch((e) => { setErr(e.message); setMsgs([]); });
+  }, [active]);
+  useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [msgs, typing, active]);
+
+  useLive({
+    'chat:message': (m) => {
+      const key = m.room?.startsWith('group:') ? m.room : (m.to === 'all' ? 'all' : (m.fromEmail === me.email ? m.to : m.fromEmail));
+      if (key === activeRef.current) {
+        if (m.fromEmail !== me.email) playChatSound();
+        setMsgs((cur) => (cur && !cur.some((x) => x.id === m.id) ? [...cur, m] : cur));
+        if (m.fromEmail !== me.email) { setTyping(null); markRead(key); } else loadSum();
+      } else loadSum();
+    },
+    'chat:typing': (t) => {
+      const key = t.to === 'all' || t.to?.startsWith('group:') ? t.to : t.from;
+      if (key !== activeRef.current || t.from === me.email) return;
+      playChatSound();
+      setTyping(t.name);
+      clearTimeout(typingTimer.current);
+      typingTimer.current = setTimeout(() => setTyping(null), 3000);
+    },
+    'chat:invitation': loadSum,
+    'chat:invitation-updated': loadSum,
+    presence: (list) => setOnline(new Set(list.map((p) => p.email))),
+  });
+  const uploadChatFile = async (file) => {
+    if (!file) return;
+    setErr('');
+    try {
+      if (file.size > 25 * 1024 * 1024) throw new Error('The file is too big (25 MB maximum).');
+      const data = await readB64(file);
+      const message = await api('/api/chat/messages', 'POST', {
+        with: active,
+        file: { name: file.name, mime: file.type || 'application/octet-stream', data },
+      });
+      setMsgs((cur) => cur && !cur.some((x) => x.id === message.id) ? [...cur, message] : cur);
+      loadSum();
+    } catch (e) { setErr(e.message || 'File upload failed.'); }
+  };
+
+  const toggleVoiceRecording = async () => {
+    if (recorderRef.current?.state === 'recording') {
+      recorderRef.current.stop();
+      return;
+    }
+    try {
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw new Error('Voice recording is not supported in this browser.');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      const chunks = [];
+      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      recorder.onstop = () => {
+        const file = new File(chunks, `voice-message-${Date.now()}.webm`, { type: recorder.mimeType || 'audio/webm' });
+        stream.getTracks().forEach((track) => track.stop());
+        if (file.size) uploadChatFile(file);
+      };
+      recorder.start();
+    } catch (e) { setErr(e.message || 'Could not start voice recording.'); }
+  };
+
+  const myPic = sum.myPicture || me.picture || '';
+  const people = sum.people.map((p) => ({ ...p, on: online ? online.has(p.email) : p.online }));
+  const groups = sum.groups || [];
+  const invitations = sum.invitations || [];
+  const activeGroup = groups.find((g) => g.id === active);
+  const isAdmin = ['admin', 'administrator'].includes(String(me.role || me.type || '').toLowerCase());
+  const everyone = [{ name: me.name, picture: myPic }, ...people];
+  const lastAt = (k) => sum.last[k]?.at || '';
+  const sorted = [...people].sort((a, b) => (sum.unread[b.email] || 0) - (sum.unread[a.email] || 0)
+    || lastAt(b.email).localeCompare(lastAt(a.email)) || (+b.on - +a.on) || a.name.localeCompare(b.name));
+  const list = sorted.filter((p) => match(q, p.name, p.email));
+  const showGroup = match(q, 'all admins group');
+  const onlineCount = people.filter((p) => p.on).length + 1;
+  const other = people.find((p) => p.email === active);
+  const preview = (k) => { const l = sum.last[k]; return l ? `${l.fromMe ? 'You: ' : (k === 'all' ? `${l.fromName.split(' ')[0]}: ` : '')}${l.body}` : 'No messages yet'; };
+
+  const open = (k) => { setActive(k); setShowList(false); };
+  const createGroup = async (event) => {
+    event.preventDefault();
+    const name = groupName.trim();
+    if (!name || !groupMembers.length || creating) return;
+    setCreating(true);
+    setErr('');
+    try {
+      const group = await api('/api/chat/groups', 'POST', { name, members: groupMembers });
+      setCreatingGroup(false); setGroupName(''); setGroupMembers([]); setMemberPickerOpen(false);
+      await loadSum();
+      open(group.id);
+    } catch (e) { setErr(e.message || 'Could not create group.'); }
+    finally { setCreating(false); }
+  };
+  const respondToInvitation = async (invitation, action) => {
+    try {
+      await api(`/api/chat/groups/${invitation.groupId}/respond`, 'POST', { action });
+      await loadSum();
+      if (action === 'accept') open(invitation.id);
+      setErr('');
+    } catch (e) { setErr(e.message || 'Could not update invitation.'); }
+  };
+  const send = (body) => run('send', async () => {
+    const b = String(body ?? text).trim();
+    if (!b) return;
+    try {
+      const m = await api('/api/chat/messages', 'POST', { with: active, body: b });
+      setText('');
+      setMsgs((cur) => (cur && !cur.some((x) => x.id === m.id) ? [...cur, m] : cur));
+      loadSum();
+    } catch (e) { setErr(e.message); }
+  });
+  const saveEdit = async () => {
+    const body = text.trim();
+    if (!editing || !body) return;
+    try {
+      const updated = await api(`/api/chat/messages/${encodeURIComponent(editing.id)}`, 'PATCH', { body });
+      setMsgs((cur) => cur?.map((m) => m.id === editing.id ? { ...m, ...updated, body } : m));
+      setEditing(null); setText('');
+    } catch (e) { setErr(e.message); }
+  };
+  const deleteMessage = async (message) => {
+    if (!window.confirm('Delete this message?')) return;
+    try {
+      await api(`/api/chat/messages/${encodeURIComponent(message.id)}`, 'DELETE');
+      setMsgs((cur) => cur?.map((m) => m.id === message.id ? { ...m, deleted: true } : m));
+    } catch (e) { setErr(e.message); }
+  };
+  const onType = (v) => {
+    setText(v);
+    if (v.length > text.length) playChatSound();
+    const now = Date.now();
+    if (v && now - lastType.current > 2000) { lastType.current = now; liveSocket().emit('chat:typing', activeRef.current); }
+  };
+  const gap = (a, b) => a && b && a.fromEmail === b.fromEmail && dayHead(a.at) === dayHead(b.at) && new Date(b.at) - new Date(a.at) < 5 * 60000;
+  const who = (email) => people.find((p) => p.email === email);
+
+  const Row = ({ k, name, sub, unread, time, avatar, on }) => (
+    <button type="button" onClick={() => open(k)} aria-current={active === k ? 'true' : undefined}
+      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-black/[0.04] ${active === k ? 'bg-[#16a34a]/10' : ''}`}>
+      {on === undefined ? avatar : <Presence on={on}>{avatar}</Presence>}
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline justify-between gap-2">
+          <b className={`truncate text-[13px] ${unread ? 'text-[#111827]' : 'font-semibold'}`}>{name}</b>
+          {time && <span className={`shrink-0 text-[10px] ${unread ? 'font-bold text-[#16a34a]' : 'text-black/40'}`}>{listTime(time)}</span>}
+        </span>
+        <span className={`block truncate text-xs ${unread ? 'font-semibold text-[#111827]' : 'text-black/50'}`}>{sub}</span>
+      </span>
+      {unread > 0 && <span className="grid h-5 min-w-[20px] shrink-0 place-items-center rounded-full bg-[#ff4500] px-1.5 text-[10px] font-bold text-white">{unread > 99 ? '99+' : unread}</span>}
+    </button>
+  );
+
+  return (
+    <div className="flex h-[calc(100vh-11rem)] min-h-[480px] overflow-hidden rounded-[10px] border border-black/10 bg-white">
+      {/* Left: all chats */}
+      <aside className={`${showList ? 'flex' : 'hidden'} w-full shrink-0 flex-col border-r border-black/10 md:flex md:w-80`}>
+        <div className="p-3">
+          <div className="mb-2 flex items-center justify-between"><h2 className="text-base font-bold">Chats</h2>
+            {isAdmin && <button type="button" onClick={() => { setCreatingGroup(true); setMemberPickerOpen(false); }} className="rounded-full bg-[#16a34a] px-3 py-1.5 text-xs font-semibold text-white">Create group</button>}
+          </div>
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search admins" aria-label="Search admins"
+            className="w-full rounded-full bg-[#f0f2f5] px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
+        </div>
+        <div className="flex-1 overflow-y-auto pb-2">
+          {invitations.length > 0 && (
+            <div className="border-b border-black/10 px-3 py-3">
+              <p className="mb-2 text-[11px] font-bold text-black/55">Group invitations</p>
+              {invitations.map((invitation) => (
+                <div key={invitation.groupId} className="mb-2 rounded-lg border border-[#16a34a]/25 bg-[#16a34a]/5 p-3 last:mb-0">
+                  <b className="block truncate text-xs">{invitation.name}</b>
+                  <span className="text-[11px] text-black/55">Invited by {invitation.createdBy}</span>
+                  <div className="mt-2 flex gap-2">
+                    <button type="button" onClick={() => respondToInvitation(invitation, 'accept')} className="rounded-md bg-[#16a34a] px-3 py-1.5 text-[11px] font-semibold text-white">Accept</button>
+                    <button type="button" onClick={() => respondToInvitation(invitation, 'decline')} className="rounded-md border border-black/15 px-3 py-1.5 text-[11px] font-semibold">Decline</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {groups.filter((g) => match(q, g.name)).map((g) => <Row key={g.id || g.key} k={g.id || g.key} name={g.name} unread={sum.unread[g.id || g.key] || 0} time={sum.last[g.id || g.key]?.at} sub={preview(g.id || g.key)} avatar={<GroupIcon people={g.members || []} />} />)}
+          {showGroup && (
+            <Row k="all" name="All admins" unread={sum.unread.all || 0} time={sum.last.all?.at}
+              sub={preview('all')} avatar={<GroupIcon people={everyone} />} />
+          )}
+          {list.map((p) => (
+            <Row key={p.email} k={p.email} name={p.name} unread={sum.unread[p.email] || 0} time={sum.last[p.email]?.at} on={p.on}
+              sub={sum.last[p.email] ? preview(p.email) : (p.on ? 'Active now' : p.lastSeen ? `Active ${ago(p.lastSeen)}` : 'Has not signed in yet')}
+              avatar={<Avatar name={p.name} picture={p.picture} className="h-11 w-11 text-sm" />} />
+          ))}
+          {list.length === 0 && !showGroup && <Empty>No admin found.</Empty>}
+          {people.length === 0 && <p className="px-4 py-3 text-xs leading-relaxed text-black/50">Other admins appear here after they sign in once.</p>}
+        </div>
+      </aside>
+
+      {creatingGroup && <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="presentation">
+        <form onSubmit={createGroup} className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+          <h3 className="mb-4 text-lg font-bold">Create admin group</h3>
+          {err && <div className="mb-3"><Alert>{err}</Alert></div>}
+          <label className="mb-3 block text-sm font-medium">Group name<input autoFocus required value={groupName} onChange={(e) => setGroupName(e.target.value)} className="mt-1 w-full rounded-lg border border-black/15 px-3 py-2" /></label>
+          <div className="mb-4">
+            <span className="block text-sm font-medium">Invite admins</span>
+            <button type="button" aria-expanded={memberPickerOpen} aria-controls="group-member-picker" onClick={() => setMemberPickerOpen((open) => !open)}
+              className="mt-1 flex w-full items-center justify-between rounded-lg border border-black/15 px-3 py-2 text-left text-sm">
+              <span>{groupMembers.length ? `${groupMembers.length} admin${groupMembers.length === 1 ? '' : 's'} selected` : 'Choose admins to invite'}</span>
+              <span aria-hidden="true">{memberPickerOpen ? '▴' : '▾'}</span>
+            </button>
+            {memberPickerOpen && (
+              <div id="group-member-picker" role="group" aria-label="Select admins to invite" className="mt-1 max-h-48 overflow-y-auto rounded-lg border border-black/15 bg-white p-1">
+                {people.map((p) => (
+                  <label key={p.email} className="flex cursor-pointer items-center gap-2 rounded px-2 py-2 text-xs hover:bg-black/[0.04]">
+                    <input type="checkbox" checked={groupMembers.includes(p.email)} onChange={() => setGroupMembers((members) => members.includes(p.email) ? members.filter((email) => email !== p.email) : [...members, p.email])} />
+                    <span className="min-w-0"><b className="block truncate">{p.name}</b><span className="block truncate text-black/50">{p.email}</span></span>
+                  </label>
+                ))}
+                {people.length === 0 && <p className="px-2 py-3 text-xs text-black/50">No other admins are available to invite.</p>}
+              </div>
+            )}
+            <span className="mt-1 block text-xs font-normal text-black/50">Invited admins must accept before they can see or use the group. You will be a member as soon as it is created.</span>
+          </div>
+          <div className="flex justify-end gap-2"><button type="button" onClick={() => { setCreatingGroup(false); setGroupName(''); setGroupMembers([]); setMemberPickerOpen(false); setErr(''); }} className="rounded-lg px-4 py-2 text-sm">Cancel</button><button type="submit" disabled={creating || !groupName.trim() || !groupMembers.length} className="rounded-lg bg-[#16a34a] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{creating ? 'Creating…' : 'Create'}</button></div>
+        </form>
+      </div>}
+
+      {/* Right: the conversation */}
+      <section className={`${showList ? 'hidden' : 'flex'} min-w-0 flex-1 flex-col md:flex`}>
+        <header className="flex items-center gap-3 border-b border-black/10 px-4 py-3">
+          <button type="button" aria-label="Back to chats" onClick={() => setShowList(true)} className="grid h-8 w-8 place-items-center rounded-full text-[#16a34a] hover:bg-black/5 md:hidden"><ChevronLeft className="h-5 w-5" aria-hidden="true" /></button>
+          {active === 'all' || activeGroup
+            ? <GroupIcon people={activeGroup?.members || everyone} className="h-10 w-10" />
+            : <Presence on={!!other?.on}><Avatar name={other?.name || active} picture={other?.picture} className="h-10 w-10 text-xs" /></Presence>}
+          <div className="min-w-0">
+            <b className="block truncate text-sm">{active === 'all' ? 'All admins' : activeGroup?.name || other?.name || active}</b>
+            <span className="block truncate text-[11px] text-black/50">
+              {activeGroup ? `${activeGroup.members.length} members`
+                : active === 'all' ? `${people.length + 1} admins · ${onlineCount} online`
+                : other?.on ? 'Active now' : other?.lastSeen ? `Active ${ago(other.lastSeen)}` : 'Offline'}
+            </span>
+          </div>
+          {active !== 'all' && !activeGroup && <span className="ml-auto flex gap-1">
+            <button type="button" aria-label="Audio call" title="Audio call" disabled={!!call || !other}
+              onClick={() => start({ email: other.email, name: other.name, picture: other.picture }, 'audio')}
+              className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5 disabled:opacity-40"><Phone className="h-4 w-4" /></button>
+            <button type="button" aria-label="Video call" title="Video call" disabled={!!call || !other}
+              onClick={() => start({ email: other.email, name: other.name, picture: other.picture }, 'video')}
+              className="grid h-9 w-9 place-items-center rounded-full hover:bg-black/5 disabled:opacity-40"><Video className="h-4 w-4" /></button>
+          </span>}
+        </header>
+
+        <div ref={box} className="flex-1 overflow-y-auto bg-[#f0f2f5] px-3 py-4 sm:px-5">
+          {err && <div className="mb-3"><Alert>{err}</Alert></div>}
+          {msgs === null && <Loader full label="Loading messages" />}
+          {msgs && msgs.length === 0 && (
+            <div className="grid h-full place-items-center text-center">
+              <div>
+                {active === 'all' || activeGroup ? <GroupIcon people={activeGroup?.members || everyone} className="mx-auto h-16 w-16" /> : <Avatar name={other?.name || active} picture={other?.picture} className="mx-auto h-16 w-16 text-lg" />}
+                <p className="mt-3 text-sm font-semibold">{active === 'all' ? 'All admins' : activeGroup?.name || other?.name}</p>
+                <p className="mt-1 text-xs text-black/50">No messages yet. Say hello.</p>
+              </div>
+            </div>
+          )}
+          {msgs && msgs.map((m, i) => {
+            const mine = m.fromEmail === me.email;
+            const prev = msgs[i - 1], next = msgs[i + 1];
+            const first = !gap(prev, m), last = !gap(m, next);
+            const sender = who(m.fromEmail);
+            const corner = mine
+              ? `${first ? '' : 'rounded-tr-[6px]'} ${last ? '' : 'rounded-br-[6px]'}`
+              : `${first ? '' : 'rounded-tl-[6px]'} ${last ? '' : 'rounded-bl-[6px]'}`;
+            return (
+              <div key={m.id}>
+                {(!prev || dayHead(prev.at) !== dayHead(m.at)) && (
+                  <div className="my-3 text-center text-[11px] font-medium text-black/45">{dayHead(m.at)}</div>
+                )}
+                <div className={`flex items-end gap-2 ${mine ? 'justify-end' : 'justify-start'} ${first ? 'mt-2' : 'mt-0.5'}`}>
+                  {!mine && (
+                    <span className="w-8 shrink-0">
+                      {last && <Avatar name={m.fromName} picture={sender?.picture} className="h-8 w-8 text-[9px]" />}
+                    </span>
+                  )}
+                  <div className={`flex max-w-[78%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                    {!mine && first && (active === 'all' || activeGroup) && <span className="mb-0.5 ml-3 text-[11px] font-medium text-black/50">{m.fromName}</span>}
+                    <div title={`${dayHead(m.at)} ${clock(m.at)}`}
+                      className={`whitespace-pre-wrap break-words rounded-[18px] px-3.5 py-2 text-[13px] leading-snug ${corner} ${mine ? 'bg-[#16a34a] text-white' : 'bg-white text-[#111827] shadow-sm'}`}>
+                      {m.deleted ? 'Message deleted' : <>
+                        {m.replyTo && m.replyBody && <div className={`mb-1 border-l-2 px-2 text-[11px] opacity-75 ${mine ? 'border-white' : 'border-[#16a34a]'}`}>
+                          <b>{m.replyName || 'Reply'}</b><div className="truncate">{m.replyBody}</div>
+                        </div>}
+                        {m.fileId && <Attachment m={m} />}
+                        {m.fileId && m.body ? <><br />{m.body}</> : !m.fileId && m.body}
+                        {m.forwarded && <span className="ml-1 text-[10px] opacity-70">Forwarded</span>}
+                        {m.editedAt && <span className="ml-1 text-[10px] opacity-70">(edited)</span>}
+                      </>}
+                    </div>
+                    {mine && !m.deleted && <div className="mt-1 flex gap-2 text-[10px]">
+                      {m.body && !m.fileId && <button type="button" aria-label="Edit message" title="Edit message" className="rounded p-1 hover:bg-black/10" onClick={() => { setEditing(m); setText(m.body); }}><Pencil className="h-3.5 w-3.5" /></button>}
+                      <button type="button" aria-label="Delete message" title="Delete message" className="rounded p-1 hover:bg-black/10" onClick={() => deleteMessage(m)}><Trash2 className="h-3.5 w-3.5" /></button>
+                    </div>}
+                    {last && <span className="mx-2 mt-0.5 text-[10px] text-black/40">{clock(m.at)}</span>}
+                  </div>
+                  {mine && (
+                    <span className="w-8 shrink-0">
+                      {last && <Avatar name={me.name} picture={myPic} className="h-8 w-8 text-[9px]" />}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {typing && (
+            <div className="mt-2 flex items-end gap-2">
+              <span className="w-8 shrink-0" />
+              <div className="flex items-center gap-1 rounded-[18px] bg-white px-3.5 py-3 shadow-sm" aria-label={`${typing} is typing`}>
+                <span className="lb-dot" /><span className="lb-dot" style={{ animationDelay: '.15s' }} /><span className="lb-dot" style={{ animationDelay: '.3s' }} />
+              </div>
+              <span className="pb-1 text-[11px] text-black/45">{typing.split(' ')[0]} is typing</span>
+            </div>
+          )}
+        </div>
+
+        <footer className="relative border-t border-black/10 bg-white p-3">
+          {editing && <div className="mb-2 flex items-center justify-between text-xs text-black/60"><span>Editing message</span><button type="button" onClick={() => { setEditing(null); setText(''); }} className="underline">Cancel</button></div>}
+          <div className="flex items-end gap-2">
+            <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => { [...(e.target.files || [])].forEach(uploadChatFile); e.target.value = ''; }} />
+            <button type="button" aria-label="Attach file" title="Attach file" onClick={() => fileInput.current?.click()} className="grid h-10 w-10 shrink-0 place-items-center rounded-full hover:bg-black/5"><Paperclip className="h-4 w-4" /></button>
+            <button type="button" aria-label="Record voice message" title="Record voice message" onClick={toggleVoiceRecording} className="grid h-10 w-10 shrink-0 place-items-center rounded-full hover:bg-black/5"><Mic className="h-4 w-4" /></button>
+            <textarea rows={1} value={text} onChange={(e) => onType(e.target.value)} placeholder="Write a message"
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+              className="max-h-28 min-h-[40px] flex-1 resize-none rounded-[20px] bg-[#f0f2f5] px-4 py-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#16a34a]/40" />
+            <button type="button" aria-label={editing ? 'Save edit' : 'Send'} disabled={busy === 'send' || !text.trim()} onClick={() => editing ? saveEdit() : send()}
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#16a34a] text-white hover:opacity-90 disabled:opacity-40"><Send className="h-4 w-4" aria-hidden="true" /></button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function SettingsPage() {
+  const [opts, setOpts] = useState(EMPTY_OPTS);
+  const [labs, setLabs] = useState([]);
+  const [newGrade, setNewGrade] = useState('');
+  const [newLab, setNewLab] = useState({ name: '', pcs: 10, image: '' });
+  const [rules, setRules] = useState(null);
+  const load = useCallback(() => Promise.all([api('/api/options'), api('/api/labs')]).then(([o, l]) => {
+    setOpts({ ...EMPTY_OPTS, ...o });
+    setLabs(l);
+    setRules((cur) => cur ?? { maxConsecutive: String(o.maxConsecutive ?? 1), graceMinutes: String(o.graceMinutes ?? 15), autoRelease: String(o.autoRelease !== false), ...Object.fromEntries(Object.entries({ beforeFrom: '08:00', beforeTo: '12:30', afterFrom: '13:30', afterTo: '17:00' }).map(([k, d]) => [k, o[k] || d])), ...Object.fromEntries(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].flatMap((day) => Object.entries({ beforeFrom: '08:00', beforeTo: '12:30', afterFrom: '13:30', afterTo: '17:00' }).map(([part, d]) => { const key = `${day.toLowerCase()}${part[0].toUpperCase()}${part.slice(1)}`; return [key, o[key] || o[part] || d]; }))) });
+  }).catch(() => {}), []);
+  useEffect(() => { load(); }, [load]);
+  const { busy, act, sure, note } = useAct(load);
+
+  const grades = gradesOf(opts);
+  const full = Object.fromEntries(grades.map((g) => [g, combosFor(opts, g)]));
+  const clean = (s) => s.trim().toUpperCase().replace(/\s+/g, ' ');
+  const putOpts = (body) => api('/api/options', 'PUT', body).then((o) => setOpts({ ...EMPTY_OPTS, ...o }));
+  const saveOpts = (body, done) => act('opts', () => putOpts(body), done);
+  const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const dayKey = (day, part) => `${day.toLowerCase()}${part[0].toUpperCase()}${part.slice(1)}`;
+  const lunchOk = rules && weekdays.every((day) => rules[dayKey(day, 'beforeFrom')] < rules[dayKey(day, 'beforeTo')] && rules[dayKey(day, 'afterFrom')] < rules[dayKey(day, 'afterTo')] && rules[dayKey(day, 'beforeTo')] <= rules[dayKey(day, 'afterFrom')]);
+
+  return (
+    <div className="space-y-6">
+      {note && <Alert ok={note.ok}>{note.text}</Alert>}
+      <Card t="Lunch times" sub="Lab times can be prepared before lunch, after lunch, or both. Set the hours of each period here.">
+        {rules && (
+          <>
+            <div className="space-y-4">
+              {weekdays.map((day) => (
+                <div key={day} className="rounded-[8px] border border-black/10 p-4">
+                  <h4 className="mb-3 text-xs font-bold">{day}</h4>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div><h5 className="mb-2 flex items-center gap-2 text-xs font-medium"><Sunrise className="h-4 w-4 text-[#f59e0b]" aria-hidden="true" />Before lunch</h5><div className="grid grid-cols-2 gap-3">
+                      <Field l="From"><Inp type="time" value={rules[dayKey(day, 'beforeFrom')]} onChange={(e) => setRules({ ...rules, [dayKey(day, 'beforeFrom')]: e.target.value })} /></Field>
+                      <Field l="To"><Inp type="time" value={rules[dayKey(day, 'beforeTo')]} onChange={(e) => setRules({ ...rules, [dayKey(day, 'beforeTo')]: e.target.value })} /></Field>
+                    </div></div>
+                    <div><h5 className="mb-2 flex items-center gap-2 text-xs font-medium"><Sunset className="h-4 w-4 text-[#ff4500]" aria-hidden="true" />After lunch</h5><div className="grid grid-cols-2 gap-3">
+                      <Field l="From"><Inp type="time" value={rules[dayKey(day, 'afterFrom')]} onChange={(e) => setRules({ ...rules, [dayKey(day, 'afterFrom')]: e.target.value })} /></Field>
+                      <Field l="To"><Inp type="time" value={rules[dayKey(day, 'afterTo')]} onChange={(e) => setRules({ ...rules, [dayKey(day, 'afterTo')]: e.target.value })} /></Field>
+                    </div></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <ActBtn busy={busy === 'opts'} doing="Saving…" label="Save lunch times" disabled={!lunchOk}
+                onClick={() => saveOpts(Object.fromEntries(weekdays.flatMap((day) => ['beforeFrom', 'beforeTo', 'afterFrom', 'afterTo'].map((part) => [dayKey(day, part), rules[dayKey(day, part)]]))), 'Lunch times saved.')} />
+              {!lunchOk && <span className="text-xs text-[#c2310a]">For each day, periods must start before they end, and lunch must come between them.</span>}
+            </div>
+          </>
+        )}
+      </Card>
+
+      <Card t="Booking rules" sub="These keep the labs fair and free places of students who do not come.">
+        {rules && (
+          <>
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field l="Most days in a row one student can book" hint="0 = no limit.">
+                <Inp type="number" min="0" max="7" value={rules.maxConsecutive} onChange={(e) => setRules({ ...rules, maxConsecutive: e.target.value })} />
+              </Field>
+              <Field l="Grace time in minutes" hint="After the start, a student who arrives later than this is marked late.">
+                <Inp type="number" min="0" max="120" value={rules.graceMinutes} onChange={(e) => setRules({ ...rules, graceMinutes: e.target.value })} />
+              </Field>
+              <Field l="Give places of no-shows to the queue">
+                <Sel value={rules.autoRelease} onChange={(v) => setRules({ ...rules, autoRelease: v })} options={[{ value: 'true', label: 'Yes, automatically' }, { value: 'false', label: 'No, only with the button' }]} />
+              </Field>
+            </div>
+            <ActBtn className="mt-5" busy={busy === 'opts'} doing="Saving…" label="Save booking rules" onClick={() => saveOpts({
+              maxConsecutive: +rules.maxConsecutive || 0, graceMinutes: +rules.graceMinutes || 0, autoRelease: rules.autoRelease === 'true',
+            }, 'Booking rules saved.')} />
+          </>
+        )}
+      </Card>
+
+      <Card t="Labs" sub="Name, number of computers and picture of each room. Without a picture link a nice default picture is shown.">
+        <div className="mb-5 grid gap-3 md:grid-cols-[14rem_7rem_1fr_auto]">
+          <Inp placeholder="Lab name" value={newLab.name} onChange={(e) => setNewLab({ ...newLab, name: e.target.value })} />
+          <Inp type="number" min="1" value={newLab.pcs} onChange={(e) => setNewLab({ ...newLab, pcs: e.target.value })} />
+          <Inp placeholder="Picture link (optional)" value={newLab.image} onChange={(e) => setNewLab({ ...newLab, image: e.target.value })} />
+          <ActBtn busy={busy === 'lab'} doing="Adding…" label="Add lab" disabled={!newLab.name.trim()}
+            onClick={async () => { if (await act('lab', () => api('/api/labs', 'POST', newLab), 'Lab added.')) setNewLab({ name: '', pcs: 10, image: '' }); }} />
+        </div>
+        <div className="divide-y divide-black/10">
+          {labs.map((l, i) => <LabRow key={l.id} l={l} index={i} busy={busy} act={act} sure={sure} />)}
+        </div>
+        {labs.length === 0 && <Empty>No labs yet.</Empty>}
+      </Card>
+
+      <Card t="Classes" sub="A class is a grade plus a combination, for example S4 INGABE.">
+        <div className="mb-5 flex max-w-md gap-2">
+          <Inp placeholder="New grade, for example S3" value={newGrade} onChange={(e) => setNewGrade(e.target.value)} />
+          <Btn className="shrink-0" disabled={!clean(newGrade) || grades.includes(clean(newGrade))}
+            onClick={async () => { const g = clean(newGrade); if (await saveOpts({ grades: [...grades, g], gradeCombos: { ...full, [g]: [] } }, `${g} added.`)) setNewGrade(''); }}>Add grade</Btn>
+        </div>
+        {grades.map((g) => (
+          <div key={g} className="border-t border-black/10 py-4">
+            <div className="flex items-center justify-between gap-3">
+              <span className="rounded-[6px] bg-[#16a34a] px-3 py-1.5 text-xs font-bold text-white">{g}</span>
+              <Btn c="or" onClick={() => {
+                const rest = { ...full }; delete rest[g];
+                sure({ message: `Remove grade ${g}? Students in ${g} keep their class.`, ok: 'Remove', danger: true }, 'opts',
+                  () => putOpts({ grades: grades.filter((x) => x !== g), gradeCombos: rest }), 'Grade removed.');
+              }}>Remove grade</Btn>
+            </div>
+            <div className="mt-3">
+              <ChipList items={full[g]} placeholder={`Add a combination to ${g}`}
+                onAdd={(c) => saveOpts({ grades, gradeCombos: { ...full, [g]: [...full[g], clean(c)] } }, 'Combination added.')}
+                onRemove={(c) => sure({ message: `Remove ${c} from ${g}?`, ok: 'Remove', danger: true }, 'opts',
+                  () => putOpts({ grades, gradeCombos: { ...full, [g]: full[g].filter((x) => x !== c) } }), 'Removed.')} />
+            </div>
+          </div>
+        ))}
+      </Card>
+
+      <Card t="Booking reasons" sub="Students pick one of these when they book.">
+        <ChipList items={opts.reasons || []} placeholder="Add a reason"
+          onAdd={(x) => saveOpts({ reasons: [...(opts.reasons || []), x] }, 'Reason added.')}
+          onEdit={(old, nw) => saveOpts({ reasons: (opts.reasons || []).map((r) => (r === old ? nw : r)) }, 'Reason renamed.')}
+          onRemove={(x) => sure({ message: `Remove "${x}"?`, ok: 'Remove', danger: true }, 'opts',
+            () => putOpts({ reasons: (opts.reasons || []).filter((r) => r !== x) }), 'Removed.')} />
+      </Card>
+    </div>
+  );
+}
+
+function LabRow({ l, index, busy, act, sure }) {
+  const [name, setName] = useState(l.name);
+  const [pcs, setPcs] = useState(l.pcs);
+  const [image, setImage] = useState(l.image || '');
+  const changed = name.trim() !== l.name || +pcs !== l.pcs || image.trim() !== (l.image || '');
+  return (
+    <div className="flex flex-wrap items-center gap-3 py-3">
+      <span className="h-14 w-20 shrink-0 overflow-hidden rounded-[6px] bg-black/10">
+        <LabImg lab={{ ...l, image: image.trim() }} index={index} w={240} className="h-full w-full object-cover" />
+      </span>
+      <Inp className="!w-48 font-bold" value={name} onChange={(e) => setName(e.target.value)} aria-label="Lab name" />
+      <Inp type="number" min="1" className="!w-20" value={pcs} onChange={(e) => setPcs(e.target.value)} aria-label="Computers" />
+      <Inp className="min-w-[180px] flex-1" placeholder="Picture link (empty = default picture)" value={image} onChange={(e) => setImage(e.target.value)} aria-label="Picture link" />
+      <span className="flex flex-wrap items-center gap-2">
+        <ActBtn busy={busy === 'lab' + l.id} doing="Saving…" label="Save" disabled={!changed || !name.trim() || !(+pcs >= 1)}
+          onClick={() => act('lab' + l.id, () => api(`/api/labs/${l.id}`, 'PUT', { name: name.trim(), pcs: +pcs, image: image.trim() }), 'Saved.')} />
+        <Btn c="or" onClick={() => sure({ message: `Delete ${l.name}? Its lab times and bookings are removed.`, ok: 'Delete lab', danger: true },
+          'ld' + l.id, () => api(`/api/labs/${l.id}`, 'DELETE'), 'Lab deleted.')}>Delete</Btn>
+      </span>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* 7. LOST AND FOUND manager, PROFILE                                  */
+/* ================================================================== */
+
+function TrendsManager({ user, opts }) {
+  const [cats, setCats] = useState(catsOf(opts));
+  const [items, setItems] = useState(null);
+  const [view, setView] = useState('active');
+  const [formOpen, setFormOpen] = useState(false);
+  const [f, setF] = useState({ title: '', category: '', foundAt: '', description: '', phone: '', email: user.email || '' });
+  const [files, setFiles] = useState([]);
+  const [sel, setSel] = useState([]);
+  const [err, setErr] = useState('');
+  const { busy, run } = useBusy();
+  const load = () => api('/api/trends/manage').then(setItems).catch((e) => setErr(e.message));
+  useEffect(() => { load(); api('/api/options').then((o) => setCats(catsOf(o))).catch(() => {}); }, []);
+  useLive({ 'trends:update': load });
+  const { act, sure, note } = useAct(load);
+
+  const pick = (e) => run('pick', async () => {
+    const list = [...e.target.files];
+    e.target.value = '';
+    for (const file of list) {
+      if (files.length >= 6) { setErr('You can add up to 6 files.'); break; }
+      if (file.size > 12 * 1024 * 1024) { setErr(`${file.name} is bigger than 12 MB. Paste a link for long videos.`); continue; }
+      const data = await readB64(file);
+      setFiles((p) => (p.length >= 6 ? p : [...p, { name: file.name, mime: file.type || 'application/octet-stream', data, size: file.size }]));
+    }
+  });
+  const submit = () => run('submit', async () => {
+    setErr('');
+    try {
+      await api('/api/trends', 'POST', { ...f, category: f.category || cats[0] || 'Other', files: files.map(({ name, mime, data }) => ({ name, mime, data })) });
+      setF({ title: '', category: '', foundAt: '', description: '', phone: '', email: user.email || '' });
+      setFiles([]); setFormOpen(false);
+      await load();
+    } catch (x) { setErr(x.message); }
+  });
+
+  const list = items || [];
+  const shown = list.filter((t) => view === 'all' || t.status === view);
+  const n = (s) => list.filter((t) => t.status === s).length;
+  // Only posts that are already off the board can be deleted.
+  const deletable = shown.filter((t) => t.status !== 'active').map((t) => t.id);
+  const chosen = deletable.filter((id) => sel.includes(id));
+  if (items === null) return err ? <Alert>{err}</Alert> : <Loader full label="Loading" />;
+
+  return (
+    <div className="space-y-6">
+      {err && <Alert>{err}</Alert>}
+      {note && <Alert ok={note.ok}>{note.text}</Alert>}
+      <Card t="Post a found item" sub="A post can be removed 7 days after it was posted, and reposted later."
+        action={!formOpen && <Btn onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" aria-hidden="true" />New post</Btn>}>
+        {formOpen ? (
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field l="What was found?"><Inp value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="Black jacket with a red zip" /></Field>
+            <Field l="Category"><Sel value={f.category || cats[0]} onChange={(v) => setF({ ...f, category: v })} options={cats.map((c) => ({ value: c, label: c }))} /></Field>
+            <Field l="Where was it found?" hint="Optional."><Inp value={f.foundAt} onChange={(e) => setF({ ...f, foundAt: e.target.value })} /></Field>
+            <Field l="Phone or WhatsApp" hint="Optional."><Inp value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+            <Field l="Contact email" hint="Optional."><Inp type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
+            <Field l="Details" hint="Keep one detail back so the real owner can prove it."><textarea rows={3} className={FIELD} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
+            <div className="rounded-[8px] border border-black/10 bg-black/[0.02] p-4 md:col-span-2">
+              <label className={`inline-block cursor-pointer rounded-[6px] border border-black/20 bg-white px-4 py-2 text-xs font-semibold ${busy === 'pick' ? 'opacity-50' : ''}`}>
+                {busy === 'pick' ? 'Preparing…' : 'Choose photos or files (up to 6)'}
+                <input type="file" multiple className="sr-only" onChange={pick} disabled={busy === 'pick'} accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" />
+              </label>
+              <p className="mt-2 text-xs text-black/55">{files.length} file{files.length === 1 ? '' : 's'} ready</p>
+              {files.some((x) => x.mime.startsWith('image/')) && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {files.map((x, i) => x.mime.startsWith('image/') && (
+                    <span key={x.name + i} className="relative h-16 w-16 overflow-hidden rounded-[6px] border border-black/10">
+                      <img src={`data:${x.mime};base64,${x.data}`} alt={x.name} className="h-full w-full object-cover" />
+                      <button type="button" aria-label={`Remove ${x.name}`} onClick={() => setFiles((p) => p.filter((_, k) => k !== i))}
+                        className="absolute right-0.5 top-0.5 grid h-5 w-5 place-items-center rounded-full bg-black/60 text-white"><X className="h-3 w-3" aria-hidden="true" /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 md:col-span-2">
+              <ActBtn busy={busy === 'submit'} doing="Posting…" label="Post item" disabled={!f.title.trim() || busy === 'pick'} onClick={submit} />
+              <Btn c="w" onClick={() => setFormOpen(false)}>Cancel</Btn>
+            </div>
+          </div>
+        ) : <p className="text-xs text-black/55">Add a photo, a category and a way to contact you.</p>}
+      </Card>
+
+      <Card t="Posts" action={<Pills value={view} onChange={(v) => { setView(v); setSel([]); }} items={[['active', 'On the board', n('active')], ['returned', 'Returned', n('returned')], ['removed', 'Removed', n('removed')], ['all', 'All', list.length]]} />}>
+        {shown.length === 0 && <Empty>No posts here.</Empty>}
+        {deletable.length > 0 && (
+          <SelectBar total={deletable.length} selected={chosen.length} onAll={() => setSel(deletable)} onNone={() => setSel([])}>
+            {chosen.length > 0 && (
+              <Btn c="or" onClick={() => sure({ message: `Delete ${chosen.length} post(s) for good?`, ok: 'Delete', danger: true }, 'bdel',
+                async () => { await api('/api/trends/bulk-delete', 'POST', { ids: chosen }); setSel([]); }, `${chosen.length} post(s) deleted.`)}>
+                <Trash2 className="h-4 w-4" aria-hidden="true" />Delete {chosen.length}
+              </Btn>
+            )}
+          </SelectBar>
+        )}
+        <div className="divide-y divide-black/10">
+          {shown.map((t) => {
+            const ph = t.media?.map(itemPhoto).find(Boolean);
+            return (
+              <div key={t.id} className="flex flex-wrap items-center justify-between gap-4 py-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  {t.status !== 'active'
+                    ? <input type="checkbox" aria-label={`Select ${t.title}`} className="h-4 w-4 accent-[#16a34a]" checked={sel.includes(t.id)} onChange={() => setSel((x) => (x.includes(t.id) ? x.filter((y) => y !== t.id) : [...x, t.id]))} />
+                    : <span className="w-4" />}
+                  <span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[6px] bg-black/5">
+                    <Photo src={ph} alt={t.title} className="h-full w-full object-cover" fallback={<PackageSearch className="h-6 w-6 text-black/30" aria-hidden="true" />} />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <b>{t.title}</b><Badge s={t.status} /><span className="rounded-[4px] bg-black/5 px-2 py-0.5 text-[11px] font-semibold">{t.category}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-black/55">
+                      Posted {ago(t.postedAt)}
+                      {t.status === 'active' && (t.daysLeft ? ` · can be removed in ${t.daysLeft} day(s)` : ' · ready to remove or repost')}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {t.status === 'active' ? (
+                    <>
+                      <Btn c="bl" onClick={() => sure({ message: 'Mark this item as returned to its owner?', ok: 'Yes, returned' }, 'ret' + t.id, () => api(`/api/trends/${t.id}/returned`, 'PATCH'), 'Marked as returned.')}>Returned</Btn>
+                      <Btn c="or" disabled={t.daysLeft > 0} onClick={() => sure({ message: 'Take this post off the board? You can repost it later.', ok: 'Remove', danger: true }, 'rm' + t.id, () => api(`/api/trends/${t.id}/remove`, 'PATCH'), 'Removed from the board.')}>Remove</Btn>
+                    </>
+                  ) : (
+                    <>
+                      <Btn onClick={() => act('rp' + t.id, () => api(`/api/trends/${t.id}/repost`, 'PATCH'), 'Reposted.')}>Repost</Btn>
+                      <Btn c="or" onClick={() => sure({ message: 'Delete this post for good?', ok: 'Delete', danger: true }, 'del' + t.id, () => api(`/api/trends/${t.id}`, 'DELETE'), 'Deleted.')}>Delete</Btn>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card t="Categories" sub="Visitors filter the board by these.">
+        <ChipList items={cats} placeholder="Add a category"
+          onAdd={async (x) => { try { const r = await api('/api/trends/categories', 'PUT', { list: [...cats, x] }); setCats(r.list); return true; } catch (e) { setErr(e.message); return false; } }}
+          onRemove={(x) => sure({ message: `Remove the category "${x}"? Posts keep their category.`, ok: 'Remove', danger: true }, 'cat',
+            async () => { const r = await api('/api/trends/categories', 'PUT', { list: cats.filter((c) => c !== x) }); setCats(r.list); }, 'Category removed.')} />
+      </Card>
+    </div>
+  );
+}
+
+// Everyone can change their own photo and phone number (students too).
+function Profile({ onChanged }) {
+  const [p, setP] = useState(null);
+  const [pic, setPic] = useState('');
+  const [phone, setPhone] = useState('');
+  const [note, setNote] = useState(null);
+  const { busy, run } = useBusy();
+  const load = () => api('/api/profile').then((d) => { setP(d); setPic(d.picture || ''); setPhone(d.phone || ''); }).catch((e) => setNote({ ok: false, text: e.message }));
+  useEffect(() => { load(); }, []);
+  if (!p) return note ? <Alert>{note.text}</Alert> : <Loader full label="Loading your profile" />;
+  const save = () => run('save', async () => {
+    setNote(null);
+    try {
+      await api('/api/me/profile', 'PUT', { picture: pic.trim(), phone: phone.trim() });
+      setNote({ ok: true, text: 'Your profile is saved.' });
+      onChanged?.();
+      load();
+    } catch (e) { setNote({ ok: false, text: e.message }); }
+  });
+  const s = p.stats;
+  return (
+    <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
+      <Card>
+        <div className="flex flex-col items-center text-center">
+          <Avatar name={p.name} picture={pic} className="h-24 w-24 text-2xl" />
+          <h2 className="mt-4 text-base font-bold">{p.name}</h2>
+          <span className="mt-2 rounded-[4px] bg-[#ff4500]/10 px-3 py-1 text-[11px] font-semibold text-[#c2310a]">{ROLE_LABEL[p.role] || p.role}</span>
+        </div>
+        <dl className="mt-6 divide-y divide-black/10 text-xs">
+          {[['Email', p.email || 'Not set'], ...(p.role === 'student' ? [['Class', p.cls || 'Not set']] : []), ...(p.comm ? [['Extra role', 'Minister of Communication']] : [])].map(([k, v]) => (
+            <div key={k} className="flex justify-between gap-4 py-3"><dt className="text-black/50">{k}</dt><dd className="break-all text-right font-medium">{v}</dd></div>
+          ))}
+        </dl>
+      </Card>
+      <div className="space-y-6">
+        <Card t="Edit my profile" sub="Change your photo and phone number. Your name and email are set by the school.">
+          {note && <div className="mb-4"><Alert ok={note.ok}>{note.text}</Alert></div>}
+          <div className="space-y-4">
+            <Field l="Photo link" hint="Paste a link to a photo. Google Drive and Dropbox share links work too. Empty = default picture.">
+              <Inp value={pic} onChange={(e) => setPic(e.target.value)} placeholder="https://…" />
+            </Field>
+            <Field l="Phone or WhatsApp" hint="People who find your lost items use this to reach you.">
+              <Inp value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+250 7xx xxx xxx" />
+            </Field>
+            <ActBtn busy={busy === 'save'} doing="Saving…" label="Save profile" onClick={save} />
+          </div>
+        </Card>
+        {s && (
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <Stat v={s.total} t={p.role === 'student' ? 'Bookings' : 'Bookings made'} />
+            <Stat v={s.approved} t="Approved" tone="gr" />
+            <Stat v={s.pending} t="Waiting" tone="or" />
+            <Stat v={s.present} t="Attended" tone="gr" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* 8. DASHBOARD SHELL and ROOT                                         */
+/* ================================================================== */
+
+const NAV_ICON = { 'My labs': CalendarDays, Bookings: CalendarCheck2, 'Lost & Found': PackageSearch, Profile: UserRound, Overview: LayoutDashboard, History: CalendarClock, Labs: FlaskConical, Schedule: CalendarClock, People: UsersRound, Chat: MessageCircle, Settings: Settings2 };
+
+const NavBadge = ({ n }) => (n > 0 ? <span className="ml-auto grid h-5 min-w-[20px] place-items-center rounded-full bg-[#ff4500] px-1.5 text-[10px] font-bold text-white">{n > 99 ? '99+' : n}</span> : null);
+/* ================================================================== */
+/* CALLS: one call at a time between admins (audio or video)           */
+/* ================================================================== */
+
+const CallCtx = createContext(null);
+const useCall = () => useContext(CallCtx);
+const RTC = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const emitCall = (ev, data) => liveSocket().emit(ev, data);
+
+function CallProvider({ me, children }) {
+  const [online, setOnline] = useState([]);
+  const [call, setCall] = useState(null);
+  const [incoming, setIncoming] = useState(null);
+  const [local, setLocal] = useState(null);
+  const [remote, setRemote] = useState(null);
+  const [notice, setNotice] = useState('');
+  const callRef = useRef(null);
+  const pcRef = useRef(null);
+  const streamRef = useRef(null);
+  const iceQueue = useRef([]);
+  const timer = useRef(null);
+  const noticeTimer = useRef(null);
+  const ringContext = useRef(null);
+  const ringTimer = useRef(null);
+
+  const stopRing = () => {
+    clearInterval(ringTimer.current);
+    ringTimer.current = null;
+    ringContext.current?.close().catch(() => {});
+    ringContext.current = null;
+  };
+  const startRing = () => {
+    stopRing();
+    const AudioContext_ = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext_) return;
+    const ctx = new AudioContext_();
+    ringContext.current = ctx;
+    ctx.resume().catch(() => {});
+    const tone = () => {
+      if (ctx.state === 'closed') return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 440;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.04);
+      gain.gain.setValueAtTime(0.12, ctx.currentTime + 0.35);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + 0.42);
+    };
+    tone();
+    ringTimer.current = setInterval(tone, 1800);
+  };
+
+  const say = (t) => {
+    setNotice(t);
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(''), 4000);
+  };
+  const begin = (c) => { callRef.current = c; setCall(c); };
+  const stopTimer = () => clearTimeout(timer.current);
+
+  const reset = () => {
+    stopTimer();
+    stopRing();
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    pcRef.current?.close();
+    pcRef.current = null;
+    iceQueue.current = [];
+    callRef.current = null;
+    setLocal(null); setRemote(null); setCall(null); setIncoming(null);
+  };
+
+  // notify = true tells the other admin that the call is over.
+  const hangUp = (text = '', notify = true) => {
+    const c = callRef.current;
+    if (c && notify) emitCall('call:end', { to: c.peer.email, callId: c.id });
+    reset();
+    if (text) say(text);
+  };
+
+  const getMedia = async (mode) => {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: mode === 'video' });
+    streamRef.current = s;
+    setLocal(s);
+    return s;
+  };
+
+  const makePc = (to, callId) => {
+    const pc = new RTCPeerConnection(RTC);
+    pc.onicecandidate = (e) => {
+      if (e.candidate) emitCall('call:signal', { to, callId, type: 'candidate', candidate: e.candidate });
+    };
+    pc.ontrack = (e) => {
+      // Use the provided stream when available, otherwise construct one from
+      // the received track so audio-only calls still produce a playable stream.
+      const received = e.streams?.[0] || new MediaStream([e.track]);
+      setRemote((current) => current || received);
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed') hangUp('The connection failed.');
+    };
+    pcRef.current = pc;
+    return pc;
+  };
+
+  const addIce = async (c) => {
+    const pc = pcRef.current;
+    if (!pc) return;
+    if (pc.remoteDescription) await pc.addIceCandidate(c).catch(() => {});
+    else iceQueue.current.push(c);
+  };
+  const flushIce = async () => {
+    const pc = pcRef.current;
+    if (!pc) return;
+    for (const c of iceQueue.current.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+  };
+
+  // Caller: ring one chosen admin only.
+  const start = (peer, mode) => {
+    if (callRef.current || incoming) return say('You are already in a call.');
+    const id = `${Date.now()}${Math.random().toString(36).slice(2, 7)}`;
+    begin({ id, peer, mode, role: 'caller', status: 'calling' });
+    startRing();
+    emitCall('call:invite', { to: peer.email, callId: id, kind: mode });
+    timer.current = setTimeout(() => hangUp(`${peer.name} did not answer.`), 30000);
+  };
+
+  // Receiver: accept the call. Media is ready before the caller is told.
+  const accept = async () => {
+    const inc = incoming;
+    if (!inc) return;
+    stopTimer();
+    setIncoming(null);
+    try {
+      const s = await getMedia(inc.kind);
+      const pc = makePc(inc.from, inc.callId);
+      s.getTracks().forEach((t) => pc.addTrack(t, s));
+      begin({
+        id: inc.callId, peer: { email: inc.from, name: inc.name, picture: inc.picture },
+        mode: inc.kind, role: 'callee', status: 'connecting',
+      });
+      emitCall('call:accept', { to: inc.from, callId: inc.callId, kind: inc.kind });
+    } catch (e) {
+      emitCall('call:reject', { to: inc.from, callId: inc.callId });
+      reset();
+      say(e.message || 'Could not use the microphone or camera.');
+    }
+  };
+
+  const decline = () => {
+    if (!incoming) return;
+    stopTimer();
+    stopRing();
+    emitCall('call:reject', { to: incoming.from, callId: incoming.callId });
+    setIncoming(null);
+  };
+
+  useLive({
+    presence: (list) => setOnline(list.filter((p) => p.email !== me.email)),
+
+    'call:invite': (p) => {
+      if (callRef.current) return emitCall('call:reject', { to: p.from, callId: p.callId });
+      setIncoming(p);
+      startRing();
+      stopTimer();
+      timer.current = setTimeout(() => {
+        stopRing();
+        emitCall('call:reject', { to: p.from, callId: p.callId });
+        setIncoming(null);
+      }, 30000);
+    },
+
+    'call:unavailable': (p) => {
+      if (callRef.current?.id === p.callId) hangUp(`${callRef.current.peer.name} is not online.`, false);
+    },
+
+    'call:reject': (p) => {
+      if (callRef.current?.id === p.callId) hangUp(`${callRef.current.peer.name} declined the call.`, false);
+    },
+
+    'call:end': (p) => {
+      stopRing();
+      setIncoming((cur) => (cur?.callId === p.callId ? null : cur));
+      if (callRef.current?.id === p.callId) hangUp('The call ended.', false);
+    },
+
+    // The caller gets "accepted" and sends the offer.
+    'call:accept': async (p) => {
+      const c = callRef.current;
+      if (!c || c.id !== p.callId || c.role !== 'caller') return;
+      try {
+        stopRing();
+        stopTimer();
+        const s = await getMedia(c.mode);
+        const pc = makePc(c.peer.email, c.id);
+        s.getTracks().forEach((t) => pc.addTrack(t, s));
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        emitCall('call:signal', { to: c.peer.email, callId: c.id, type: 'offer', offer, mode: c.mode });
+        begin({ ...c, status: 'connecting' });
+      } catch (e) {
+        hangUp(e.message || 'Could not start the call.');
+      }
+    },
+
+    'call:signal': async (s) => {
+      const c = callRef.current;
+      if (!c || c.id !== s.callId) return;
+      try {
+        if (s.type === 'offer' && c.role === 'callee') {
+          const pc = pcRef.current;
+          if (!pc) return;
+          await pc.setRemoteDescription(s.offer);
+          await flushIce();
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          emitCall('call:signal', { to: c.peer.email, callId: c.id, type: 'answer', answer });
+          begin({ ...c, status: 'connected' });
+        } else if (s.type === 'answer' && c.role === 'caller') {
+          const pc = pcRef.current;
+          if (!pc) return;
+          stopTimer();
+          await pc.setRemoteDescription(s.answer);
+          await flushIce();
+          begin({ ...c, status: 'connected' });
+        } else if (s.type === 'candidate') {
+          await addIce(s.candidate);
+        }
+      } catch (e) {
+        hangUp(e.message || 'The call could not connect.');
+      }
+    },
+  });
+
+  const start_ = start; // keeps the name clear in the context value below
+  return (
+    <CallCtx.Provider value={{ online, call, start: start_, endCall: () => hangUp('') }}>
+      {children}
+
+      {notice && (
+        <div role="status" className="fixed bottom-4 left-1/2 z-[80] -translate-x-1/2 rounded-[6px] bg-[#111827] px-4 py-2.5 text-xs font-semibold text-white shadow-lg">
+          {notice}
+        </div>
+      )}
+
+      {incoming && (
+        <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label="Incoming call">
+          <div className="w-full max-w-sm rounded-[10px] bg-white p-6 text-center shadow-2xl">
+            <Avatar name={incoming.name} picture={incoming.picture} className="mx-auto h-20 w-20 text-xl" />
+            <p className="mt-4 text-xs text-black/55">Incoming {incoming.kind} call</p>
+            <h3 className="mt-1 text-lg font-bold">{incoming.name}</h3>
+            <div className="mt-6 flex justify-center gap-3">
+              <Btn c="or" onClick={decline}><PhoneOff className="h-4 w-4" aria-hidden="true" />Decline</Btn>
+              <Btn onClick={accept}><Phone className="h-4 w-4" aria-hidden="true" />Accept</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {call && <CallScreen call={call} local={local} remote={remote} onEnd={() => hangUp('')} />}
+    </CallCtx.Provider>
+  );
+}
+
+function CallScreen({ call, local, remote, onEnd }) {
+  const remoteRef = useRef(null);
+  const remoteAudioRef = useRef(null);
+  const localRef = useRef(null);
+  useEffect(() => {
+    if (remoteRef.current) remoteRef.current.srcObject = remote;
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = remote;
+      remoteAudioRef.current.play().catch(() => {});
+    }
+  }, [remote]);
+  useEffect(() => { if (localRef.current) localRef.current.srcObject = local; }, [local]);
+  const status = call.status === 'calling' ? 'Ringing…' : call.status === 'connecting' ? 'Connecting…' : 'Connected';
+  return (
+    <div className="fixed inset-0 z-[70] flex flex-col bg-black text-white">
+      <div className="relative flex-1">
+        {/* Audio is played by the audio element for both call types; mute this
+          video element to prevent duplicate sound during video calls. */}
+        <video ref={remoteRef} autoPlay playsInline muted className={`h-full w-full object-contain ${call.mode === 'audio' ? 'hidden' : ''}`} />
+        <audio ref={remoteAudioRef} autoPlay playsInline />
+        {!remote && (
+          <div className="absolute inset-0 grid place-items-center">
+            <Avatar name={call.peer.name} picture={call.peer.picture} className="h-28 w-28 text-3xl" />
+          </div>
+        )}
+        <div className="absolute left-4 top-4 rounded-full bg-black/50 px-3 py-1.5 text-xs font-semibold">
+          {call.peer.name} · {status}
+        </div>
+        {call.mode === 'video' && local && (
+          <video ref={localRef} autoPlay playsInline muted className="absolute bottom-4 right-4 h-36 w-24 rounded-lg object-cover sm:h-48 sm:w-32" />
+        )}
+      </div>
+      <div className="flex justify-center p-5">
+        <button type="button" onClick={onEnd} className="inline-flex items-center gap-2 rounded-full bg-[#dc2626] px-6 py-3 text-sm font-bold text-white">
+          <PhoneOff className="h-5 w-5" aria-hidden="true" />End call
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Lists the online admins. Pressing a button rings only that admin.
+function CallPanel() {
+  const { online, start, call } = useCall();
+  return (
+    <Card t="Admins online" sub="Choose an admin to call. Only that admin will ring.">
+      {online.length === 0 && <Empty>No other admin is online.</Empty>}
+      {online.map((p) => (
+        <div key={p.email} className="flex flex-wrap items-center justify-between gap-3 border-t border-black/10 py-3 first:border-t-0">
+          <Person p={p} sub={p.page ? `On ${p.page}` : 'Online'} />
+          <span className="flex gap-2">
+            <Btn disabled={!!call} onClick={() => start(p, 'audio')}><Phone className="h-4 w-4" aria-hidden="true" />Audio</Btn>
+            <Btn c="bl" disabled={!!call} onClick={() => start(p, 'video')}><Video className="h-4 w-4" aria-hidden="true" />Video</Btn>
+          </span>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
+function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, dark, onToggleDark }) {
+  const isAdmin = user.role === 'admin';
+  const items = isAdmin
+    ? [...ADMIN_TABS, 'Lost & Found', 'Profile']
+    : [user.role === 'student' ? 'My labs' : 'Bookings', ...(user.comm ? ['Lost & Found'] : []), 'Profile'];
+  const [picked, setPage] = useState(items[0]);
+  const page = items.includes(picked) ? picked : items[0];
+  const [labView, setLabView] = useState(null);
+  const [unread, setUnread] = useState(0);
+  const refreshUnread = () => api('/api/chat/summary').then((s) => setUnread(Object.values(s.unread).reduce((a, b) => a + b, 0))).catch(() => {});
+  useLive({
+    'me:update': onRefreshMe,
+    'chat:message': () => { if (isAdmin && page !== 'Chat') refreshUnread(); },
+  });
+  useEffect(() => { if (isAdmin) refreshUnread(); }, []);
+
+  // Tell the server which page this admin is on, so other admins can see it live.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const label = labView ? `Labs · ${labView.name || 'lab'}` : page;
+    liveSocket().emit('page', label);
+  }, [page, labView, isAdmin]);
+
+  let body;
+  if (page === 'Profile') body = <Profile onChanged={onRefreshMe} />;
+  else if (page === 'Lost & Found') body = <TrendsManager user={user} opts={opts} />;
+  else if (isAdmin) {
+    if (page === 'Overview') body = <OverviewPage me={user} />;
+    else if (page === 'History') body = <HistoryPage />;
+    else if (page === 'Labs') body = labView
+      ? <LabDetail labId={labView.id} day={labView.day} onBack={() => setLabView(null)} />
+      : <LabsPage onOpenLab={(id, day, name) => setLabView({ id, day, name })} />;
+    else if (page === 'Schedule') body = <SchedulePage />;
+    else if (page === 'People') body = <PeoplePage />;
+    else if (page === 'Chat') body = <ChatPage me={user} onUnread={setUnread} />;
+    else body = <SettingsPage />;
+  } else body = <Booker user={user} opts={opts} intent={intent} onIntentDone={onIntentDone} />;
+
+  const go = (x) => { setPage(x); setLabView(null); };
+  const badgeOf = (x) => (x === 'Chat' ? unread : 0);
+
+  return (
+    <div className="min-h-screen bg-[#f7f8f7] text-[13px] text-[#111827] lg:flex">
+      <aside className="hidden flex-col border-r border-black/10 bg-white p-5 lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-64 lg:shrink-0">
+        <Logo />
+        <nav className="mt-8 flex-1 space-y-1 overflow-y-auto" aria-label="Main">
+          {items.map((x) => {
+            const Icon = NAV_ICON[x] || UserRound;
+            return (
+              <button key={x} type="button" onClick={() => go(x)} aria-current={page === x ? 'page' : undefined}
+                className={`flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
+                <Icon className="h-[18px] w-[18px] shrink-0" strokeWidth={2} aria-hidden="true" />{x}<NavBadge n={badgeOf(x)} />
+              </button>
+            );
+          })}
+        </nav>
+        <div className="mt-4 rounded-[8px] bg-black/[0.04] p-3">
+          <div className="flex items-center gap-3">
+            <Avatar name={user.name} picture={user.picture} className="h-9 w-9 text-xs" />
+            <div className="min-w-0">
+              <div className="truncate text-xs font-semibold">{user.name}</div>
+              <div className="text-[11px] text-black/55">{user.comm && user.role !== 'admin' ? 'Minister of Communication' : ROLE_LABEL[user.role] || user.role}</div>
+            </div>
+          </div>
+          <button type="button" onClick={onToggleDark} className="mt-3 flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-left text-xs font-semibold hover:bg-black/5">
+            {dark ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}{dark ? 'Light mode' : 'Dark mode'}
+          </button>
+          <button type="button" onClick={onLogout} className="mt-1 flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-left text-xs font-semibold text-[#ff4500] hover:bg-[#ff4500]/10">
+            <LogOut className="h-4 w-4" aria-hidden="true" />Log out
+          </button>
+        </div>
+      </aside>
+
+      <div className="min-w-0 flex-1">
+        <header className="border-b border-black/10 bg-white lg:hidden">
+          <div className="flex h-14 items-center justify-between px-4">
+            <Logo />
+            <div className="flex items-center gap-2">
+              <ThemeBtn dark={dark} onToggle={onToggleDark} />
+              <Btn c="w" onClick={onLogout}><LogOut className="h-4 w-4" aria-hidden="true" />Log out</Btn>
+            </div>
+          </div>
+          <nav className="flex gap-2 overflow-x-auto px-4 pb-3" aria-label="Main">
+            {items.map((x) => {
+              const Icon = NAV_ICON[x] || UserRound;
+              return (
+                <button key={x} type="button" onClick={() => go(x)}
+                  className={`flex shrink-0 items-center gap-2 rounded-[6px] px-3 py-2 text-xs font-semibold ${page === x ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
+                  <Icon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden="true" />{x}{badgeOf(x) > 0 && <span className="grid h-4 min-w-[16px] place-items-center rounded-full bg-[#ff4500] px-1 text-[9px] font-bold text-white">{badgeOf(x)}</span>}
+                </button>
+              );
+            })}
+          </nav>
+        </header>
+        <main className="mx-auto max-w-6xl px-5 py-8 lg:px-8">
+          <div className="mb-6">
+            <h1 className="text-xl font-bold tracking-tight">{page}{labView && ' · Lab'}</h1>
+            <p className="mt-0.5 text-xs text-black/50">{user.name}{user.email ? ` · ${user.email}` : ''}</p>
+          </div>
+          {body}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+export default function Home() {
+  const [view, setView] = useState('home');
+  const [user, setUser] = useState(null);
+  const [opts, setOpts] = useState(EMPTY_OPTS);
+  const [booting, setBooting] = useState(!!getToken());
+  const [intent, setIntent] = useState(null);
+  // Light and dark mode for the whole site (landing, sign in and dashboard). Remembered on this device.
+  const [dark, setDark] = useState(() => localStorage.getItem('lms_dark') === 'true');
+  useEffect(() => {
+    localStorage.setItem('lms_dark', String(dark));
+    document.body.style.background = dark ? '#000000' : '';
+  }, [dark]);
+  const toggleDark = () => setDark((v) => !v);
+
+  const loadOpts = () => api('/api/options').then((o) => setOpts({ ...EMPTY_OPTS, ...o })).catch(() => {});
+  const refreshMe = () => api('/api/me').then(setUser).catch(() => {});
+
+  useEffect(() => {
+    loadOpts();
+    if (getToken()) {
+      api('/api/me')
+        .then((u) => { setUser(u); setView('app'); })
+        .catch(() => setToken(''))
+        .finally(() => setBooting(false));
+    }
+  }, []);
+
+  const handleAuth = async (t) => {
+    setToken(t);
+    dropSocket();
+    await loadOpts();
+    setUser(await api('/api/me'));
+    setView('app');
+  };
+  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); setView('home'); };
+  const goLogin = (i) => { setIntent(i && i.sessionId ? i : null); setView('login'); };
+
+  let page;
+  if (booting) page = <Loader full label="Loading" />;
+  else if (view === 'app' && user) page = (
+    <CallProvider me={user}>
+      <Dashboard user={user} opts={opts} intent={intent} onIntentDone={() => setIntent(null)} onLogout={logout} onRefreshMe={refreshMe} dark={dark} onToggleDark={toggleDark} />
+    </CallProvider>
+  );
+  else if (view === 'login') page = <Auth onDone={handleAuth} onBack={() => setView('home')} intent={intent} dark={dark} onToggleDark={toggleDark} />;
+  else page = <Landing onLogin={goLogin} dark={dark} onToggleDark={toggleDark} />;
+
+  return (
+    <div className={dark ? 'lms-dark min-h-screen' : 'min-h-screen'}>
+      <style>{GLOBAL_CSS}</style>
+      <ConfirmProvider>{page}</ConfirmProvider>
+    </div>
+  );
+}
