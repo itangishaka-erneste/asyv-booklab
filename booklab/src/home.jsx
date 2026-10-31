@@ -3070,7 +3070,7 @@ function CallProvider({ me, children }) {
     stopRing();
     // Use the requested YouTube clip as the only ringtone for incoming and outgoing calls.
     const player = document.createElement('iframe');
-    player.src = 'https://www.youtube-nocookie.com/embed/oui7g5frCL0?autoplay=1&controls=0&loop=1&playlist=oui7g5frCL0';
+    player.src = 'https://www.youtube-nocookie.com/embed/oui7g5frCL0?autoplay=1&playsinline=1&controls=0&loop=1&playlist=oui7g5frCL0';
     player.title = 'Call ringtone';
     player.allow = 'autoplay; encrypted-media';
     player.setAttribute('aria-hidden', 'true');
