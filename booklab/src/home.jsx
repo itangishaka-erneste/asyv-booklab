@@ -3150,6 +3150,7 @@ function CallProvider({ me, children }) {
     const id = `${Date.now()}${Math.random().toString(36).slice(2, 7)}`;
     begin({ id, peer, mode, role: 'caller', status: 'calling' });
     emitCall('call:invite', { to: peer.email, callId: id, kind: mode });
+    startRing();
     timer.current = setTimeout(() => hangUp(`${peer.name} did not answer.`), 30000);
   };
 
