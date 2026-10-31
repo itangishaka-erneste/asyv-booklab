@@ -3062,15 +3062,27 @@ function CallProvider({ me, children }) {
   const noticeTimer = useRef(null);
   const ringContext = useRef(null);
   const ringTimer = useRef(null);
+  const ringPlayer = useRef(null);
 
   const stopRing = () => {
     clearInterval(ringTimer.current);
     ringTimer.current = null;
+    ringPlayer.current?.remove();
+    ringPlayer.current = null;
     ringContext.current?.close().catch(() => {});
     ringContext.current = null;
   };
   const startRing = () => {
     stopRing();
+    // Use the provided YouTube clip as the ringtone during incoming and outgoing ringing.
+    const player = document.createElement('iframe');
+    player.src = 'https://www.youtube-nocookie.com/embed/oui7g5frCL0?autoplay=1&controls=0&loop=1&playlist=oui7g5frCL0';
+    player.title = 'Call ringtone';
+    player.allow = 'autoplay; encrypted-media';
+    player.setAttribute('aria-hidden', 'true');
+    Object.assign(player.style, { position: 'fixed', width: '1px', height: '1px', opacity: '0', pointerEvents: 'none' });
+    document.body.appendChild(player);
+    ringPlayer.current = player;
     const AudioContext_ = window.AudioContext || window.webkitAudioContext;
     if (!AudioContext_) return;
     const ctx = new AudioContext_();
