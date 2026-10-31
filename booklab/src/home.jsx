@@ -2398,7 +2398,10 @@ function ChatPage({ me, onUnread }) {
   };
 
   const myPic = sum.myPicture || me.picture || '';
-  const people = sum.people.map((p) => ({ ...p, on: online ? online.has(p.email) : p.online }));
+  const removedChatAdmins = ['mwamikazi pacific', 'ntwali kevin', 'mukunzi'];
+  const people = sum.people
+    .filter((p) => !removedChatAdmins.some((name) => nameKey(p.name).includes(nameKey(name))))
+    .map((p) => ({ ...p, on: online ? online.has(p.email) : p.online }));
   const groups = sum.groups || [];
   const invitations = sum.invitations || [];
   const activeGroup = groups.find((g) => g.id === active);
