@@ -724,13 +724,13 @@ function SessionPick({ s, day, past, onLogin }) {
   useEffect(() => { const t = setTimeout(() => setP(pct), 80); return () => clearTimeout(t); }, [pct]);
   const intent = { sessionId: s.id, date: day, lab: s.labName, from: s.from, to: s.to };
   const inner = (
-    <div title={full ? 'This lab is full' : undefined} className={`flex items-center justify-between gap-3 rounded-[6px] p-3 ${closed ? 'bg-white opacity-75' : full ? 'bg-[#8b5e3c] text-white' : 'bg-white'}`}>
+    <div title={full ? 'This lab is full' : s.exclusive ? 'Only invited users can apply' : undefined} className={`flex items-center justify-between gap-3 rounded-[6px] p-3 ${closed ? 'bg-white opacity-75' : full ? 'bg-[#8b5e3c] text-white' : s.exclusive ? 'bg-[#ff4500] text-white' : 'bg-white'}`}>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <b className={`text-sm ${closed ? 'line-through decoration-[#dc2626]/60' : ''}`}>{s.from}–{s.to}</b>
-          {s.for && <Badge s="draft">{s.exclusive ? `Only ${s.for}` : `Reserved for ${s.for}`}</Badge>}
+          {s.for && <Badge s="draft">{s.exclusive ? `✕ Invited only · ${s.for}` : `Reserved for ${s.for}`}</Badge>}
         </div>
-        <div className={`mt-1 text-xs ${closed ? 'font-bold text-[#dc2626]' : s.left < 1 ? 'font-bold text-white' : 'font-medium text-[#15803d]'}`}>
+        <div className={`mt-1 text-xs ${closed || s.exclusive ? 'font-bold text-white' : s.left < 1 ? 'font-bold text-white' : 'font-medium text-[#15803d]'}`}>
           {closed ? 'This lab time is over' : s.left < 1 ? 'Full' : `${s.left} of ${s.seats} places free`}
         </div>
       </div>
