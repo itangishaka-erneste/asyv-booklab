@@ -1387,10 +1387,11 @@ function OverviewPage({ me }) {
   const t = stats?.totals || {};
   const att = stats?.attendance || {};
   const todaySessions = (todayBoard?.labs || []).flatMap((lab) => lab.sessions.map((session) => ({ ...session, labName: lab.name })))
-    .filter((session) => session.state !== 'over'
+    .filter((session) => session.date === today()
+      && session.state !== 'over'
       && session.to > new Date().toTimeString().slice(0, 5)
-      && liveOf(session).length > 0);
-  const todayApplied = todaySessions.reduce((n, session) => n + liveOf(session).length, 0);
+      && liveOf(session).some((booking) => booking.status === 'approved'));
+  const todayApplied = todaySessions.reduce((n, session) => n + liveOf(session).filter((booking) => booking.status === 'approved').length, 0);
   const dayList = Array.from({ length: days }, (_, i) => shiftDay(today(), i - days + 1));
   const actors = [...new Set([...presence.map((p) => p.name), ...chart.map((c) => c.actor), ...acts.map((a) => a.actor)])].sort();
   const maxDay = Math.max(1, ...chart.map((c) => c.n));
@@ -1414,12 +1415,12 @@ function OverviewPage({ me }) {
         <Stat v={att.late ?? 0} t="Late arrivals" tone="am" />
       </div>
 
-      <Card t="Today's bookings" sub="Bookings for today's prepared lab times with applicants, excluding sessions that have already passed.">
-        <div className="mb-3"><Stat v={todayApplied} t="People applied" tone="gr" /></div>
-        {todaySessions.length === 0 && <Empty>No upcoming lab times with bookings today.</Empty>}
+      <Card t="Today's bookings" sub="Approved bookings for today's lab times only, excluding sessions that have already passed.">
+        <div className="mb-3"><Stat v={todayApplied} t="Approved bookings" tone="gr" /></div>
+        {todaySessions.length === 0 && <Empty>No upcoming approved bookings for today.</Empty>}
         <div className="divide-y divide-black/10">
           {todaySessions.map((session) => {
-            const people = liveOf(session);
+            const people = liveOf(session).filter((booking) => booking.status === 'approved');
             return (
               <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                 <span><b>{session.labName}</b><span className="text-black/55"> · {session.from}–{session.to}</span></span>
