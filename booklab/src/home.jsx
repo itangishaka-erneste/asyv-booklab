@@ -755,19 +755,19 @@ function LabCard({ lab, index, day, past, onLogin }) {
   const text = { open: 'Places open', full: 'Full', over: 'Closed', none: 'No lab time', draft: 'Not open' }[status];
   return (
     <article className={`flex flex-col overflow-hidden rounded-[8px] border bg-white ${status === 'over' ? 'border-[#dc2626]/50' : 'border-black/10'}`}>
-      <div className="relative h-36 overflow-hidden bg-[#e8f5ec]">
+      <div className={`relative h-36 overflow-hidden ${status === 'full' ? 'bg-[#dc2626]' : 'bg-[#e8f5ec]'}`}>
         <LabImg lab={lab} index={index} className="lb-float h-full w-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
-        <span className="absolute bottom-3 left-3 rounded-full bg-white/95 px-3 py-1 text-[11px] font-semibold text-[#15803d] shadow">{text}</span>
+        <span className={`absolute bottom-3 left-3 rounded-full px-3 py-1 text-[11px] font-semibold shadow ${status === 'full' ? 'bg-[#dc2626] text-white' : 'bg-white/95 text-[#15803d]'}`}>{text}</span>
       </div>
-      <div className="flex items-center justify-between gap-3 border-b border-black/10 p-4">
+      <div className={`flex items-center justify-between gap-3 border-b p-4 ${status === 'full' ? 'border-white/30 bg-[#dc2626] text-white' : 'border-black/10'}`}>
         <div className="min-w-0">
           <h3 className="truncate text-base font-bold">{lab.name}</h3>
-          <p className="text-xs text-black/55">{lab.pcs} computers</p>
+          <p className={`text-xs ${status === 'full' ? 'text-white' : 'text-black/55'}`}>{lab.pcs} computers</p>
         </div>
         <Badge s={status}>{text}</Badge>
       </div>
-      <div className="flex flex-1 flex-col gap-4 p-4">
+      <div className={`flex flex-1 flex-col gap-4 p-4 ${status === 'full' ? 'bg-[#dc2626] text-white' : ''}`}>
         {lab.sessions.length === 0 && <p className="py-4 text-center text-xs text-black/50">No lab time on this day.</p>}
         {lab.sessions.map((s) => <SessionPick key={s.id} s={{ ...s, labName: lab.name }} day={day} past={past} onLogin={onLogin} />)}
       </div>
