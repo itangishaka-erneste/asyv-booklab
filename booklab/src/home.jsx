@@ -724,7 +724,7 @@ function SessionPick({ s, day, past, onLogin }) {
   useEffect(() => { const t = setTimeout(() => setP(pct), 80); return () => clearTimeout(t); }, [pct]);
   const intent = { sessionId: s.id, date: day, lab: s.labName, from: s.from, to: s.to };
   const inner = (
-    <div className={`flex items-center justify-between gap-3 rounded-[6px] p-3 ${closed ? 'bg-white opacity-75' : full ? 'bg-[#fff0e9]' : 'bg-white'}`}>
+    <div title={full ? 'This lab is full' : undefined} className={`flex items-center justify-between gap-3 rounded-[6px] p-3 ${closed ? 'bg-white opacity-75' : full ? 'bg-[#fee2e2]' : 'bg-white'}`}>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <b className={`text-sm ${closed ? 'line-through decoration-[#dc2626]/60' : ''}`}>{s.from}–{s.to}</b>
