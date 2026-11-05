@@ -730,11 +730,11 @@ function SessionPick({ s, day, past, onLogin }) {
           {s.for && <Badge s="draft">{s.exclusive ? `Only ${s.for}` : `Reserved for ${s.for}`}</Badge>}
         </div>
         <div className={`mt-1 text-xs ${closed ? 'font-bold text-[#dc2626]' : s.left < 1 ? 'font-bold text-[#c2310a]' : 'font-medium text-[#15803d]'}`}>
-          {closed ? 'This lab time is over' : s.left < 1 ? `Full · ${s.waiting} waiting` : `${s.left} of ${s.seats} places free`}
+          {closed ? 'This lab time is over' : s.left < 1 ? 'Full' : `${s.left} of ${s.seats} places free`}
         </div>
       </div>
       <Btn c={closed ? 'w' : s.left < 1 ? 'or' : 'ink'} disabled={closed || s.exclusive} onClick={() => onLogin(intent)}>
-        {closed ? 'Closed' : s.exclusive ? 'Invited only' : s.left < 1 ? 'Join queue' : 'Apply'}
+        {closed ? 'Closed' : s.exclusive ? 'Invited only' : s.left < 1 ? 'Full' : 'Apply'}
       </Btn>
     </div>
   );
@@ -1012,7 +1012,7 @@ function Landing({ onLogin, dark, onToggleDark }) {
         <div>
           <span className="lb-in inline-block rounded-[6px] border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[11px] font-semibold text-[#15803d]">Live places, updated automatically</span>
           <h1 className="lb-in mt-5 max-w-2xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
-          <p className="mt-5 max-w-md text-sm leading-relaxed text-black/65">Pick a lab time and press Apply. Free places are approved at once. When a lab time is full you join the waiting list.</p>
+          <p className="mt-5 max-w-md text-sm leading-relaxed text-black/65">Pick an available lab time and press Apply. Free places are approved at once.</p>
           <div className="mt-7 flex flex-wrap gap-3">
             <a href="#labs" className="rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white">See the labs</a>
             <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
@@ -1293,7 +1293,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
                   <div className={`flex h-full items-center justify-end rounded-full px-2 text-[10px] font-bold text-white transition-[width] duration-700 ${past ? 'bg-[#dc2626]' : s.left > 0 ? 'bg-[#16a34a]' : 'bg-[#ff4500]'}`} style={{ width: `${Math.max(pct, 8)}%` }}>{Math.round(pct)}%</div>
                 </div>
                 <div className={`mt-1.5 text-xs ${past ? 'font-bold text-[#dc2626]' : s.left > 0 ? 'font-medium text-[#15803d]' : 'font-bold text-[#c2310a]'}`}>
-                  {past ? 'This lab time is over' : s.left > 0 ? `${s.left} of ${s.seats} places left` : 'Full · you can join the waiting list'}
+                  {past ? 'This lab time is over' : s.left > 0 ? `${s.left} of ${s.seats} places left` : 'Full'}
                 </div>
               </div>
               {m ? <Badge s={statusKey(m, s)}>{STATUS_LABEL[statusKey(m, s)]}</Badge> : (
@@ -1358,6 +1358,7 @@ const ACT_FILTERS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7', 'Last
 // Live presence: which admin is on which page, and recent activity (filtered by day and by admin).
 function OverviewPage({ me }) {
   const [stats, setStats] = useState(null);
+  const [todayBoard, setTodayBoard] = useState(null);
   const [presence, setPresence] = useState([]);
   const [acts, setActs] = useState([]);
   const [chart, setChart] = useState([]);
@@ -1374,6 +1375,7 @@ function OverviewPage({ me }) {
     else p.set('days', mode);
     if (actor) p.set('actor', actor);
     api('/api/stats/overview').then(setStats).catch(() => {});
+    api(`/api/board?date=${today()}`).then(setTodayBoard).catch(() => {});
     api(`/api/activity?${p}`).then(setActs).catch(() => {});
     api(`/api/activity/chart?days=${days}`).then(setChart).catch(() => {});
   }, [days, mode, pickDate, actor]);
@@ -1383,6 +1385,11 @@ function OverviewPage({ me }) {
 
   const t = stats?.totals || {};
   const att = stats?.attendance || {};
+  const todaySessions = (todayBoard?.labs || []).flatMap((lab) => lab.sessions.map((session) => ({ ...session, labName: lab.name })))
+    .filter((session) => session.state !== 'over'
+      && session.to > new Date().toTimeString().slice(0, 5)
+      && liveOf(session).length > 0);
+  const todayApplied = todaySessions.reduce((n, session) => n + liveOf(session).length, 0);
   const dayList = Array.from({ length: days }, (_, i) => shiftDay(today(), i - days + 1));
   const actors = [...new Set([...presence.map((p) => p.name), ...chart.map((c) => c.actor), ...acts.map((a) => a.actor)])].sort();
   const maxDay = Math.max(1, ...chart.map((c) => c.n));
@@ -1405,6 +1412,22 @@ function OverviewPage({ me }) {
         <Stat v={att.rate == null ? '-' : `${att.rate}%`} t="Attendance rate" tone="gr" />
         <Stat v={att.late ?? 0} t="Late arrivals" tone="am" />
       </div>
+
+      <Card t="Today's bookings" sub="Bookings for today's prepared lab times with applicants, excluding sessions that have already passed.">
+        <div className="mb-3"><Stat v={todayApplied} t="People applied" tone="gr" /></div>
+        {todaySessions.length === 0 && <Empty>No upcoming lab times with bookings today.</Empty>}
+        <div className="divide-y divide-black/10">
+          {todaySessions.map((session) => {
+            const people = liveOf(session);
+            return (
+              <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <span><b>{session.labName}</b><span className="text-black/55"> · {session.from}–{session.to}</span></span>
+                <span className="text-xs font-semibold">{plural(people.length, 'booking')}</span>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card t="Who is online" sub="Admins currently signed in and the page they are on.">
