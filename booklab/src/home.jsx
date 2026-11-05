@@ -717,13 +717,14 @@ function useOverview(day) {
 // One lab time. Closed = thick red border with a red "Closed" strip. Otherwise the border fills as places get taken.
 function SessionPick({ s, day, past, onLogin }) {
   const closed = past || s.state === 'over';
+  const full = !closed && s.left < 1;
   const pct = s.seats ? Math.round(((s.seats - s.left) / s.seats) * 100) : 0;
   const color = s.left < 1 ? 'var(--full, #ff4500)' : 'var(--ok, #16a34a)';
   const [p, setP] = useState(0);
   useEffect(() => { const t = setTimeout(() => setP(pct), 80); return () => clearTimeout(t); }, [pct]);
   const intent = { sessionId: s.id, date: day, lab: s.labName, from: s.from, to: s.to };
   const inner = (
-    <div className={`flex items-center justify-between gap-3 rounded-[6px] bg-white p-3 ${closed ? 'opacity-75' : ''}`}>
+    <div className={`flex items-center justify-between gap-3 rounded-[6px] p-3 ${closed ? 'bg-white opacity-75' : full ? 'bg-[#fff0e9]' : 'bg-white'}`}>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <b className={`text-sm ${closed ? 'line-through decoration-[#dc2626]/60' : ''}`}>{s.from}–{s.to}</b>
@@ -733,7 +734,7 @@ function SessionPick({ s, day, past, onLogin }) {
           {closed ? 'This lab time is over' : s.left < 1 ? 'Full' : `${s.left} of ${s.seats} places free`}
         </div>
       </div>
-      <Btn c={closed ? 'w' : s.left < 1 ? 'or' : 'ink'} disabled={closed || s.exclusive} onClick={() => onLogin(intent)}>
+      <Btn c={closed ? 'w' : full ? 'or' : 'ink'} disabled={closed || s.exclusive || full} title={full ? 'This lab is full' : undefined} onClick={() => onLogin(intent)}>
         {closed ? 'Closed' : s.exclusive ? 'Invited only' : s.left < 1 ? 'Full' : 'Apply'}
       </Btn>
     </div>
@@ -746,7 +747,7 @@ function SessionPick({ s, day, past, onLogin }) {
       </div>
     );
   }
-  return <div className="lb-ring" style={{ '--c': color, '--p': p }}>{inner}</div>;
+  return <div className="lb-ring" title={full ? 'This lab is full' : undefined} style={{ '--c': color, '--p': p }}>{inner}</div>;
 }
 
 function LabCard({ lab, index, day, past, onLogin }) {
