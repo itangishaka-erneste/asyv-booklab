@@ -210,7 +210,7 @@ const liveOf = (s) => s.people.filter((a) => a.status !== 'rejected');
 // Lunch periods are kept in the settings. Defaults are used until the settings are loaded.
 const periodsOf = (o = {}) => ({
   before: { from: o.beforeFrom || '08:00', to: o.beforeTo || '12:30' },
-  after: { from: o.afterFrom || '13:30', to: o.afterTo || '17:00' },
+  after: { from: o.afterFrom || '13:30', to: o.afterTo || '15:00' },
 });
 
 /* Printing: admin only. Students never see print buttons. */
@@ -1155,6 +1155,7 @@ function Booker({ user, opts, intent, onIntentDone }) {
   const [sid, setSid] = useState('');
   const [note, setNote] = useState(null);
   const [approvalWelcome, setApprovalWelcome] = useState(null);
+  const [confirmIntent, setConfirmIntent] = useState(false);
   const { busy, run } = useBusy();
   const sent = useRef(false);
 
@@ -1196,10 +1197,13 @@ function Booker({ user, opts, intent, onIntentDone }) {
       if (r.skipped?.length) parts.push(`already booked: ${r.skipped.join(', ')}`);
       if (r.tooMany?.length) parts.push(`too many days in a row: ${r.tooMany.join(', ')}`);
       setNote({ ok: r.created > 0, text: parts.join(' · ') + '.' });
+      if (r.created === 0 || r.skipped?.length || r.tooMany?.length) {
+        setApprovalWelcome({ lab: sessions.find((s) => s.id === id)?.lab || intent?.lab || 'Booking', count: r.created, message: parts.join(' · ') + '.', ok: r.created > 0 });
+      }
       setPicked([]);
       await loadApps();
       return true;
-    } catch (e) { setNote({ ok: false, text: e.message }); return false; }
+    } catch (e) { setNote({ ok: false, text: e.message }); setApprovalWelcome({ lab: 'Booking not completed', count: 0, message: e.message, ok: false }); return false; }
   };
   const apply = (id) => {
     if (isStudent && apps.some((a) => a.date === sessions.find((s) => s.id === id)?.date && a.name === user.name && a.status !== 'rejected')) return;
@@ -1207,11 +1211,11 @@ function Booker({ user, opts, intent, onIntentDone }) {
   };
   const bookStudents = () => run('bk', () => sendBooking(+sid, picked));
 
-  // A lab time chosen on the home page is booked once, right after sign-in.
+  // Ask the signed-in student to confirm a lab time chosen on the home page.
   useEffect(() => {
     if (!ready || !intent || sent.current || !isStudent) return;
     sent.current = true;
-    run('a' + intent.sessionId, () => sendBooking(intent.sessionId)).finally(() => onIntentDone?.());
+    setConfirmIntent(true);
   }, [ready]);
 
   const checkIn = (id) => run('ci' + id, async () => {
@@ -1249,15 +1253,17 @@ function Booker({ user, opts, intent, onIntentDone }) {
               <img src={imgOf(approvalWelcome.labId)} alt={`${approvalWelcome.lab} lab`} className="h-10 w-14 rounded-lg object-cover" />
             </div>
             <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-emerald-600 text-2xl font-bold text-white shadow-md" aria-hidden="true">✓</div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Booking approved</p>
-            <h2 id="approval-welcome-title" className="mt-2 text-2xl font-black leading-tight tracking-tight text-slate-900">Congratulations!</h2>
-            <p className="mx-auto mt-3 text-base leading-relaxed text-slate-700">
-              Welcome to <strong className="text-emerald-800">{approvalWelcome.lab}</strong>! {approvalWelcome.count === 1 ? 'Your booking has' : `${approvalWelcome.count} bookings have`} been approved.
-            </p>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">{approvalWelcome.ok === false ? 'Booking update' : 'Booking approved'}</p>
+            <h2 id="approval-welcome-title" className="mt-2 text-2xl font-black leading-tight tracking-tight text-slate-900">{approvalWelcome.ok === false ? 'Could not complete booking' : approvalWelcome.count ? 'Congratulations!' : 'Booking update'}</h2>
+            <p className="mx-auto mt-3 text-base leading-relaxed text-slate-700">{approvalWelcome.message || <>Welcome to <strong className="text-emerald-800">{approvalWelcome.lab}</strong>! {approvalWelcome.count === 1 ? 'Your booking has' : `${approvalWelcome.count} bookings have`} been approved.</>}</p>
             <button type="button" autoFocus onClick={() => setApprovalWelcome(null)} className="mt-5 rounded-xl bg-emerald-700 px-7 py-2.5 text-sm font-bold text-white shadow-md transition hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">Continue</button>
           </div>
         </div>
       )}
+      {confirmIntent && intent && <Modal title="Confirm your lab booking" onClose={() => { setConfirmIntent(false); onIntentDone?.(); }}>
+        <p className="text-sm leading-relaxed">Apply for <b>{intent.lab}</b> on <b>{niceDay(intent.date)}</b>, {intent.from}–{intent.to}? Reason: <b>{reason}</b>.</p>
+        <div className="mt-5 flex gap-2"><Btn onClick={() => { setConfirmIntent(false); run('a' + intent.sessionId, () => sendBooking(intent.sessionId)).finally(() => onIntentDone?.()); }}>Confirm and apply</Btn><Btn c="w" onClick={() => { setConfirmIntent(false); onIntentDone?.(); }}>Cancel</Btn></div>
+      </Modal>}
       {note && <Alert ok={note.ok}>{note.text}</Alert>}
       <div className="grid grid-cols-3 gap-4">
         <Stat v={count('approved')} t="Approved" tone="gr" />
