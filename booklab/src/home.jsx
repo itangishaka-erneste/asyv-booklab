@@ -1153,15 +1153,14 @@ function Booker({ user, opts, intent, onIntentDone }) {
   const [students, setStudents] = useState([]);
   const [picked, setPicked] = useState([]);
   const [sid, setSid] = useState('');
-  const [note, setNote] = useState(null);
-  const [approvalWelcome, setApprovalWelcome] = useState(null);
-  const [confirmIntent, setConfirmIntent] = useState(false);
+  const [resultNotice, setResultNotice] = useState(null);
+  const [bookingConfirmation, setBookingConfirmation] = useState(null);
   const { busy, run } = useBusy();
   const sent = useRef(false);
 
   const loadSessions = () => {
     api('/api/labs').then(setLabsList).catch(() => {});
-    return api('/api/sessions').then(setSessions).catch((e) => setNote({ ok: false, text: e.message }));
+    return api('/api/sessions').then(setSessions).catch((e) => setResultNotice({ lab: 'Lab times', count: 0, message: e.message, ok: false }));
   };
   const loadApps = () => api('/api/apps').then(setApps).catch(() => {});
   useLive({ seats: loadSessions, 'applications:update': loadApps });
@@ -1178,52 +1177,81 @@ function Booker({ user, opts, intent, onIntentDone }) {
     if (!src) { setStudents([]); return; }
     const [k, v] = src.split(':');
     const url = k === 'g' ? `/api/students?group=${v}` : `/api/students?class=${encodeURIComponent(v)}`;
-    api(url).then(setStudents).catch((e) => setNote({ ok: false, text: e.message }));
+    api(url).then(setStudents).catch((e) => setResultNotice({ lab: 'Students', count: 0, message: e.message, ok: false }));
   }, [src]);
 
   // Sends bookings for one lab time. Used by Apply buttons and by teachers' bulk booking.
   const sendBooking = async (id, names = null) => {
-    setNote(null);
+    setResultNotice(null);
     try {
       const body = names ? { sessionId: id, reason, students: names } : { sessionId: id, reason };
       const r = await api('/api/apply', 'POST', body);
-      if (r.approved > 0) {
-        const session = sessions.find((s) => s.id === id);
-        setApprovalWelcome({ lab: session?.lab || intent?.lab || 'the lab', labId: session?.labId, count: r.approved });
-      }
       const parts = [`${r.created} booking${r.created === 1 ? '' : 's'} sent`];
       if (r.approved) parts.push(`${r.approved} approved at once`);
       if (r.queued) parts.push(`${r.queued} in the waiting list`);
       if (r.skipped?.length) parts.push(`already booked: ${r.skipped.join(', ')}`);
       if (r.tooMany?.length) parts.push(`too many days in a row: ${r.tooMany.join(', ')}`);
-      setNote({ ok: r.created > 0, text: parts.join(' · ') + '.' });
-      if (r.created === 0 || r.skipped?.length || r.tooMany?.length) {
-        setApprovalWelcome({ lab: sessions.find((s) => s.id === id)?.lab || intent?.lab || 'Booking', count: r.created, message: parts.join(' · ') + '.', ok: r.created > 0 });
+      if (r.appliedByTeacher?.length) {
+        parts.push(`A teacher has already applied for ${r.appliedByTeacher.join(', ')} for an overlapping lab time`);
       }
+      if (r.created === 0 && !r.skipped?.length && !r.tooMany?.length) parts.push('No bookings were created');
+      const partial = !!(r.skipped?.length || r.tooMany?.length);
+      const session = sessions.find((s) => s.id === id);
+      setResultNotice({
+        lab: session?.lab || intent?.lab || 'Booking',
+        labId: session?.labId,
+        count: r.approved,
+        message: parts.join(' · ') + '.',
+        ok: r.created > 0 && !partial,
+        partial,
+      });
       setPicked([]);
       await loadApps();
       return true;
-    } catch (e) { setNote({ ok: false, text: e.message }); setApprovalWelcome({ lab: 'Booking not completed', count: 0, message: e.message, ok: false }); return false; }
+    } catch (e) {
+      setResultNotice({ lab: 'Booking', count: 0, message: e.message, ok: false });
+      return false;
+    }
   };
   const apply = (id) => {
     if (isStudent && apps.some((a) => a.date === sessions.find((s) => s.id === id)?.date && a.name === user.name && a.status !== 'rejected')) return;
-    return run('a' + id, () => sendBooking(id));
+    const session = sessions.find((s) => s.id === id);
+    if (!session) return;
+    setBookingConfirmation({ sessionId: id, lab: session.lab, date: session.date, from: session.from, to: session.to });
   };
-  const bookStudents = () => run('bk', () => sendBooking(+sid, picked));
+  const bookStudents = () => {
+    const session = sessions.find((s) => s.id === +sid);
+    if (!session || !picked.length) return;
+    setBookingConfirmation({
+      sessionId: session.id,
+      lab: session.lab,
+      date: session.date,
+      from: session.from,
+      to: session.to,
+      students: picked,
+    });
+  };
 
   // Ask the signed-in student to confirm a lab time chosen on the home page.
   useEffect(() => {
     if (!ready || !intent || sent.current || !isStudent) return;
     sent.current = true;
-    setConfirmIntent(true);
+    setBookingConfirmation({
+      sessionId: intent.sessionId,
+      lab: intent.lab,
+      date: intent.date,
+      from: intent.from,
+      to: intent.to,
+      fromIntent: true,
+    });
   }, [ready]);
 
   const checkIn = (id) => run('ci' + id, async () => {
     try {
       const r = await api(`/api/apps/${id}/checkin`, 'POST');
-      setNote({ ok: true, text: r.late ? 'You are checked in. You were marked late.' : 'You are checked in. Thank you!' });
+      setResultNotice({ lab: 'Check-in', count: 1, message: r.late ? 'You are checked in. You were marked late.' : 'You are checked in. Thank you!', ok: true });
       await loadApps();
-    } catch (e) { setNote({ ok: false, text: e.message }); }
+    } catch (e) { setResultNotice({ lab: 'Check-in', count: 0, message: e.message, ok: false }); }
   });
 
   if (!ready) return <Loader full label="Loading" />;
@@ -1245,26 +1273,49 @@ function Booker({ user, opts, intent, onIntentDone }) {
 
   return (
     <div className="space-y-6">
-      {approvalWelcome && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="approval-welcome-title">
-          <div className="w-full max-w-md rounded-2xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-green-100 px-6 py-7 text-center text-slate-900 shadow-2xl">
+      {resultNotice && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="booking-result-title">
+          <div className={`w-full max-w-md rounded-2xl border px-6 py-7 text-center text-slate-900 shadow-2xl ${resultNotice.ok ? 'border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-green-100' : 'border-red-200 bg-gradient-to-br from-white via-red-50 to-rose-100'}`}>
             <div className="mb-4 flex items-center justify-center gap-3">
               <img src={logo} alt="System logo" className="h-10 w-10 rounded-lg object-contain" />
-              <img src={imgOf(approvalWelcome.labId)} alt={`${approvalWelcome.lab} lab`} className="h-10 w-14 rounded-lg object-cover" />
+              {resultNotice.labId && <img src={imgOf(resultNotice.labId)} alt={`${resultNotice.lab} lab`} className="h-10 w-14 rounded-lg object-cover" />}
             </div>
-            <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-emerald-600 text-2xl font-bold text-white shadow-md" aria-hidden="true">✓</div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">{approvalWelcome.ok === false ? 'Booking update' : 'Booking approved'}</p>
-            <h2 id="approval-welcome-title" className="mt-2 text-2xl font-black leading-tight tracking-tight text-slate-900">{approvalWelcome.ok === false ? 'Could not complete booking' : approvalWelcome.count ? 'Congratulations!' : 'Booking update'}</h2>
-            <p className="mx-auto mt-3 text-base leading-relaxed text-slate-700">{approvalWelcome.message || <>Welcome to <strong className="text-emerald-800">{approvalWelcome.lab}</strong>! {approvalWelcome.count === 1 ? 'Your booking has' : `${approvalWelcome.count} bookings have`} been approved.</>}</p>
-            <button type="button" autoFocus onClick={() => setApprovalWelcome(null)} className="mt-5 rounded-xl bg-emerald-700 px-7 py-2.5 text-sm font-bold text-white shadow-md transition hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2">Continue</button>
+            <div className={`mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full text-2xl font-bold text-white shadow-md ${resultNotice.ok ? 'bg-emerald-600' : 'bg-red-600'}`} aria-hidden="true">{resultNotice.ok ? '✓' : '!'}</div>
+            <p className={`text-xs font-bold uppercase tracking-[0.18em] ${resultNotice.ok ? 'text-emerald-700' : 'text-red-700'}`}>{resultNotice.lab}</p>
+            <h2 id="booking-result-title" className="mt-2 text-2xl font-black leading-tight tracking-tight text-slate-900">
+              {!resultNotice.ok ? 'Could not complete booking' : resultNotice.partial ? 'Booking partly completed' : resultNotice.count ? 'Congratulations!' : 'Booking update'}
+            </h2>
+            <p className="mx-auto mt-3 whitespace-pre-line text-base leading-relaxed text-slate-700">{resultNotice.message || <>Welcome to <strong className="text-emerald-800">{resultNotice.lab}</strong>! Your booking has been approved.</>}</p>
+            <button type="button" autoFocus onClick={() => setResultNotice(null)} className={`mt-5 rounded-xl px-7 py-2.5 text-sm font-bold text-white shadow-md transition focus:outline-none focus:ring-2 focus:ring-offset-2 ${resultNotice.ok ? 'bg-emerald-700 hover:bg-emerald-800 focus:ring-emerald-500' : 'bg-red-700 hover:bg-red-800 focus:ring-red-500'}`}>Continue</button>
           </div>
         </div>
       )}
-      {confirmIntent && intent && <Modal title="Confirm your lab booking" onClose={() => { setConfirmIntent(false); onIntentDone?.(); }}>
-        <p className="text-sm leading-relaxed">Apply for <b>{intent.lab}</b> on <b>{niceDay(intent.date)}</b>, {intent.from}–{intent.to}? Reason: <b>{reason}</b>.</p>
-        <div className="mt-5 flex gap-2"><Btn onClick={() => { setConfirmIntent(false); run('a' + intent.sessionId, () => sendBooking(intent.sessionId)).finally(() => onIntentDone?.()); }}>Confirm and apply</Btn><Btn c="w" onClick={() => { setConfirmIntent(false); onIntentDone?.(); }}>Cancel</Btn></div>
+      {bookingConfirmation && <Modal title="Confirm your lab booking" onClose={() => {
+        setBookingConfirmation(null);
+        if (bookingConfirmation.fromIntent) onIntentDone?.();
+      }}>
+        <p className="text-sm leading-relaxed">
+          {bookingConfirmation.students?.length
+            ? `Book ${bookingConfirmation.students.length} student${bookingConfirmation.students.length === 1 ? '' : 's'} in `
+            : 'Apply for '}
+          <b>{bookingConfirmation.lab}</b> on <b>{niceDay(bookingConfirmation.date)}</b>, {bookingConfirmation.from}–{bookingConfirmation.to}?
+          {bookingConfirmation.students?.length > 0 && <span className="mt-2 block text-black/60">{bookingConfirmation.students.join(', ')}</span>}
+          <span className="mt-2 block">Reason: <b>{reason}</b>.</span>
+        </p>
+        <div className="mt-5 flex gap-2">
+          <Btn onClick={() => {
+            const confirmation = bookingConfirmation;
+            setBookingConfirmation(null);
+            run('a' + confirmation.sessionId, () => sendBooking(confirmation.sessionId, confirmation.students))
+              .finally(() => { if (confirmation.fromIntent) onIntentDone?.(); });
+          }}>Confirm and apply</Btn>
+          <Btn c="w" onClick={() => {
+            const fromIntent = bookingConfirmation.fromIntent;
+            setBookingConfirmation(null);
+            if (fromIntent) onIntentDone?.();
+          }}>Cancel</Btn>
+        </div>
       </Modal>}
-      {note && <Alert ok={note.ok}>{note.text}</Alert>}
       <div className="grid grid-cols-3 gap-4">
         <Stat v={count('approved')} t="Approved" tone="gr" />
         <Stat v={count('pending')} t="Waiting or in queue" tone="or" />

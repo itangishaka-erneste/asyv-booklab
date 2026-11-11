@@ -1,3 +1,4 @@
+
 // server.js: Express API + Socket.io live updates. Data lives in PostgreSQL (db.js).
 // Everyone signs in with Google. Admins get live presence, an activity log and a private admin chat.
 //
@@ -211,7 +212,7 @@ const studentProfile = async (grade, combo, section) => {
 
 /* ---------- Booking engine: waiting list, fair-use rule, late students ---------- */
 
-const liveOn = (q, date) => q(`SELECT d.name, d.sid, d."from", d."to", d.status, sp."left" AS lft
+const liveOn = (q, date) => q(`SELECT d.name, d."bookedBy", d.sid, d."from", d."to", d.status, sp."left" AS lft
   FROM application_details d JOIN session_places sp ON sp.id = d.sid
   WHERE d.status <> 'rejected' AND d.date = $1`, [date]);
 const holds = (b, sid) => +b.sid === +sid || b.status === 'approved' || +b.lft > 0;
@@ -1387,7 +1388,7 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
   if (unknown.length) fail(400, `No student account found for: ${unknown.join(', ')}`);
 
   const max = maxOf(await getOptions());
-  let created = 0, approved = 0; const skipped = [], tooMany = [], moved = [];
+  let created = 0, approved = 0; const skipped = [], tooMany = [], appliedByTeacher = [], moved = [];
   await tx(async q => {
     await q('SELECT id FROM sessions WHERE id = $1 FOR UPDATE', [sessionId]);
     const s = (await q('SELECT date, "from", "to", published, "autoApprove" FROM session_places WHERE id = $1', [sessionId]))[0];
@@ -1406,8 +1407,12 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
     const live = await liveOn(q, s.date);
     for (const n of names) {
       const k = nameKey(n);
-      const clash = live.some(b => nameKey(b.name) === k && holds(b, sessionId) && (+b.sid === sessionId || overlaps(b, s)));
-      if (clash) { skipped.push(n); continue; }
+      const clash = live.find(b => nameKey(b.name) === k && holds(b, sessionId) && (+b.sid === sessionId || overlaps(b, s)));
+      if (clash) {
+        skipped.push(n);
+        if (req.user.role === 'student' && nameKey(clash.bookedBy) !== k) appliedByTeacher.push(n);
+        continue;
+      }
       if (await tooManyInRow(q, n, s.date, sessionId, max)) { tooMany.push(n); continue; }
       const status = s.autoApprove && left > 0 ? 'approved' : 'pending';
       const made = await q("INSERT INTO applications(session_id, student, class_name, reason, booked_by, status) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (session_id, student) WHERE status <> 'rejected' DO NOTHING RETURNING id",
@@ -1418,7 +1423,7 @@ app.post('/api/apply', auth('student', 'teacher', 'psychosocial'), wrap(async (r
     }
   });
   pushApps([...names, req.user.name, ...moved]);
-  res.json({ created, approved, queued: created - approved, skipped, tooMany, maxConsecutive: max });
+  res.json({ created, approved, queued: created - approved, skipped, tooMany, appliedByTeacher, maxConsecutive: max });
 }));
 
 app.get('/api/apps', auth(), wrap(async (req, res) => res.json(req.user.role === 'admin'
