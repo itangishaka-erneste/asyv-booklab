@@ -2812,7 +2812,7 @@ function SettingsPage() {
         {rules && (
           <>
             <div className="grid gap-4 md:grid-cols-3">
-              <Field l="Most days in a row one student can book" hint="0 = no limit.">
+              <Field l="Most days in a row one student can book" hint="0 = no limit. A student with a booking today can book tomorrow once today's lab time starts.">
                 <Inp type="number" min="0" max="7" value={rules.maxConsecutive} onChange={(e) => setRules({ ...rules, maxConsecutive: e.target.value })} />
               </Field>
               <Field l="Grace time in minutes" hint="After the start, a student who arrives later than this is marked late.">

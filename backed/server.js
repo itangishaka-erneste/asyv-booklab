@@ -227,9 +227,14 @@ const dropQueueOverlap = async (q, name, sid) => {
 
 const tooManyInRow = async (q, name, date, sid, max) => {
   if (!(max >= 1)) return false;
-  const rows = await q(`SELECT DISTINCT d.date::text AS day FROM application_details d JOIN session_places sp ON sp.id = d.sid
+  const rows = await q(`SELECT DISTINCT d.date::text AS day, d."from" AS starts FROM application_details d JOIN session_places sp ON sp.id = d.sid
     WHERE lower(d.name) = lower($1) AND d.status IN ('approved', 'pending') AND NOT (d.status = 'pending' AND sp."left" < 1)
     AND d.sid <> $2::int AND d.date::text BETWEEN $3::text AND $4::text`, [name, sid, addDay(date, -max), addDay(date, max)]);
+  const now = nowLocal();
+  if (
+    date === addDay(now.date, 1) &&
+    rows.some(r => String(r.day).slice(0, 10) === now.date && mins(r.starts) <= mins(now.time))
+  ) return false;
   const days = new Set(rows.map(r => String(r.day).slice(0, 10)));
   let run = 1;
   for (let i = 1; days.has(addDay(date, -i)); i++) run++;
