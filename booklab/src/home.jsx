@@ -1248,7 +1248,7 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
     if (phase !== 'countdown') return undefined;
     setCountdownValue(0);
     const started = performance.now();
-    const duration = 900;
+    const duration = 5000;
     const timer = window.setInterval(() => {
       const elapsed = performance.now() - started;
       const value = Math.min(COUNTDOWN_MAX, Math.floor((elapsed / duration) * COUNTDOWN_MAX));
