@@ -1112,7 +1112,7 @@ const UclBall = ({ size = 52 }) => (
   </svg>
 );
 
-const COUNTDOWN_SECS = 5;
+const COUNTDOWN_SECS = 6;
 const CHAMPIONS_SECS = 12;
 const LINEUP_SECS = 12;
 const LOST_ITEM_SECS = 8;
@@ -1137,19 +1137,33 @@ function TeamLogo({ team, className = '' }) {
 }
 
 function CountdownOpening({ left }) {
+  const overall = Math.round(((COUNTDOWN_SECS - left) / COUNTDOWN_SECS) * 100);
+  const segment = Math.max(0, overall - 100 / 3);
+  const segmentTwo = Math.max(0, overall - 200 / 3);
+  const loadingSegments = [Math.min(100, overall * 3), Math.min(100, segment * 3), Math.min(100, segmentTwo * 3)];
+
   return (
-    <div className="fixed inset-0 z-[200] grid place-items-center overflow-hidden bg-[#090604] text-white">
-      <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-        <div className="absolute left-1/2 top-1/2 h-[70vw] w-[70vw] -translate-x-1/2 -translate-y-1/2 rounded-full border-[18px] border-[#ff4500]/20" />
-        <div className="absolute left-1/2 top-1/2 h-[52vw] w-[52vw] -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-[#f5c542]/30" />
-        {STARS.map((star, i) => <span key={i} className="ucl-twinkle absolute rounded-full bg-[#f5c542]" style={{ left: star.left, top: star.top, width: star.s * 2, height: star.s * 2, animationDelay: star.d }} />)}
-      </div>
-      <div className="relative text-center">
-        <p className="mb-6 text-sm font-black uppercase tracking-[.5em] text-[#ffb020] sm:text-lg">Welcome to Asyv</p>
-        <div key={left} className="countdown-pop mx-auto grid h-52 w-52 place-items-center rounded-full border-[10px] border-[#f5c542] bg-gradient-to-br from-[#ff4500] to-[#7a1200] text-[9rem] font-black leading-none text-white shadow-[0_0_100px_rgba(255,69,0,.7)] sm:h-72 sm:w-72 sm:text-[12rem]">
-          {left}
+    <div className="fixed inset-0 z-[200] grid place-items-center overflow-hidden bg-white text-[#111827]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_44%,#fff8cc_0%,#ffffff_38%,#eef7f0_100%)]" aria-hidden="true" />
+      <div className="relative w-[min(92vw,760px)] text-center">
+        <img src={logo} alt="ASYV" className="mx-auto h-20 w-20 rounded-2xl border-4 border-[#f5c542] bg-white object-contain p-2 shadow-xl sm:h-24 sm:w-24" />
+        <p className="mt-5 text-sm font-black uppercase tracking-[.42em] text-[#15803d] sm:text-lg">Preparing the presentation</p>
+        <div key={overall} className="countdown-pop mx-auto mt-6 grid h-52 w-52 place-items-center rounded-full border-[12px] border-[#15803d] bg-[#f5c542] text-7xl font-black text-[#111827] shadow-[0_18px_80px_rgba(21,128,61,.22)] sm:h-64 sm:w-64 sm:text-8xl">
+          {overall}%
         </div>
-        <p className="mt-8 text-sm font-bold uppercase tracking-[.3em] text-white/85">Lost &amp; Found presentation</p>
+
+        <div className="mx-auto mt-8 grid max-w-xl grid-cols-3 gap-3" aria-label="Loading presentation">
+          {['Lost & Found', 'Match', 'Lineup'].map((label, i) => (
+            <div key={label} className="rounded-xl border border-black/10 bg-white p-3 shadow-sm">
+              <div className="mb-2 flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-[#15803d]">
+                <span>{label}</span><span>{Math.round(loadingSegments[i])}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-black/10">
+                <div className="h-full rounded-full bg-gradient-to-r from-[#16a34a] via-[#f5c542] to-[#ff4500] transition-[width] duration-300" style={{ width: `${loadingSegments[i]}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1158,7 +1172,7 @@ function CountdownOpening({ left }) {
 function ChampionsMatchPresentation() {
   const match = CHAMPIONS_MATCH;
   return (
-    <div className="relative grid h-[calc(100dvh-7.5rem)] min-h-[520px] place-items-center overflow-hidden px-4 py-3">
+    <div className="relative grid h-[100dvh] min-h-[520px] place-items-center overflow-hidden bg-[#07112e] px-4 py-3">
       <div className="pointer-events-none absolute inset-0" aria-hidden="true">
         <div className="absolute -left-24 top-1/2 h-96 w-96 -translate-y-1/2 rounded-full bg-[#ff4500]/25 blur-[100px]" />
         <div className="absolute -right-24 top-1/2 h-96 w-96 -translate-y-1/2 rounded-full bg-[#f5c542]/20 blur-[100px]" />
@@ -1202,7 +1216,7 @@ function ChampionsLineupPresentation() {
   }, []);
 
   return (
-    <div className="relative h-[calc(100dvh-7.5rem)] min-h-[520px] overflow-hidden px-3 py-2 sm:px-6">
+    <div className="relative h-[100dvh] min-h-[520px] overflow-hidden bg-[#176a37] px-3 py-2 sm:px-6">
       <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-2 py-2 sm:px-4">
         <div>
           <p className="text-xs font-black uppercase tracking-[.22em] text-[#f5c542]">Starting eleven</p>
@@ -1211,7 +1225,7 @@ function ChampionsLineupPresentation() {
         <span className="rounded-full border border-white/20 bg-black/30 px-3 py-2 text-xs font-bold text-white">Group stage · Sunday</span>
       </div>
 
-      <div className="lineup-field absolute bottom-3 left-1/2 top-14 w-[min(92vw,820px)] -translate-x-1/2 overflow-hidden rounded-[44px] border-4 border-white/35">
+      <div className="lineup-field absolute bottom-0 left-1/2 top-16 w-[min(98vw,1500px)] -translate-x-1/2 overflow-hidden rounded-t-[44px] border-x-4 border-t-4 border-white/60">
         <div className="absolute left-1/2 top-0 h-full w-px bg-white/30" />
         <div className="absolute left-1/2 top-1/2 h-32 w-32 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/35" />
         <div className="absolute left-1/2 top-0 h-28 w-56 -translate-x-1/2 border-x-2 border-b-2 border-white/35" />
@@ -1289,46 +1303,36 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
   const currentItem = postedItems[lostIndex];
 
   return (
-    <div className={`fixed inset-0 z-[200] overflow-hidden ${isChampions ? 'bg-[#050914] text-white' : 'bg-[#090604] text-white'} ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-label="Site announcements">
-      {isChampions && (
-        <iframe
-          title="Champions League advert music"
-          className="pointer-events-none absolute left-[-9999px] h-px w-px"
-          src="https://www.youtube.com/embed/Ac2WgG6esU8?autoplay=1&mute=0&controls=0&playsinline=1&loop=1&playlist=Ac2WgG6esU8"
-          allow="autoplay; encrypted-media"
-          referrerPolicy="strict-origin-when-cross-origin"
-        />
-      )}
-
-      <header className="relative z-30 flex h-[72px] items-center justify-between gap-3 px-4 sm:px-8">
-        <Logo />
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={() => onStopRepeat?.()} className="rounded-full border border-white/20 bg-black/40 px-3 py-2 text-[11px] font-bold text-white hover:bg-white/10">Stop repeat</button>
-          <button type="button" onClick={() => setPhase('exit')} className="rounded-full border border-white/20 bg-black/40 px-3 py-2 text-[11px] font-bold text-white hover:bg-white/10">Skip intro</button>
-        </div>
-      </header>
+    <div className={`fixed inset-0 z-[200] overflow-hidden ${isChampions ? 'bg-[#07112e] text-white' : 'bg-black text-white'} ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-label="Site announcements">
+      <iframe
+        title="Champions League advert music"
+        className="pointer-events-none absolute left-[-9999px] h-px w-px"
+        src="https://www.youtube.com/embed/Ac2WgG6esU8?autoplay=1&mute=0&controls=0&playsinline=1&loop=1&playlist=Ac2WgG6esU8"
+        allow="autoplay; encrypted-media"
+        referrerPolicy="strict-origin-when-cross-origin"
+      />
 
       {isChampions ? (
         championsStep === 'match' ? <ChampionsMatchPresentation /> : <ChampionsLineupPresentation />
       ) : (
-        <div key={lostIndex} className="lost-fullscreen relative h-[calc(100dvh-72px)] overflow-hidden">
+        <div key={lostIndex} className="lost-fullscreen relative h-[100dvh] overflow-hidden bg-black">
           {currentItem ? (
             <>
               {currentItem.media?.map(itemPhoto).find(Boolean) ? (
                 <Photo
                   src={currentItem.media.map(itemPhoto).find(Boolean)}
                   alt={currentItem.title}
-                  className="absolute inset-0 h-full w-full object-contain"
+                  className="absolute inset-0 h-full w-full object-cover"
                   fallback={<div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_center,#f5c542_0%,#ff4500_25%,#090604_72%)]"><PackageSearch className="h-48 w-48 text-white" aria-hidden="true" /></div>}
                 />
               ) : (
                 <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_center,#f5c542_0%,#ff4500_25%,#090604_72%)]"><PackageSearch className="h-48 w-48 text-white" aria-hidden="true" /></div>
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/25" />
-              <div className="absolute bottom-0 left-0 right-0 p-5 sm:p-10">
-                <p className="mb-2 text-sm font-black uppercase tracking-[.28em] text-[#f5c542] sm:text-lg">{currentItem.category}</p>
-                <h1 className="text-4xl font-black uppercase leading-none text-white drop-shadow-2xl sm:text-7xl lg:text-8xl">{currentItem.title}</h1>
-                <p className="mt-4 text-lg font-bold text-white/90 sm:text-2xl">{currentItem.foundAt ? `Found at ${currentItem.foundAt}` : `Posted ${ago(currentItem.postedAt)}`}</p>
+              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/20" />
+              <div className="absolute bottom-6 left-1/2 w-[calc(100%-2rem)] max-w-5xl -translate-x-1/2 rounded-2xl border-2 border-white/30 bg-white/95 p-5 text-[#111827] shadow-2xl sm:bottom-10 sm:p-8">
+                <p className="mb-2 text-sm font-black uppercase tracking-[.28em] text-[#15803d] sm:text-lg">{currentItem.category}</p>
+                <h1 className="text-4xl font-black uppercase leading-[.95] sm:text-7xl lg:text-8xl">{currentItem.title}</h1>
+                <p className="mt-3 text-lg font-bold text-[#111827]/80 sm:text-2xl">{currentItem.foundAt ? `Found at ${currentItem.foundAt}` : `Posted ${ago(currentItem.postedAt)}`}</p>
               </div>
               <div className="absolute right-5 top-5 grid h-16 w-16 place-items-center rounded-full border-4 border-[#f5c542] bg-[#090604]/80 text-2xl font-black text-[#f5c542] sm:h-20 sm:w-20 sm:text-3xl">{lostLeft}</div>
             </>
