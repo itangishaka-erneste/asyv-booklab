@@ -542,6 +542,39 @@ app.get('/api/me/memberships', auth('student', 'teacher', 'psychosocial'), wrap(
 app.get('/api/users', auth('admin'), wrap(async (_, res) =>
   res.json(await query(`SELECT id, username AS name, email, role, profile->>'picture' AS picture, profile->>'phone' AS phone, md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'grade' AS grade, profile->>'combo' AS combo, profile->>'section' AS section, (profile->>'comm' = 'true') AS comm FROM users ORDER BY role, username`))));
 
+app.get('/api/people/lookup', auth('admin'), wrap(async (req, res) => {
+  const id = req.query.id === undefined ? null : Number(req.query.id);
+  let people;
+  if (id !== null) {
+    if (!Number.isInteger(id) || id < 1) fail(400, 'Choose a valid account.');
+    people = await query(`SELECT id, username AS name, email, role, profile->>'picture' AS picture, profile->>'phone' AS phone,
+      md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'grade' AS grade,
+      profile->>'combo' AS combo, profile->>'section' AS section, (profile->>'comm' = 'true') AS comm
+      FROM users WHERE id = $1`, [id]);
+  } else {
+    const term = String(req.query.q || '').trim();
+    if (term.length < 2 || term.length > 80) fail(400, 'Search with 2 to 80 characters.');
+    people = await query(`SELECT id, username AS name, email, role, profile->>'picture' AS picture, profile->>'phone' AS phone,
+      md5(lower(email)) AS gid, ${CLASS_SQL} AS "className", profile->>'grade' AS grade,
+      profile->>'combo' AS combo, profile->>'section' AS section, (profile->>'comm' = 'true') AS comm
+      FROM users
+      WHERE position(lower($1) in lower(username)) > 0
+        OR position(lower($1) in lower(email)) > 0
+        OR position(lower($1) in lower(COALESCE(profile->>'phone', ''))) > 0
+        OR position(lower($1) in lower(${CLASS_SQL})) > 0
+      ORDER BY username LIMIT 20`, [term]);
+  }
+  const bookings = id !== null && people.length
+    ? (await listApps('lower(name) = lower($1)', [people[0].name]))
+      .sort((a, b) => `${b.date} ${b.from}`.localeCompare(`${a.date} ${a.from}`))
+      .slice(0, 10)
+      .map(({ id: bookingId, lab, date, from, to, status, att, late, checkedInAt }) => ({
+        id: bookingId, lab, date, from, to, status, att, late, checkedInAt,
+      }))
+    : [];
+  res.json(id === null ? { people } : { person: people[0] || null, bookings });
+}));
+
 const nameTaken = async (name, exceptId = 0) =>
   (await query('SELECT id, username FROM users')).some(r => r.id !== exceptId && nameKey(r.username) === nameKey(name));
 const uniqueFail = e => { if (e.code === '23505') fail(409, 'This email or name already has an account.'); throw e; };

@@ -2068,6 +2068,147 @@ function Booker({ user, opts, intent, onIntentDone }) {
 
 const ACT_FILTERS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['date', 'Pick a day']];
 
+function OverviewPeopleSearch() {
+  const [query, setQuery] = useState('');
+  const [people, setPeople] = useState([]);
+  const [resultsFor, setResultsFor] = useState('');
+  const [person, setPerson] = useState(null);
+  const [bookings, setBookings] = useState([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [detailError, setDetailError] = useState('');
+  const term = query.trim();
+
+  useEffect(() => {
+    let cancelled = false;
+    if (term.length < 2) return undefined;
+    const timer = window.setTimeout(() => {
+      api(`/api/people/lookup?q=${encodeURIComponent(term)}`)
+        .then((result) => {
+          if (!cancelled) {
+            setPeople(result.people);
+            setResultsFor(term);
+            setError('');
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            setPeople([]);
+            setResultsFor(term);
+            setError(e.message);
+          }
+        });
+    }, 250);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [term]);
+  const searching = term.length >= 2 && resultsFor !== term;
+  const changeQuery = (value) => {
+    setQuery(value);
+    setPerson(null);
+    setBookings([]);
+    setError('');
+    setDetailError('');
+  };
+
+  const openPerson = async (id) => {
+    setDetailLoading(true);
+    setDetailError('');
+    try {
+      const result = await api(`/api/people/lookup?id=${id}`);
+      setPerson(result.person);
+      setBookings(result.bookings);
+    } catch (e) {
+      setDetailError(e.message);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+  const now = new Date();
+  const time = now.toTimeString().slice(0, 5);
+  const currentBooking = bookings.find((booking) => booking.date === today()
+    && booking.status === 'approved' && booking.from <= time && booking.to > time);
+  const recentBooking = bookings.find((booking) => booking.status === 'approved'
+    && (booking.date < today() || (booking.date === today() && booking.to <= time)));
+  const upcomingBooking = bookings.find((booking) => booking.status === 'approved'
+    && (booking.date > today() || (booking.date === today() && booking.from > time)));
+  const locationBooking = currentBooking || recentBooking || upcomingBooking;
+
+  return (
+    <Card t="Find a person" sub="Search an account to see their profile and current or recent scheduled lab bookings.">
+      <SearchBox value={query} onChange={changeQuery} placeholder="Search by name, email, phone or class" />
+      <p className="mt-2 text-[11px] text-black/50">Admin-only. Lab bookings show scheduled locations, not live physical location.</p>
+      {term.length > 0 && term.length < 2 && <p className="mt-3 text-xs text-black/50">Enter at least 2 characters to search.</p>}
+      {searching && <Loader label="Searching accounts" />}
+      {error && <div className="mt-3"><Alert>{error}</Alert></div>}
+      {term.length >= 2 && !searching && !error && !person && resultsFor === term && people.length === 0 && <Empty>No accounts match this search.</Empty>}
+      {!person && resultsFor === term && people.length > 0 && (
+        <div className="mt-3 divide-y divide-black/10 rounded-[6px] border border-black/10">
+          {people.map((p) => (
+            <button key={p.id} type="button" onClick={() => openPerson(p.id)}
+              className="flex w-full items-center gap-3 p-3 text-left hover:bg-black/[0.03]">
+              <Avatar name={p.name} picture={p.picture} gid={p.gid} className="h-10 w-10 text-xs" />
+              <span className="min-w-0 flex-1">
+                <b className="block truncate text-xs">{p.name}</b>
+                <span className="block truncate text-[11px] text-black/55">{p.email} · {p.className || ROLE_LABEL[p.role]}</span>
+              </span>
+              <span className="text-xs text-[#15803d]">View details</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {detailLoading && <Loader label="Loading account details" />}
+      {detailError && <div className="mt-3"><Alert>{detailError}</Alert></div>}
+      {person && (
+        <div className="mt-4 space-y-4 rounded-[6px] border border-black/10 p-4">
+          <div className="flex flex-wrap items-start gap-3">
+            <Avatar name={person.name} picture={person.picture} gid={person.gid} className="h-14 w-14 text-sm" />
+            <div className="min-w-0 flex-1">
+              <h4 className="text-sm font-bold">{person.name}</h4>
+              <p className="mt-1 break-all text-xs text-black/60">{person.email}</p>
+              <p className="mt-1 text-xs text-black/60">{ROLE_LABEL[person.role]}{person.className ? ` · ${person.className}` : ''}</p>
+            </div>
+            <button type="button" onClick={() => { setPerson(null); setBookings([]); }} className="rounded-[6px] border border-black/15 px-3 py-1.5 text-xs hover:bg-black/5">Back to results</button>
+          </div>
+          <dl className="grid gap-3 border-t border-black/10 pt-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+            <div><dt className="text-black/50">Phone</dt><dd className="mt-1 font-medium">{person.phone || 'Not provided'}</dd></div>
+            <div><dt className="text-black/50">Grade</dt><dd className="mt-1 font-medium">{person.grade || '—'}</dd></div>
+            <div><dt className="text-black/50">Combination</dt><dd className="mt-1 font-medium">{person.combo || '—'}</dd></div>
+            <div><dt className="text-black/50">Section</dt><dd className="mt-1 font-medium">{person.section || '—'}</dd></div>
+          </dl>
+          <div className="border-t border-black/10 pt-3">
+            <h4 className="text-xs font-semibold">{currentBooking ? 'Scheduled location now' : recentBooking ? 'Most recent scheduled location' : 'Next scheduled location'}</h4>
+            {locationBooking ? (
+              <p className="mt-1 text-xs">
+                <b>{locationBooking.lab}</b> · {niceDay(locationBooking.date)} · {locationBooking.from}–{locationBooking.to}
+                <span className="block mt-1 text-black/55">
+                  {currentBooking ? 'Approved booking in progress' : recentBooking ? 'Most recent approved booking' : 'Next approved booking'}
+                  {locationBooking.att === 'present' ? ` · Checked in${locationBooking.checkedInAt ? ` at ${locationBooking.checkedInAt}` : ''}` : ' · No check-in recorded'}
+                </span>
+              </p>
+            ) : <p className="mt-1 text-xs text-black/55">No approved lab booking is recorded.</p>}
+          </div>
+          <div className="border-t border-black/10 pt-3">
+            <h4 className="mb-2 text-xs font-semibold">Recent lab bookings</h4>
+            {bookings.length === 0 ? <p className="text-xs text-black/55">No booking history found.</p> : (
+              <div className="divide-y divide-black/10">
+                {bookings.map((booking) => (
+                  <div key={booking.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
+                    <span><b>{booking.lab}</b><span className="ml-2 text-black/55">{niceDay(booking.date)} · {booking.from}–{booking.to}</span></span>
+                    <span className="flex gap-1.5">
+                      <Badge s={booking.status}>{STATUS_LABEL[booking.status] || booking.status}</Badge>
+                      {booking.att && <Badge s={booking.late ? 'late' : booking.att}>{attLabel(booking)}</Badge>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // Live presence: which admin is on which page, and recent activity (filtered by day and by admin).
 function OverviewPage({ me }) {
   const [stats, setStats] = useState(null);
@@ -2120,6 +2261,7 @@ function OverviewPage({ me }) {
   return (
     <div className="space-y-6">
       <CallPanel />
+      <OverviewPeopleSearch />
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <Stat v={t.approved ?? 0} t="Approved bookings" tone="gr" />
         <Stat v={t.pending ?? 0} t="Waiting or in queue" tone="or" />
