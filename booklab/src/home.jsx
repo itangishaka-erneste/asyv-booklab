@@ -741,6 +741,7 @@ const LANDING_CSS = `
 .ucl-glass:hover{background:rgba(255,255,255,.22)}
 .ucl-white{background:#fff;color:#0b1b3a}
 .ucl-gold{background:#f5c542;color:#0b1b3a}
+.ucl-static,.ucl-static *{animation:none!important;transition:none!important}
 .nav-link{position:relative}
 .nav-link::after{content:'';position:absolute;left:12px;right:12px;bottom:4px;height:2px;border-radius:2px;background:currentColor;transform:scaleX(0);transform-origin:left;transition:transform .3s ease}
 .nav-link:hover::after{transform:scaleX(1)}
@@ -1075,6 +1076,7 @@ function TrendsBoard() {
 
 const DEFAULT_CHAMPIONS = {
   published: false,
+  active: false,
   match: {
     league: 'Asyv Champions League',
     stage: 'Group stage',
@@ -1355,19 +1357,22 @@ function ChampionsAnimation({ match, lineup, onClose }) {
 }
 
 function ChampionsAd({ champions }) {
-  const { match: m, lineup } = champions;
+  const { match: m, lineup, active = false } = champions;
   const [run, setRun] = useState(0);
   const [details, setDetails] = useState(false);
   const [playing, setPlaying] = useState(false);
   const closeAnimation = useCallback(() => setPlaying(false), []);
-  // The teams walk in again every 16 seconds so the advert always feels alive.
-  useEffect(() => { const t = setInterval(() => setRun((n) => n + 1), 16000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    if (!active) return undefined;
+    const t = setInterval(() => setRun((n) => n + 1), 16000);
+    return () => clearInterval(t);
+  }, [active]);
   const played = m.score[0] != null && m.score[1] != null;
   const ticker = `${m.league.toUpperCase()}  ★  ${m.category.toUpperCase()}  ·  ${m.stage.toUpperCase()}  ★  ${m.time.toUpperCase()}  ★  ${m.home.name.toUpperCase()} VS ${m.away.name.toUpperCase()}  ★  `;
 
   return (
     <>
-      <div id="champions" className="ucl-card lb-glow relative scroll-mt-24 overflow-hidden rounded-2xl shadow-xl" aria-label={`${m.league}: ${m.home.name} against ${m.away.name}`}>
+      <div id="champions" className={`ucl-card relative scroll-mt-24 overflow-hidden rounded-2xl shadow-xl ${active ? 'lb-glow' : 'ucl-static'}`} aria-label={`${m.league}: ${m.home.name} against ${m.away.name}`}>
         {/* Stadium atmosphere */}
         <div className="pointer-events-none absolute inset-0" aria-hidden="true">
           {STARS.map((s, i) => <span key={i} className="ucl-twinkle absolute rounded-full" style={{ background: '#fff', left: s.left, top: s.top, width: s.s, height: s.s, animationDelay: s.d }} />)}
@@ -1431,8 +1436,8 @@ function ChampionsAd({ champions }) {
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t pt-3 text-xs" style={{ borderColor: 'rgba(255,255,255,.15)' }}>
             <span style={{ color: 'rgba(255,255,255,.75)' }}>{m.time}</span>
             <span className="flex items-center gap-2">
-              <button type="button" onClick={() => setRun((n) => n + 1)} className="ucl-glass rounded-full px-3 py-1.5 font-semibold">Replay</button>
-              <button type="button" onClick={() => setPlaying(true)} className="ucl-glass rounded-full px-3 py-1.5 font-semibold">Watch animation</button>
+              {active && <button type="button" onClick={() => setRun((n) => n + 1)} className="ucl-glass rounded-full px-3 py-1.5 font-semibold">Replay</button>}
+              {active && <button type="button" onClick={() => setPlaying(true)} className="ucl-glass rounded-full px-3 py-1.5 font-semibold">Watch animation</button>}
               <button type="button" onClick={() => setDetails(true)} className="ucl-gold inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-bold hover:brightness-110">
                 Match details<span aria-hidden="true">↗</span>
               </button>
@@ -1459,7 +1464,7 @@ function ChampionsAd({ champions }) {
           <div className="mt-5"><Btn onClick={() => setDetails(false)}>Close</Btn></div>
         </Modal>
       )}
-      {playing && <ChampionsAnimation match={m} lineup={lineup} onClose={closeAnimation} />}
+      {active && playing && <ChampionsAnimation match={m} lineup={lineup} onClose={closeAnimation} />}
     </>
   );
 }
@@ -1481,16 +1486,22 @@ function ChampionsManager({ champions, onSaved }) {
     setConfig(saved);
     onSaved(saved);
     return saved;
-  }, config.published ? 'Animation published to the front page.' : 'Animation saved as a draft.');
+  }, config.published ? (config.active ? 'Animation started and published to the front page.' : 'Match card published with animation stopped.') : 'Animation saved as a draft.');
 
   return (
     <div className="space-y-6">
       {note && <Alert ok={note.ok}>{note.text}</Alert>}
       <Card t="Champions League animation" sub="Edit the match and lineup, preview the animation, then publish it to the front page when it is ready.">
-        <label className="mb-5 flex items-center gap-3 rounded-[8px] border border-black/10 p-4 text-xs font-semibold">
-          <input type="checkbox" checked={config.published} onChange={(e) => setConfig((cur) => ({ ...cur, published: e.target.checked }))} className="h-4 w-4 accent-[#16a34a]" />
-          Show this animation on the front page
-        </label>
+        <div className="mb-5 grid gap-3 sm:grid-cols-2">
+          <label className="flex items-center gap-3 rounded-[8px] border border-black/10 p-4 text-xs font-semibold">
+            <input type="checkbox" checked={config.published} onChange={(e) => setConfig((cur) => ({ ...cur, published: e.target.checked }))} className="h-4 w-4 accent-[#16a34a]" />
+            Show match card on the front page
+          </label>
+          <label className="flex items-center gap-3 rounded-[8px] border border-black/10 p-4 text-xs font-semibold">
+            <input type="checkbox" checked={config.active} onChange={(e) => setConfig((cur) => ({ ...cur, active: e.target.checked }))} disabled={!config.published} className="h-4 w-4 accent-[#16a34a] disabled:opacity-40" />
+            Run animation on the front page
+          </label>
+        </div>
         <div className="grid gap-4 md:grid-cols-3">
           <Field l="Competition"><Inp value={config.match.league} maxLength={80} onChange={(e) => setMatch('league', e.target.value)} /></Field>
           <Field l="Stage"><Inp value={config.match.stage} maxLength={50} onChange={(e) => setMatch('stage', e.target.value)} /></Field>
@@ -1523,7 +1534,7 @@ function ChampionsManager({ champions, onSaved }) {
         </div>
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <ActBtn busy={busy === 'champions'} doing="Saving…" label="Save animation" onClick={save} />
-          <span className="text-xs text-black/50">{config.published ? 'Published' : 'Draft — not visible to the public'}</span>
+          <span className="text-xs text-black/50">{config.published ? (config.active ? 'Animation running on the front page' : 'Published as a static match card — animation stopped') : 'Draft — not visible to the public'}</span>
         </div>
       </Card>
 

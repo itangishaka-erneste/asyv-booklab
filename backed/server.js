@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS = {
 };
 const DEFAULT_CHAMPIONS = {
   published: false,
+  active: false,
   match: {
     league: 'Asyv Champions League', stage: 'Group stage', category: 'Boys', status: 'Upcoming',
     time: 'Time to be announced', venue: 'To be announced', score: [null, null],
@@ -235,6 +236,7 @@ const cleanChampions = value => {
     };
   };
   if (!record(value) || typeof value.published !== 'boolean' || !record(value.match) || !Array.isArray(value.lineup)) invalid();
+  if (value.active !== undefined && typeof value.active !== 'boolean') invalid();
   const m = value.match;
   if (!Array.isArray(m.score) || m.score.length !== 2) invalid();
   const score = m.score.map(n => {
@@ -255,6 +257,7 @@ const cleanChampions = value => {
   });
   return {
     published: value.published,
+    active: value.active === true,
     match: {
       league: text(m.league, 80, true), stage: text(m.stage, 50, true), category: text(m.category, 40, true),
       status: text(m.status, 40, true), time: text(m.time, 80), venue: text(m.venue, 100),
@@ -684,7 +687,7 @@ app.get('/api/options', wrap(async (_, res) => {
 app.put('/api/champions', comm, wrap(async (req, res) => {
   const champions = cleanChampions(req.body);
   await saveOption(query, 'champions', champions);
-  await logAct(req.user, champions.published ? 'Published Champions League animation' : 'Saved Champions League animation', champions.match.league);
+  await logAct(req.user, !champions.published ? 'Saved Champions League animation' : champions.active ? 'Started and published Champions League animation' : 'Published static Champions League card and stopped animation', champions.match.league);
   io.emit('champions:update');
   res.json(champions);
 }));
