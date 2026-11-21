@@ -4198,9 +4198,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, on
 
 export default function Home() {
   const [view, setView] = useState('home');
-  const [showStartupAnnouncements, setShowStartupAnnouncements] = useState(true);
-  const [startupCycle, setStartupCycle] = useState(0);
-  const [repeatAnnouncements, setRepeatAnnouncements] = useState(true);
+  const [showStartupAnnouncements, setShowStartupAnnouncements] = useState(false);
   const [user, setUser] = useState(null);
   const [opts, setOpts] = useState(EMPTY_OPTS);
   const [booting, setBooting] = useState(!!getToken());
@@ -4212,15 +4210,6 @@ export default function Home() {
     document.body.style.background = dark ? '#000000' : '';
   }, [dark]);
 
-  useEffect(() => {
-    if (view !== 'home' || getToken() || !repeatAnnouncements) return undefined;
-    const stored = Number(sessionStorage.getItem('asyv_announcer_cycle') || '0');
-    if (stored >= 15) {
-      setRepeatAnnouncements(false);
-      setShowStartupAnnouncements(false);
-      sessionStorage.removeItem('asyv_announcer_cycle');
-    }
-  }, [view, repeatAnnouncements]);
   const toggleDark = () => setDark((v) => !v);
 
   const loadOpts = () => api('/api/options').then((o) => setOpts({ ...EMPTY_OPTS, ...o })).catch(() => {});
@@ -4245,7 +4234,7 @@ export default function Home() {
     setShowStartupAnnouncements(false);
     setView('app');
   };
-  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); sessionStorage.removeItem('asyv_announcer_cycle'); setStartupCycle((cycle) => cycle + 1); setRepeatAnnouncements(true); setShowStartupAnnouncements(true); setView('home'); };
+  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); setShowStartupAnnouncements(false); setView('home'); };
   const goLogin = (i) => { setIntent(i && i.sessionId ? i : null); setView('login'); };
 
   let page;
@@ -4261,20 +4250,8 @@ export default function Home() {
       <Landing onLogin={goLogin} dark={dark} onToggleDark={toggleDark} champions={opts.champions} />
       {view === 'home' && showStartupAnnouncements && (
         <StartupAnnouncements
-          key={startupCycle}
-          onClose={() => {
-            setShowStartupAnnouncements(false);
-            if (!repeatAnnouncements) return;
-            const completed = Number(sessionStorage.getItem('asyv_announcer_cycle') || '0') + 1;
-            if (completed <= 15) {
-              sessionStorage.setItem('asyv_announcer_cycle', String(completed));
-              window.setTimeout(() => window.location.reload(), 250);
-            } else {
-              sessionStorage.removeItem('asyv_announcer_cycle');
-              setRepeatAnnouncements(false);
-            }
-          }}
-          onStopRepeat={() => { sessionStorage.removeItem('asyv_announcer_cycle'); setRepeatAnnouncements(false); setShowStartupAnnouncements(false); }}
+          onClose={() => setShowStartupAnnouncements(false)}
+          onStopRepeat={() => setShowStartupAnnouncements(false)}
         />
       )}
     </>
