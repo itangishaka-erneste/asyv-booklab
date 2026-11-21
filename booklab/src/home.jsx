@@ -1111,7 +1111,7 @@ function BookOpening() {
   );
 }
 
-function StartupAnnouncements({ onClose }) {
+function StartupAnnouncements({ onClose, onStopRepeat }) {
   const [phase, setPhase] = useState('book');
   const [idx, setIdx] = useState(0);
   const [left, setLeft] = useState(INTRO[0].secs);
@@ -1179,6 +1179,9 @@ function StartupAnnouncements({ onClose }) {
           <Logo />
           <div className="flex items-center gap-3">
             <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold tabular-nums ${isChampions ? 'bg-black/40 text-white' : 'border border-black/10 bg-[#f7f8f7] text-[#111827]'}`}>Moving on in {remaining}s</span>
+            <button type="button" onClick={() => onStopRepeat?.()} className={`hidden rounded-full px-3 py-2 text-[11px] font-semibold transition sm:inline-flex ${isChampions ? 'border border-white/20 bg-black/30 text-white/90 hover:bg-white/10' : 'border border-black/15 bg-white text-[#111827] hover:bg-black/5'}`}>
+              Stop repeat
+            </button>
             <button type="button" onClick={() => setPhase('exit')} className={`rounded-full px-3 py-2 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${isChampions ? 'border border-white/20 bg-black/30 text-white/90 hover:bg-white/10 focus-visible:outline-white' : 'border border-black/15 bg-white text-[#111827] hover:bg-black/5 focus-visible:outline-[#16a34a]'}`}>
               Skip intro
             </button>
@@ -1205,17 +1208,31 @@ function StartupAnnouncements({ onClose }) {
             ) : postedItems.length === 0 ? (
               <div className="rounded-xl border border-black/10 bg-[#f7f8f7] p-6 text-center text-sm text-black/60">There are no active found-item posts right now.</div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {postedItems.slice(0, 3).map((item) => {
+              <div className={`grid gap-4 ${postedItems.length > 1 ? 'lg:grid-cols-[1.55fr_1fr]' : ''}`}>
+                {postedItems.slice(0, 3).map((item, index) => {
                   const photo = item.media?.map(itemPhoto).find(Boolean);
+                  if (index === 0) {
+                    return (
+                      <article key={item.id} className="group relative min-h-[46vh] overflow-hidden rounded-2xl border border-black/10 bg-[#eef7f0] shadow-lg lg:row-span-2 lg:h-full">
+                        <Photo src={photo} alt={item.title} className="absolute inset-0 h-full w-full object-cover" fallback={<div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-[#e8f5ec] via-white to-[#fff0e9]"><div className="flex flex-col items-center gap-3 text-[#15803d]"><PackageSearch className="h-24 w-24" aria-hidden="true" /><span className="text-sm font-bold">{item.category}</span></div></div>} />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
+                        <div className="absolute inset-x-0 bottom-0 p-5 text-white sm:p-7">
+                          <p className="text-xs font-black uppercase tracking-[.18em] text-[#9bf6c5]">{item.category}</p>
+                          <h3 className="mt-2 text-2xl font-black sm:text-4xl">{item.title}</h3>
+                          <p className="mt-2 text-sm text-white/80">{item.foundAt ? `Found at ${item.foundAt}` : `Posted ${ago(item.postedAt)}`}</p>
+                          {item.description && <p className="mt-3 max-w-xl text-sm leading-relaxed text-white/75">{item.description}</p>}
+                        </div>
+                      </article>
+                    );
+                  }
                   return (
-                    <article key={item.id} className="overflow-hidden rounded-xl border border-black/10 bg-[#f7f8f7] shadow-sm">
-                      <div className="grid aspect-[4/3] place-items-center overflow-hidden bg-white/5">
-                        <Photo src={photo} alt={item.title} className="h-full w-full object-cover" fallback={<NoPhoto label={item.category} />} />
+                    <article key={item.id} className="grid min-h-36 grid-cols-[42%_58%] overflow-hidden rounded-xl border border-black/10 bg-[#f7f8f7] shadow-sm lg:min-h-0">
+                      <div className="relative min-h-36 overflow-hidden bg-[#eef7f0]">
+                        <Photo src={photo} alt={item.title} className="absolute inset-0 h-full w-full object-cover" fallback={<div className="grid h-full w-full place-items-center bg-gradient-to-br from-[#e8f5ec] to-[#fff0e9]"><PackageSearch className="h-12 w-12 text-[#15803d]" aria-hidden="true" /></div>} />
                       </div>
-                      <div className="p-4">
+                      <div className="flex flex-col justify-center p-4">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-[#15803d]">{item.category}</p>
-                        <h3 className="mt-1 text-base font-bold">{item.title}</h3>
+                        <h3 className="mt-1 text-base font-bold sm:text-lg">{item.title}</h3>
                         <p className="mt-2 text-xs text-black/55">{item.foundAt ? `Found at ${item.foundAt}` : `Posted ${ago(item.postedAt)}`}</p>
                         {item.description && <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-black/65">{item.description}</p>}
                       </div>
@@ -3992,6 +4009,7 @@ export default function Home() {
   const [view, setView] = useState('home');
   const [showStartupAnnouncements, setShowStartupAnnouncements] = useState(true);
   const [startupCycle, setStartupCycle] = useState(0);
+  const [repeatAnnouncements, setRepeatAnnouncements] = useState(true);
   const [user, setUser] = useState(null);
   const [opts, setOpts] = useState(EMPTY_OPTS);
   const [booting, setBooting] = useState(!!getToken());
@@ -4004,13 +4022,13 @@ export default function Home() {
   }, [dark]);
 
   useEffect(() => {
-    if (view !== 'home' || getToken()) return undefined;
+    if (view !== 'home' || getToken() || !repeatAnnouncements) return undefined;
     const timer = setInterval(() => {
       setStartupCycle((cycle) => cycle + 1);
       setShowStartupAnnouncements(true);
     }, 10 * 60 * 1000);
     return () => clearInterval(timer);
-  }, [view]);
+  }, [view, repeatAnnouncements]);
   const toggleDark = () => setDark((v) => !v);
 
   const loadOpts = () => api('/api/options').then((o) => setOpts({ ...EMPTY_OPTS, ...o })).catch(() => {});
@@ -4034,7 +4052,7 @@ export default function Home() {
     setShowStartupAnnouncements(false);
     setView('app');
   };
-  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); setStartupCycle((cycle) => cycle + 1); setShowStartupAnnouncements(true); setView('home'); };
+  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); setStartupCycle((cycle) => cycle + 1); setRepeatAnnouncements(true); setShowStartupAnnouncements(true); setView('home'); };
   const goLogin = (i) => { setIntent(i && i.sessionId ? i : null); setView('login'); };
 
   let page;
@@ -4048,7 +4066,13 @@ export default function Home() {
   else page = (
     <>
       <Landing onLogin={goLogin} dark={dark} onToggleDark={toggleDark} />
-      {view === 'home' && showStartupAnnouncements && <StartupAnnouncements key={startupCycle} onClose={() => setShowStartupAnnouncements(false)} />}
+      {view === 'home' && showStartupAnnouncements && (
+        <StartupAnnouncements
+          key={startupCycle}
+          onClose={() => setShowStartupAnnouncements(false)}
+          onStopRepeat={() => { setRepeatAnnouncements(false); setShowStartupAnnouncements(false); }}
+        />
+      )}
     </>
   );
 
