@@ -747,6 +747,23 @@ const LANDING_CSS = `
 .nav-link:hover::after{transform:scaleX(1)}
 .nav-link[aria-current="true"]::after{transform:scaleX(0)}
 @media (prefers-reduced-motion:reduce){.ucl-left,.ucl-right,.ucl-pop,.ucl-drop,.ucl-up,.ucl-roll,.ucl-hop,.ucl-spin,.ucl-bob,.ucl-twinkle,.ucl-beam,.ucl-marquee,.ucl-rise,.ucl-shadow,.ucl-ring{animation:none!important}}
+@keyframes bookOpen{0%{transform:rotateY(0)}100%{transform:rotateY(-172deg)}}
+@keyframes pageFlip{0%{transform:rotateY(0)}100%{transform:rotateY(-168deg)}}
+@keyframes bookIn{from{opacity:0;transform:rotateX(18deg) rotateZ(-4deg) scale(.7)}to{opacity:1;transform:rotateX(18deg) rotateZ(-4deg) scale(1)}}
+@keyframes introOut{0%{opacity:1;transform:none}100%{opacity:0;transform:perspective(1200px) rotateY(-40deg) scale(.85) translateX(-12%)}}
+@keyframes lfFly{0%{transform:translateY(0) scale(.8);opacity:0}20%{opacity:1}100%{transform:translateY(-220px) scale(1.1);opacity:0}}
+@keyframes announcementEnter{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes announcementProgress{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+.announcement-enter{animation:announcementEnter .45s ease both}
+.announcement-progress{transform-origin:left;animation:announcementProgress linear forwards}
+.book-scene{perspective:1200px}
+.book{position:relative;width:150px;height:200px;transform-style:preserve-3d;transform:rotateX(18deg) rotateZ(-4deg);animation:bookIn .5s ease both;filter:drop-shadow(0 20px 30px rgba(0,0,0,.6))}
+.book-cover{position:absolute;inset:0;z-index:40;display:grid;place-items:center;transform-origin:left center;background:linear-gradient(135deg,#16a34a,#0b6b30);border-radius:4px 10px 10px 4px;border-left:8px solid #0a4d22;animation:bookOpen .6s ease .25s forwards}
+.book-title{font-size:26px;font-weight:900;letter-spacing:.05em;color:#fff}
+.book-page{position:absolute;inset:5px 5px 5px 0;z-index:calc(30 - var(--i));transform-origin:left center;background:linear-gradient(90deg,#e5e7eb,#fff 20%);border-radius:2px 8px 8px 2px;animation:pageFlip .3s ease forwards;animation-delay:calc(.7s + var(--i) * .12s)}
+.intro-out{animation:introOut .8s cubic-bezier(.6,0,.4,1) forwards;transform-origin:left center;pointer-events:none}
+.lf-fly{animation:lfFly 3.2s ease-in infinite}
+@media (prefers-reduced-motion:reduce){.announcement-progress,.book,.book-cover,.book-page,.intro-out,.lf-fly{animation:none!important}}
 `;
 
 /* ================================================================== */
@@ -1071,6 +1088,156 @@ const UclBall = ({ size = 52 }) => (
     <path d="M50 4l16 8M95 36l-6 22M78 88l-22 8M22 88l-12-22M5 36l22-18" stroke="#0b1b3a" strokeWidth="2" fill="none" strokeLinecap="round" opacity=".6" />
   </svg>
 );
+
+const ANNOUNCEMENT_IMAGE = '';
+const INTRO = [
+  { key: 'image', secs: 5 },
+  { key: 'lost', secs: 10 },
+];
+
+function BookOpening() {
+  return (
+    <div className="fixed inset-0 z-[200] grid place-items-center bg-[#050914] text-white" role="status" aria-label="Opening">
+      <div className="flex flex-col items-center gap-8">
+        <div className="book-scene">
+          <div className="book">
+            {Array.from({ length: 16 }, (_, i) => (
+              <span key={i} className="book-page" style={{ '--i': i }} />
+            ))}
+            <span className="book-cover"><span className="book-title">Asyv</span></span>
+          </div>
+        </div>
+        <p className="text-xs font-bold uppercase tracking-[.3em] text-white/70">Opening<span className="lb-pulse">…</span></p>
+      </div>
+    </div>
+  );
+}
+
+function StartupAnnouncements({ onClose }) {
+  const [phase, setPhase] = useState('book');
+  const [idx, setIdx] = useState(0);
+  const [left, setLeft] = useState(INTRO[0].secs);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const total = INTRO.reduce((n, slide) => n + slide.secs, 0);
+  const spent = INTRO.slice(0, idx).reduce((n, slide) => n + slide.secs, 0) + (INTRO[idx].secs - left);
+  const remaining = Math.max(0, total - spent);
+
+  useEffect(() => {
+    if (phase !== 'book') return undefined;
+    const timer = setTimeout(() => setPhase('show'), 2800);
+    return () => clearTimeout(timer);
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'show') return undefined;
+    const timer = setTimeout(() => {
+      if (left > 1) setLeft(left - 1);
+      else if (idx < INTRO.length - 1) {
+        setIdx(idx + 1);
+        setLeft(INTRO[idx + 1].secs);
+      } else setPhase('exit');
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [phase, idx, left]);
+
+  useEffect(() => {
+    if (phase !== 'exit') return undefined;
+    const timer = setTimeout(() => closeRef.current?.(), 800);
+    return () => clearTimeout(timer);
+  }, [phase]);
+
+  if (phase === 'book') return <BookOpening />;
+
+  const kind = INTRO[idx].key;
+  const isImage = kind === 'image';
+  const titleId = isImage ? 'startup-image-title' : 'startup-lost-found-title';
+  const match = CHAMPIONS_MATCH;
+
+  return (
+    <div className={`fixed inset-0 z-[200] grid place-items-center overflow-y-auto bg-[#050914] px-4 py-6 text-white ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+        <div className={`absolute -left-24 -top-32 h-80 w-80 rounded-full blur-3xl ${isImage ? 'bg-blue-600/30' : 'bg-orange-500/25'}`} />
+        <div className={`absolute -bottom-36 -right-20 h-96 w-96 rounded-full blur-3xl ${isImage ? 'bg-orange-500/20' : 'bg-emerald-500/25'}`} />
+        {STARS.map((star, i) => <span key={i} className="ucl-twinkle absolute rounded-full bg-white" style={{ left: star.left, top: star.top, width: star.s, height: star.s, animationDelay: star.d }} />)}
+      </div>
+
+      <section key={kind} className={`announcement-enter relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-white/15 shadow-2xl ${isImage ? 'ucl-card' : 'bg-gradient-to-br from-[#082d27] via-[#0c171c] to-[#22100b]'}`}>
+        <h1 id={titleId} className="sr-only">{isImage ? match.league : 'Lost and Found'}</h1>
+        <div className="absolute inset-x-0 top-0 z-10 h-1 bg-white/15" aria-hidden="true">
+          <span key={kind} className="announcement-progress block h-full bg-gradient-to-r from-[#f5c542] via-[#ff4500] to-[#16a34a]" style={{ animationDuration: `${INTRO[idx].secs}s` }} />
+        </div>
+
+        <div className="relative z-10 flex items-center justify-between gap-4 px-5 pt-5 sm:px-8 sm:pt-7">
+          <Logo />
+          <div className="flex items-center gap-3">
+            <span className="rounded-full bg-black/40 px-3 py-1.5 text-[11px] font-bold tabular-nums">Moving on in {remaining}s</span>
+            <button type="button" onClick={() => setPhase('exit')} className="rounded-full border border-white/20 bg-black/30 px-3 py-2 text-[11px] font-semibold text-white/90 transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">
+              Skip intro
+            </button>
+          </div>
+        </div>
+
+        {isImage ? (
+          <div className="relative mt-4 px-5 pb-7 sm:px-8 sm:pb-10">
+            <div className="relative overflow-hidden rounded-[20px] border border-white/15 bg-black/30">
+              <Photo src={ANNOUNCEMENT_IMAGE} alt="Announcement" className="lb-zoom max-h-[68vh] w-full object-contain"
+                fallback={(
+                  <div className="grid min-h-[320px] place-items-center p-8 text-center">
+                    <div>
+                      <span className="ucl-bob inline-block"><UclBall size={110} /></span>
+                      <p className="mt-5 text-3xl font-black uppercase sm:text-5xl">{match.league}</p>
+                      <p className="mt-3 text-lg font-bold">{match.stage} <span className="text-[#f5c542]">·</span> {match.time}</p>
+                    </div>
+                  </div>
+                )} />
+            </div>
+            <div className="mt-4 flex items-center justify-center gap-3 text-[11px] font-semibold text-white/70">
+              <span className="grid h-9 w-9 place-items-center rounded-full border border-white/25 text-sm font-black tabular-nums text-white">{left}</span>
+              Next: Lost &amp; Found
+            </div>
+          </div>
+        ) : (
+          <div className="relative grid items-center gap-6 px-5 pb-8 pt-8 sm:px-8 md:grid-cols-[.8fr_1fr] md:gap-10 md:pb-10 md:pt-12">
+            <div className="relative mx-auto grid aspect-square w-full max-w-[290px] place-items-center overflow-hidden rounded-[42px] border border-emerald-200/20 bg-gradient-to-br from-emerald-300/15 via-white/5 to-orange-300/15 shadow-[0_20px_80px_rgba(16,185,129,.15)]">
+              <span className="lb-float grid h-36 w-36 place-items-center rounded-[38px] border border-white/20 bg-white/10 shadow-2xl sm:h-44 sm:w-44">
+                <PackageSearch className="h-20 w-20 text-[#9bf6c5] sm:h-24 sm:w-24" aria-hidden="true" />
+              </span>
+              <span className="absolute right-2 top-8 rotate-6 rounded-full bg-[#ffb020] px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-[#251200]">Found it?</span>
+              <span className="absolute bottom-2 left-2 -rotate-6 rounded-full bg-[#16a34a] px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-white">Bring it home</span>
+              <span className="lb-ping absolute left-7 top-8 h-3 w-3 rounded-full bg-[#9bf6c5]" aria-hidden="true" />
+              {['Keys', 'Books', 'Bags', 'Bottles'].map((word, i) => (
+                <span key={word} className="lf-fly absolute rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-bold backdrop-blur" style={{ animationDelay: `${i * 0.6}s`, left: `${8 + i * 22}%`, bottom: '-6%' }}>{word}</span>
+              ))}
+            </div>
+
+            <div className="text-center md:text-left">
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200/30 bg-emerald-200/10 px-3 py-1.5 text-[10px] font-extrabold tracking-[.16em] text-[#9bf6c5]">
+                <PackageSearch className="h-4 w-4" aria-hidden="true" /> LOST &amp; FOUND
+              </span>
+              <h2 className="mt-5 text-4xl font-black uppercase leading-[.98] tracking-tight sm:text-6xl">
+                Lost something?<br /><span className="bg-gradient-to-r from-[#9bf6c5] via-[#f5c542] to-[#ff8a65] bg-clip-text text-transparent">Let’s find it.</span>
+              </h2>
+              <p className="mt-5 text-lg font-bold sm:text-xl">Keys. Books. Bottles. Bags.</p>
+              <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-white/75 md:mx-0">
+                Found items are posted on the Lost and Found board. Take a look, your missing item might be waiting to come home.
+              </p>
+              <div className="mt-5 flex items-center justify-center gap-3 md:justify-start">
+                <span className="grid h-12 w-12 place-items-center rounded-full border-2 border-[#9bf6c5]/60 text-lg font-black tabular-nums">{left}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-[.14em] text-[#9bf6c5]">seconds left · then the site opens</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="relative flex items-center justify-center gap-2 border-t border-white/10 px-5 py-3 text-[10px] font-medium tracking-wide text-white/50">
+          {INTRO.map((slide, k) => <span key={slide.key} className={`h-1.5 rounded-full transition-all duration-500 ${k === idx ? 'w-6 bg-white' : 'w-1.5 bg-white/40'}`} />)}
+          <span className="ml-2">Announcement {idx + 1} of {INTRO.length}</span>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function Crest({ team, side }) {
   return (
@@ -3829,6 +3996,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, da
 
 export default function Home() {
   const [view, setView] = useState('home');
+  const [showStartupAnnouncements, setShowStartupAnnouncements] = useState(true);
   const [user, setUser] = useState(null);
   const [opts, setOpts] = useState(EMPTY_OPTS);
   const [booting, setBooting] = useState(!!getToken());
@@ -3859,9 +4027,10 @@ export default function Home() {
     dropSocket();
     await loadOpts();
     setUser(await api('/api/me'));
+    setShowStartupAnnouncements(false);
     setView('app');
   };
-  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); setView('home'); };
+  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); setShowStartupAnnouncements(false); setView('home'); };
   const goLogin = (i) => { setIntent(i && i.sessionId ? i : null); setView('login'); };
 
   let page;
@@ -3872,7 +4041,12 @@ export default function Home() {
     </CallProvider>
   );
   else if (view === 'login') page = <Auth onDone={handleAuth} onBack={() => setView('home')} intent={intent} dark={dark} onToggleDark={toggleDark} />;
-  else page = <Landing onLogin={goLogin} dark={dark} onToggleDark={toggleDark} />;
+  else page = (
+    <>
+      <Landing onLogin={goLogin} dark={dark} onToggleDark={toggleDark} />
+      {view === 'home' && showStartupAnnouncements && <StartupAnnouncements onClose={() => setShowStartupAnnouncements(false)} />}
+    </>
+  );
 
   return (
     <div className={dark ? 'lms-dark min-h-screen' : 'min-h-screen'}>
