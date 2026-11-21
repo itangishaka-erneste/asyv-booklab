@@ -32,6 +32,35 @@ const DEFAULT_SETTINGS = {
   maxConsecutive: 1, graceMinutes: 15, autoRelease: true,
   beforeFrom: '08:00', beforeTo: '12:30', afterFrom: '13:30', afterTo: '17:00',
 };
+const DEFAULT_CHAMPIONS = {
+  published: false,
+  match: {
+    league: 'Asyv Champions League', stage: 'Group stage', category: 'Boys', status: 'Upcoming',
+    time: 'Time to be announced', venue: 'To be announced', score: [null, null],
+    home: {
+      name: 'Lance Reddick', short: 'LR', bg: '#f4c3b8', fg: '#7a2a18',
+      image: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQH5TowRXqB1yLLxo8me3UIXDbZNR6-RplYfyXZoL5Gwg&s',
+      imageAlt: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTu9P2_25Ke6vLYxgy74kFtU9oUba5B2sOGQTq3VgnOTA&s=10',
+    },
+    away: {
+      name: 'Pelé (Edson Arantes Do Nascimento)', short: 'PE', bg: '#dcd7f7', fg: '#2a1f5c',
+      image: 'https://images.squarespace-cdn.com/content/v1/54a30021e4b0f0382f389d58/1420455580740-XHV72ZAM1HJKC3C3KU9F/jpeg.jpg?format=750w',
+      imageAlt: '',
+    },
+  },
+  lineup: [
+    { name: 'Herve', no: 1, x: 50, y: 88, role: 'Goalkeeper' },
+    { name: 'Bonna', no: 5, x: 29, y: 69, role: 'Defence' },
+    { name: 'Cedric', no: 2, x: 43, y: 69, role: 'Defence' },
+    { name: 'Kagame', no: 3, x: 57, y: 69, role: 'Defence' },
+    { name: 'Mugisha', no: 7, x: 71, y: 69, role: 'Defence' },
+    { name: 'Blaise', no: 11, x: 22, y: 45, role: 'Midfield' },
+    { name: 'Benjamin', no: 8, x: 39, y: 45, role: 'Midfield' },
+    { name: 'Erneste', no: 10, x: 61, y: 45, role: 'Midfield' },
+    { name: 'Reponse', no: 6, x: 78, y: 45, role: 'Midfield' },
+    { name: 'Didas', no: 9, x: 50, y: 19, role: 'Forward' },
+  ],
+};
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.floor(+v) || 0));
 const timeP = def => v => (/^\d{2}:\d{2}$/.test(String(v || '')) ? String(v) : def);
 const SETTING_PARSERS = {
@@ -184,6 +213,56 @@ const seatsLeft = async (q, sid) => (await q('SELECT "left" FROM session_places 
 const getApp = async (q, id) => (await q('SELECT * FROM applications WHERE id = $1', [id]))[0] || fail(404, 'Booking not found.');
 const getOptions = async () => Object.fromEntries((await query('SELECT key, value FROM options')).map(r => [r.key, r.value]));
 const saveOption = (q, k, value) => q('INSERT INTO options(key, value) VALUES($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [k, JSON.stringify(value)]);
+const cleanChampions = value => {
+  const invalid = () => fail(400, 'Enter valid Champions League animation details.');
+  const record = v => v && typeof v === 'object' && !Array.isArray(v);
+  const text = (v, max, required = false) => {
+    if (typeof v !== 'string' || v.length > max || (required && !v.trim())) invalid();
+    return v.trim();
+  };
+  const team = v => {
+    if (!record(v)) invalid();
+    const image = (url) => {
+      const clean = text(url, 2048);
+      if (clean && !/^https?:\/\/\S+$/i.test(clean)) invalid();
+      return clean;
+    };
+    const bg = text(v.bg, 7), fg = text(v.fg, 7);
+    if (!/^#[\da-f]{6}$/i.test(bg) || !/^#[\da-f]{6}$/i.test(fg)) invalid();
+    return {
+      name: text(v.name, 80, true), short: text(v.short, 5, true),
+      bg, fg, image: image(v.image), imageAlt: image(v.imageAlt),
+    };
+  };
+  if (!record(value) || typeof value.published !== 'boolean' || !record(value.match) || !Array.isArray(value.lineup)) invalid();
+  const m = value.match;
+  if (!Array.isArray(m.score) || m.score.length !== 2) invalid();
+  const score = m.score.map(n => {
+    if (n === null || n === '') return null;
+    const parsed = Number(n);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 99) invalid();
+    return parsed;
+  });
+  if (value.lineup.length < 1 || value.lineup.length > 11) invalid();
+  const shirtNumbers = new Set();
+  const lineup = value.lineup.map(p => {
+    if (!record(p)) invalid();
+    const no = Number(p.no), x = Number(p.x), y = Number(p.y);
+    if (!Number.isInteger(no) || no < 0 || no > 99 || !Number.isFinite(x) || x < 0 || x > 100 || !Number.isFinite(y) || y < 0 || y > 100) invalid();
+    if (shirtNumbers.has(no)) invalid();
+    shirtNumbers.add(no);
+    return { name: text(p.name, 80, true), no, x, y, role: text(p.role, 40, true) };
+  });
+  return {
+    published: value.published,
+    match: {
+      league: text(m.league, 80, true), stage: text(m.stage, 50, true), category: text(m.category, 40, true),
+      status: text(m.status, 40, true), time: text(m.time, 80), venue: text(m.venue, 100),
+      score, home: team(m.home), away: team(m.away),
+    },
+    lineup,
+  };
+};
 
 const seedOptions = async () => {
   const cur = await getOptions();
@@ -598,7 +677,17 @@ app.delete('/api/users/:id', auth('admin'), wrap(async (req, res) => { await del
 
 /* ---------- Options ---------- */
 
-app.get('/api/options', wrap(async (_, res) => res.json(await getOptions())));
+app.get('/api/options', wrap(async (_, res) => {
+  const options = await getOptions();
+  res.json({ ...options, champions: cleanChampions(options.champions || DEFAULT_CHAMPIONS) });
+}));
+app.put('/api/champions', comm, wrap(async (req, res) => {
+  const champions = cleanChampions(req.body);
+  await saveOption(query, 'champions', champions);
+  await logAct(req.user, champions.published ? 'Published Champions League animation' : 'Saved Champions League animation', champions.match.league);
+  io.emit('champions:update');
+  res.json(champions);
+}));
 app.put('/api/options', auth('admin'), wrap(async (req, res) => {
   const changed = [];
   await tx(async q => {

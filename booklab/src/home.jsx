@@ -63,7 +63,7 @@ const SECTIONS = [...Array.from({ length: 12 }, (_, i) => String(i + 1)), ...'AB
 const EMPTY_OPTS = { grades: [], gradeCombos: {}, reasons: [], trendCategories: [] };
 const ROLE_LABEL = { admin: 'Admin', teacher: 'Teacher', psychosocial: 'Psychosocial worker', student: 'Student' };
 const ROLE_CHOICES = ['student', 'teacher', 'psychosocial'];
-const ADMIN_TABS = ['Overview', 'History', 'Labs', 'Schedule', 'People', 'Chat', 'Settings'];
+const ADMIN_TABS = ['Overview', 'History', 'Labs', 'Schedule', 'People', 'Chat', 'Champions League', 'Settings'];
 const gradesOf = (o) => (o.grades?.length ? o.grades : DEFAULT_GRADES);
 const combosFor = (o, g) => o.gradeCombos?.[g] ?? [];
 const catsOf = (o) => (o?.trendCategories?.length ? o.trendCategories : DEFAULT_CATS);
@@ -1073,30 +1073,32 @@ function TrendsBoard() {
 /* Change the match here and the whole card updates.                   */
 /* ================================================================== */
 
-const CHAMPIONS_MATCH = {
-  league: 'Asyv Champions League',
-  stage: 'Group stage',
-  category: 'Boys',
-  status: 'Upcoming',
-  time: 'Time to be announced',
-  venue: 'To be announced',
-  score: [null, null], // use numbers when the match is played, for example [2, 1]
-  home: { name: 'Lance Reddick', short: 'LR', bg: '#f4c3b8', fg: '#7a2a18', image: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQH5TowRXqB1yLLxo8me3UIXDbZNR6-RplYfyXZoL5Gwg&s', imageAlt: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTu9P2_25Ke6vLYxgy74kFtU9oUba5B2sOGQTq3VgnOTA&s=10' },
-  away: { name: 'Pelé (Edson Arantes Do Nascimento)', short: 'PE', bg: '#dcd7f7', fg: '#2a1f5c', image: 'https://images.squarespace-cdn.com/content/v1/54a30021e4b0f0382f389d58/1420455580740-XHV72ZAM1HJKC3C3KU9F/jpeg.jpg?format=750w' },
+const DEFAULT_CHAMPIONS = {
+  published: false,
+  match: {
+    league: 'Asyv Champions League',
+    stage: 'Group stage',
+    category: 'Boys',
+    status: 'Upcoming',
+    time: 'Time to be announced',
+    venue: 'To be announced',
+    score: [null, null],
+    home: { name: 'Lance Reddick', short: 'LR', bg: '#f4c3b8', fg: '#7a2a18', image: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQH5TowRXqB1yLLxo8me3UIXDbZNR6-RplYfyXZoL5Gwg&s', imageAlt: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTu9P2_25Ke6vLYxgy74kFtU9oUba5B2sOGQTq3VgnOTA&s=10' },
+    away: { name: 'Pelé (Edson Arantes Do Nascimento)', short: 'PE', bg: '#dcd7f7', fg: '#2a1f5c', image: 'https://images.squarespace-cdn.com/content/v1/54a30021e4b0f0382f389d58/1420455580740-XHV72ZAM1HJKC3C3KU9F/jpeg.jpg?format=750w', imageAlt: '' },
+  },
+  lineup: [
+    { name: 'Herve', no: 1, x: 50, y: 88, role: 'Goalkeeper' },
+    { name: 'Bonna', no: 5, x: 29, y: 69, role: 'Defence' },
+    { name: 'Cedric', no: 2, x: 43, y: 69, role: 'Defence' },
+    { name: 'Kagame', no: 3, x: 57, y: 69, role: 'Defence' },
+    { name: 'Mugisha', no: 7, x: 71, y: 69, role: 'Defence' },
+    { name: 'Blaise', no: 11, x: 22, y: 45, role: 'Midfield' },
+    { name: 'Benjamin', no: 8, x: 39, y: 45, role: 'Midfield' },
+    { name: 'Erneste', no: 10, x: 61, y: 45, role: 'Midfield' },
+    { name: 'Reponse', no: 6, x: 78, y: 45, role: 'Midfield' },
+    { name: 'Didas', no: 9, x: 50, y: 19, role: 'Forward' },
+  ],
 };
-
-const LANCE_LINEUP = [
-  { name: 'Herve', no: 1, x: 50, y: 88, role: 'Goalkeeper' },
-  { name: 'Bonna', no: 5, x: 29, y: 69, role: 'Defence' },
-  { name: 'Cedric', no: 2, x: 43, y: 69, role: 'Defence' },
-  { name: 'Kagame', no: 3, x: 57, y: 69, role: 'Defence' },
-  { name: 'Mugisha', no: 7, x: 71, y: 69, role: 'Defence' },
-  { name: 'Blaise', no: 11, x: 22, y: 45, role: 'Midfield' },
-  { name: 'Benjamin', no: 8, x: 39, y: 45, role: 'Midfield' },
-  { name: 'Erneste', no: 10, x: 61, y: 45, role: 'Midfield' },
-  { name: 'Reponse', no: 6, x: 78, y: 45, role: 'Midfield' },
-  { name: 'Didas', no: 9, x: 50, y: 19, role: 'Forward' },
-];
 
 const STARS = Array.from({ length: 22 }, (_, i) => ({
   left: `${(i * 37 + 11) % 100}%`, top: `${(i * 53 + 7) % 78}%`, d: `${(i % 7) * 0.4}s`, s: 2 + (i % 3),
@@ -1152,8 +1154,7 @@ function CountdownOpening({ value }) {
   );
 }
 
-function ChampionsMatchPresentation() {
-  const match = CHAMPIONS_MATCH;
+function ChampionsMatchPresentation({ match }) {
   return (
     <div className="relative grid h-[100dvh] min-h-[520px] place-items-center overflow-hidden bg-[#07112e] px-4 py-3">
       <div className="pointer-events-none absolute inset-0" aria-hidden="true">
@@ -1181,29 +1182,28 @@ function ChampionsMatchPresentation() {
       </div>
 
       <div className="absolute bottom-5 left-1/2 -translate-x-1/2 text-center">
-        <p className="text-xs font-black uppercase tracking-[.28em] text-[#f5c542] sm:text-base">Lance Reddick vs Pelé (Edson Arantes Do Nascimento)</p>
+        <p className="text-xs font-black uppercase tracking-[.28em] text-[#f5c542] sm:text-base">{match.home.name} vs {match.away.name}</p>
       </div>
     </div>
   );
 }
 
-function ChampionsLineupPresentation() {
+function ChampionsLineupPresentation({ match, lineup }) {
   const [visiblePlayers, setVisiblePlayers] = useState(0);
 
   useEffect(() => {
-    setVisiblePlayers(0);
     const timer = setInterval(() => {
-      setVisiblePlayers((count) => Math.min(LANCE_LINEUP.length, count + 1));
+      setVisiblePlayers((count) => Math.min(lineup.length, count + 1));
     }, 900);
     return () => clearInterval(timer);
-  }, []);
+  }, [lineup.length]);
 
   return (
     <div className="relative h-[100dvh] min-h-[520px] overflow-hidden bg-[#176a37] px-3 py-2 sm:px-6">
       <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-2 py-2 sm:px-4">
         <div>
           <p className="text-xs font-black uppercase tracking-[.22em] text-[#f5c542]">Starting eleven</p>
-          <h2 className="text-lg font-black uppercase text-white sm:text-3xl">Lance Reddick</h2>
+          <h2 className="text-lg font-black uppercase text-white sm:text-3xl">{match.home.name}</h2>
         </div>
         <span className="rounded-full border border-white/20 bg-black/30 px-3 py-2 text-xs font-bold text-white">Group stage · Sunday</span>
       </div>
@@ -1214,10 +1214,11 @@ function ChampionsLineupPresentation() {
         <div className="absolute left-1/2 top-0 h-28 w-56 -translate-x-1/2 border-x-2 border-b-2 border-white/35" />
         <div className="absolute bottom-0 left-1/2 h-28 w-56 -translate-x-1/2 border-x-2 border-t-2 border-white/35" />
 
-        {LANCE_LINEUP.slice(0, visiblePlayers).map((player, i) => (
-          <div key={player.no} className="lineup-player absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center text-center" style={{ left: `${player.x}%`, top: `${player.y}%`, animationDelay: '0s' }}>
+        {lineup.slice(0, visiblePlayers).map((player, index) => (
+          <div key={`${player.no}-${index}`} className="lineup-player absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center text-center" style={{ left: `${player.x}%`, top: `${player.y}%`, animationDelay: '0s' }}>
             <span className="grid h-12 w-12 place-items-center rounded-full border-2 border-[#f5c542] bg-[#ff4500] text-lg font-black text-white shadow-[0_8px_25px_rgba(0,0,0,.6)] sm:h-16 sm:w-16 sm:text-2xl">{player.no}</span>
             <span className="mt-1 rounded-full bg-[#090604]/90 px-2 py-1 text-[10px] font-black uppercase text-white shadow-lg sm:px-3 sm:text-sm">{player.name}</span>
+            <span className="mt-0.5 text-[9px] font-semibold uppercase text-white/75 sm:text-[10px]">{player.role}</span>
           </div>
         ))}
       </div>
@@ -1228,8 +1229,6 @@ function ChampionsLineupPresentation() {
 function StartupAnnouncements({ onClose, onStopRepeat }) {
   const [phase, setPhase] = useState('countdown');
   const [countdownValue, setCountdownValue] = useState(0);
-  const [championsStep, setChampionsStep] = useState('match');
-  const [championsLeft, setChampionsLeft] = useState(CHAMPIONS_SECS);
   const [lostIndex, setLostIndex] = useState(0);
   const [lostLeft, setLostLeft] = useState(LOST_ITEM_SECS);
   const [foundItems, setFoundItems] = useState(null);
@@ -1264,21 +1263,11 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
   }, [phase]);
 
   useEffect(() => {
-    if (phase !== 'champions') return undefined;
-    const timer = setTimeout(() => {
-      if (championsLeft > 1) setChampionsLeft((value) => value - 1);
-      else if (championsStep === 'match') { setChampionsStep('lineup'); setChampionsLeft(LINEUP_SECS); }
-      else setPhase('exit');
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [phase, championsStep, championsLeft]);
-
-  useEffect(() => {
     if (phase !== 'lost') return undefined;
     const timer = setTimeout(() => {
       if (lostLeft > 1) setLostLeft((value) => value - 1);
       else if (lostIndex < Math.max(0, (foundItems || []).length - 1)) { setLostIndex((value) => value + 1); setLostLeft(LOST_ITEM_SECS); }
-      else { setPhase('champions'); setChampionsStep('match'); setChampionsLeft(CHAMPIONS_SECS); }
+      else setPhase('exit');
     }, 1000);
     return () => clearTimeout(timer);
   }, [phase, lostIndex, lostLeft, foundItems]);
@@ -1289,24 +1278,13 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
     return () => clearTimeout(timer);
   }, [phase]);
 
-  const isChampions = phase === 'champions';
   const postedItems = foundItems || [];
   const currentItem = postedItems[lostIndex];
 
   return (
     <>
-      <iframe
-        title="Champions League advert music"
-        className="pointer-events-none absolute left-[-9999px] h-px w-px"
-        src="https://www.youtube.com/embed/Ac2WgG6esU8?autoplay=1&mute=0&controls=0&playsinline=1&loop=1&playlist=Ac2WgG6esU8"
-        allow="autoplay; encrypted-media"
-        referrerPolicy="strict-origin-when-cross-origin"
-      />
       {phase === 'countdown' ? <CountdownOpening value={countdownValue} /> : (
-    <div className={`fixed inset-0 z-[200] overflow-hidden ${isChampions ? 'bg-[#07112e] text-white' : 'bg-black text-white'} ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-label="Site announcements">
-      {isChampions ? (
-        championsStep === 'match' ? <ChampionsMatchPresentation /> : <ChampionsLineupPresentation />
-      ) : (
+    <div className={`fixed inset-0 z-[200] overflow-hidden bg-black text-white ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-label="Lost and found announcement">
         <div key={lostIndex} className="lost-fullscreen relative h-[100dvh] overflow-hidden bg-black">
           {currentItem ? (
             <>
@@ -1332,10 +1310,9 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
             </div>
           )}
         </div>
-      )}
 
       <div className="absolute bottom-0 left-0 right-0 z-40 h-1 bg-white/20">
-        <span className="announcement-progress block h-full bg-gradient-to-r from-[#f5c542] via-[#ff4500] to-[#16a34a]" style={{ animationDuration: `${isChampions ? (championsStep === 'match' ? CHAMPIONS_SECS : LINEUP_SECS) : LOST_ITEM_SECS}s` }} />
+        <span className="announcement-progress block h-full bg-gradient-to-r from-[#f5c542] via-[#ff4500] to-[#16a34a]" style={{ animationDuration: `${LOST_ITEM_SECS}s` }} />
       </div>
     </div>
       )}
@@ -1360,10 +1337,29 @@ function Crest({ team, side }) {
   );
 }
 
-function ChampionsAd() {
-  const m = CHAMPIONS_MATCH;
+function ChampionsAnimation({ match, lineup, onClose }) {
+  const [step, setStep] = useState('match');
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (step === 'match') setStep('lineup');
+      else onClose();
+    }, step === 'match' ? CHAMPIONS_SECS * 1000 : LINEUP_SECS * 1000);
+    return () => window.clearTimeout(timer);
+  }, [step, onClose]);
+  return (
+    <div className="fixed inset-0 z-[200] bg-[#07112e] text-white" role="dialog" aria-modal="true" aria-label="Champions League animation">
+      {step === 'match' ? <ChampionsMatchPresentation match={match} /> : <ChampionsLineupPresentation match={match} lineup={lineup} />}
+      <button type="button" onClick={onClose} className="absolute right-4 top-4 z-20 rounded-full bg-black/50 px-4 py-2 text-xs font-semibold text-white hover:bg-black/70">Close animation</button>
+    </div>
+  );
+}
+
+function ChampionsAd({ champions }) {
+  const { match: m, lineup } = champions;
   const [run, setRun] = useState(0);
   const [details, setDetails] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const closeAnimation = useCallback(() => setPlaying(false), []);
   // The teams walk in again every 16 seconds so the advert always feels alive.
   useEffect(() => { const t = setInterval(() => setRun((n) => n + 1), 16000); return () => clearInterval(t); }, []);
   const played = m.score[0] != null && m.score[1] != null;
@@ -1436,6 +1432,7 @@ function ChampionsAd() {
             <span style={{ color: 'rgba(255,255,255,.75)' }}>{m.time}</span>
             <span className="flex items-center gap-2">
               <button type="button" onClick={() => setRun((n) => n + 1)} className="ucl-glass rounded-full px-3 py-1.5 font-semibold">Replay</button>
+              <button type="button" onClick={() => setPlaying(true)} className="ucl-glass rounded-full px-3 py-1.5 font-semibold">Watch animation</button>
               <button type="button" onClick={() => setDetails(true)} className="ucl-gold inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-bold hover:brightness-110">
                 Match details<span aria-hidden="true">↗</span>
               </button>
@@ -1462,7 +1459,97 @@ function ChampionsAd() {
           <div className="mt-5"><Btn onClick={() => setDetails(false)}>Close</Btn></div>
         </Modal>
       )}
+      {playing && <ChampionsAnimation match={m} lineup={lineup} onClose={closeAnimation} />}
     </>
+  );
+}
+
+function ChampionsManager({ champions, onSaved }) {
+  const [config, setConfig] = useState(champions || DEFAULT_CHAMPIONS);
+  const { busy, act, note } = useAct();
+  const setMatch = (key, value) => setConfig((cur) => ({ ...cur, match: { ...cur.match, [key]: value } }));
+  const setTeam = (side, key, value) => setConfig((cur) => ({
+    ...cur,
+    match: { ...cur.match, [side]: { ...cur.match[side], [key]: value } },
+  }));
+  const setPlayer = (index, key, value) => setConfig((cur) => ({
+    ...cur,
+    lineup: cur.lineup.map((player, i) => i === index ? { ...player, [key]: value } : player),
+  }));
+  const save = () => act('champions', async () => {
+    const saved = await api('/api/champions', 'PUT', config);
+    setConfig(saved);
+    onSaved(saved);
+    return saved;
+  }, config.published ? 'Animation published to the front page.' : 'Animation saved as a draft.');
+
+  return (
+    <div className="space-y-6">
+      {note && <Alert ok={note.ok}>{note.text}</Alert>}
+      <Card t="Champions League animation" sub="Edit the match and lineup, preview the animation, then publish it to the front page when it is ready.">
+        <label className="mb-5 flex items-center gap-3 rounded-[8px] border border-black/10 p-4 text-xs font-semibold">
+          <input type="checkbox" checked={config.published} onChange={(e) => setConfig((cur) => ({ ...cur, published: e.target.checked }))} className="h-4 w-4 accent-[#16a34a]" />
+          Show this animation on the front page
+        </label>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field l="Competition"><Inp value={config.match.league} maxLength={80} onChange={(e) => setMatch('league', e.target.value)} /></Field>
+          <Field l="Stage"><Inp value={config.match.stage} maxLength={50} onChange={(e) => setMatch('stage', e.target.value)} /></Field>
+          <Field l="Category"><Inp value={config.match.category} maxLength={40} onChange={(e) => setMatch('category', e.target.value)} /></Field>
+          <Field l="Status"><Inp value={config.match.status} maxLength={40} onChange={(e) => setMatch('status', e.target.value)} /></Field>
+          <Field l="Time"><Inp value={config.match.time} maxLength={80} onChange={(e) => setMatch('time', e.target.value)} /></Field>
+          <Field l="Venue"><Inp value={config.match.venue} maxLength={100} onChange={(e) => setMatch('venue', e.target.value)} /></Field>
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          {['home', 'away'].map((side) => {
+            const team = config.match[side];
+            return (
+              <section key={side} className="space-y-3 rounded-[8px] border border-black/10 p-4">
+                <h4 className="text-xs font-bold">{side === 'home' ? 'Home team' : 'Away team'}</h4>
+                <Field l="Team name"><Inp value={team.name} maxLength={80} onChange={(e) => setTeam(side, 'name', e.target.value)} /></Field>
+                <div className="grid grid-cols-3 gap-3">
+                  <Field l="Short name"><Inp value={team.short} maxLength={5} onChange={(e) => setTeam(side, 'short', e.target.value)} /></Field>
+                  <Field l="Background"><Inp type="color" value={team.bg} onChange={(e) => setTeam(side, 'bg', e.target.value)} /></Field>
+                  <Field l="Text color"><Inp type="color" value={team.fg} onChange={(e) => setTeam(side, 'fg', e.target.value)} /></Field>
+                </div>
+                <Field l="Logo image URL"><Inp type="url" value={team.image} maxLength={2048} onChange={(e) => setTeam(side, 'image', e.target.value)} placeholder="https://…" /></Field>
+                {side === 'home' && <Field l="Fallback logo image URL"><Inp type="url" value={team.imageAlt} maxLength={2048} onChange={(e) => setTeam(side, 'imageAlt', e.target.value)} placeholder="Optional" /></Field>}
+              </section>
+            );
+          })}
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Field l="Home score"><Inp type="number" min="0" max="99" value={config.match.score[0] ?? ''} onChange={(e) => setMatch('score', [e.target.value === '' ? null : Number(e.target.value), config.match.score[1]])} /></Field>
+          <Field l="Away score"><Inp type="number" min="0" max="99" value={config.match.score[1] ?? ''} onChange={(e) => setMatch('score', [config.match.score[0], e.target.value === '' ? null : Number(e.target.value)])} /></Field>
+        </div>
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          <ActBtn busy={busy === 'champions'} doing="Saving…" label="Save animation" onClick={save} />
+          <span className="text-xs text-black/50">{config.published ? 'Published' : 'Draft — not visible to the public'}</span>
+        </div>
+      </Card>
+
+      <Card t="Starting lineup" sub="Add up to eleven players. Field positions use percentages from 0 to 100.">
+        <div className="space-y-3">
+          {config.lineup.map((player, index) => (
+            <div key={`${index}-${player.no}`} className="grid gap-3 rounded-[8px] border border-black/10 p-3 sm:grid-cols-[1.4fr_.6fr_1fr_.7fr_.7fr_auto]">
+              <Field l="Player"><Inp value={player.name} maxLength={80} onChange={(e) => setPlayer(index, 'name', e.target.value)} /></Field>
+              <Field l="Number"><Inp type="number" min="0" max="99" value={player.no} onChange={(e) => setPlayer(index, 'no', Number(e.target.value))} /></Field>
+              <Field l="Position"><Inp value={player.role} maxLength={40} onChange={(e) => setPlayer(index, 'role', e.target.value)} /></Field>
+              <Field l="Field X"><Inp type="number" min="0" max="100" value={player.x} onChange={(e) => setPlayer(index, 'x', Number(e.target.value))} /></Field>
+              <Field l="Field Y"><Inp type="number" min="0" max="100" value={player.y} onChange={(e) => setPlayer(index, 'y', Number(e.target.value))} /></Field>
+              <button type="button" onClick={() => setConfig((cur) => ({ ...cur, lineup: cur.lineup.filter((_, i) => i !== index) }))} aria-label={`Remove ${player.name}`} className="self-end rounded-[6px] border border-black/15 px-3 py-2 text-xs hover:bg-black/5">Remove</button>
+            </div>
+          ))}
+        </div>
+        <Btn className="mt-4" c="w" disabled={config.lineup.length >= 11} onClick={() => setConfig((cur) => ({
+          ...cur,
+          lineup: [...cur.lineup, { name: '', no: cur.lineup.length + 1, x: 50, y: 50, role: '' }],
+        }))}>Add player</Btn>
+      </Card>
+
+      <Card t="Preview" sub="This preview uses your current edits. Save the animation to make those edits public.">
+        <ChampionsAd champions={config} />
+      </Card>
+    </div>
   );
 }
 
@@ -1557,7 +1644,7 @@ function LandingNav({ onLogin, dark, onToggleDark }) {
   );
 }
 
-function Landing({ onLogin, dark, onToggleDark }) {
+function Landing({ onLogin, dark, onToggleDark, champions }) {
   return (
     <div id="top" className="bg-white text-[#111827] antialiased text-sm">
       <LandingNav onLogin={onLogin} dark={dark} onToggleDark={onToggleDark} />
@@ -1573,6 +1660,11 @@ function Landing({ onLogin, dark, onToggleDark }) {
         </div>
         <div className="min-w-0"><LiveLabs /></div>
       </section>
+      {champions?.published && (
+        <section className="mx-auto max-w-6xl px-6 pb-10" aria-label="Champions League">
+          <ChampionsAd champions={champions} />
+        </section>
+      )}
       <section id="labs" className="mx-auto max-w-6xl scroll-mt-20 px-6 py-12">
         <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Labs and free places</h2>
         <p className="mb-8 mt-2 max-w-xl text-xs text-black/60">The border of each lab time fills as places are taken. A red border with the word Closed means the lab time is over and nobody can apply.</p>
@@ -3669,7 +3761,7 @@ function Profile({ onChanged }) {
 /* 8. DASHBOARD SHELL and ROOT                                         */
 /* ================================================================== */
 
-const NAV_ICON = { 'My labs': CalendarDays, Bookings: CalendarCheck2, 'Lost & Found': PackageSearch, Profile: UserRound, Overview: LayoutDashboard, History: CalendarClock, Labs: FlaskConical, Schedule: CalendarClock, People: UsersRound, Chat: MessageCircle, Settings: Settings2 };
+const NAV_ICON = { 'My labs': CalendarDays, Bookings: CalendarCheck2, 'Lost & Found': PackageSearch, 'Champions League': Trophy, Profile: UserRound, Overview: LayoutDashboard, History: CalendarClock, Labs: FlaskConical, Schedule: CalendarClock, People: UsersRound, Chat: MessageCircle, Settings: Settings2 };
 
 const NavBadge = ({ n }) => (n > 0 ? <span className="ml-auto grid h-5 min-w-[20px] place-items-center rounded-full bg-[#ff4500] px-1.5 text-[10px] font-bold text-white">{n > 99 ? '99+' : n}</span> : null);
 /* ================================================================== */
@@ -3986,11 +4078,11 @@ function CallPanel() {
   );
 }
 
-function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, dark, onToggleDark }) {
+function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, onChampionsSaved, dark, onToggleDark }) {
   const isAdmin = user.role === 'admin';
   const items = isAdmin
     ? [...ADMIN_TABS, 'Lost & Found', 'Profile']
-    : [user.role === 'student' ? 'My labs' : 'Bookings', ...(user.comm ? ['Lost & Found'] : []), 'Profile'];
+    : [user.role === 'student' ? 'My labs' : 'Bookings', ...(user.comm ? ['Lost & Found', 'Champions League'] : []), 'Profile'];
   const [picked, setPage] = useState(items[0]);
   const page = items.includes(picked) ? picked : items[0];
   const [labView, setLabView] = useState(null);
@@ -4012,6 +4104,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, da
   let body;
   if (page === 'Profile') body = <Profile onChanged={onRefreshMe} />;
   else if (page === 'Lost & Found') body = <TrendsManager user={user} opts={opts} />;
+  else if (page === 'Champions League' && (isAdmin || user.comm)) body = <ChampionsManager champions={opts.champions} onSaved={onChampionsSaved} />;
   else if (isAdmin) {
     if (page === 'Overview') body = <OverviewPage me={user} />;
     else if (page === 'History') body = <HistoryPage />;
@@ -4120,6 +4213,7 @@ export default function Home() {
   const toggleDark = () => setDark((v) => !v);
 
   const loadOpts = () => api('/api/options').then((o) => setOpts({ ...EMPTY_OPTS, ...o })).catch(() => {});
+  useLive({ 'champions:update': loadOpts });
   const refreshMe = () => api('/api/me').then(setUser).catch(() => {});
 
   useEffect(() => {
@@ -4147,13 +4241,13 @@ export default function Home() {
   if (booting) page = <Loader full label="Loading" />;
   else if (view === 'app' && user) page = (
     <CallProvider me={user}>
-      <Dashboard user={user} opts={opts} intent={intent} onIntentDone={() => setIntent(null)} onLogout={logout} onRefreshMe={refreshMe} dark={dark} onToggleDark={toggleDark} />
+      <Dashboard user={user} opts={opts} intent={intent} onIntentDone={() => setIntent(null)} onLogout={logout} onRefreshMe={refreshMe} onChampionsSaved={(champions) => setOpts((current) => ({ ...current, champions }))} dark={dark} onToggleDark={toggleDark} />
     </CallProvider>
   );
   else if (view === 'login') page = <Auth onDone={handleAuth} onBack={() => setView('home')} intent={intent} dark={dark} onToggleDark={toggleDark} />;
   else page = (
     <>
-      <Landing onLogin={goLogin} dark={dark} onToggleDark={toggleDark} />
+      <Landing onLogin={goLogin} dark={dark} onToggleDark={toggleDark} champions={opts.champions} />
       {view === 'home' && showStartupAnnouncements && (
         <StartupAnnouncements
           key={startupCycle}
