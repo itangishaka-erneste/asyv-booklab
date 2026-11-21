@@ -30,6 +30,10 @@ const Plus = icon('M12 5v14m-7-7h14'); const LogOut = icon('M9 21H5a2 2 0 0 1-2-
 const Sunrise = icon('M12 2v7m-4-3 4 3 4-3M3 18h18M5 14a7 7 0 0 1 14 0m-17 8h20'); const Sunset = icon('M12 22v-7m-4 3 4-3 4 3M3 6h18M5 10a7 7 0 0 1 14 0m-17-8h20');
 const Eye = icon('M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'); const Radio = icon('M4 8h16a2 2 0 0 1 2 2v10H2V10a2 2 0 0 1 2-2zm4 4h.01');
 const ArrowLeft = icon('m12 19-7-7 7-7m-7 7h14'); const CheckCheck = icon('m2 12 4 4L16 6m-4 6 4 4 6-10');
+// Navbar and Champions League icons
+const Menu = icon('M4 6h16M4 12h16M4 18h16');
+const Trophy = icon('M8 21h8m-4-4v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3m10-4h3v1a3 3 0 0 1-3 3');
+const Sparkle = icon('M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z');
 // Chat and call icons
 const PHONE = 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z';
 const VIDEO = 'm16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 11M4 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z';
@@ -701,6 +705,50 @@ const GLOBAL_CSS = `
 .lms-dark .rounded-full[class~="border-white"]{border-color:#000!important}
 `;
 
+// Champions League advert and advanced navbar styles. Plain CSS so they look the same in light and dark mode.
+const LANDING_CSS = `
+@keyframes uclLeft{0%{opacity:0;transform:translateX(-160px) rotate(-16deg) scale(.6)}55%{opacity:1;transform:translateX(14px) rotate(3deg) scale(1.08)}78%{transform:translateX(-5px) rotate(-1deg) scale(.98)}100%{opacity:1;transform:none}}
+@keyframes uclRight{0%{opacity:0;transform:translateX(160px) rotate(16deg) scale(.6)}55%{opacity:1;transform:translateX(-14px) rotate(-3deg) scale(1.08)}78%{transform:translateX(5px) rotate(1deg) scale(.98)}100%{opacity:1;transform:none}}
+@keyframes uclPop{0%{opacity:0;transform:scale(.1) rotate(-90deg)}65%{opacity:1;transform:scale(1.25) rotate(8deg)}100%{opacity:1;transform:scale(1) rotate(0)}}
+@keyframes uclDrop{0%{opacity:0;transform:translateY(-120px) scale(.6)}60%{opacity:1;transform:translateY(8px) scale(1.05)}80%{transform:translateY(-4px)}100%{opacity:1;transform:none}}
+@keyframes uclUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes uclRoll{0%{transform:translateX(-44px)}50%{transform:translateX(44px)}100%{transform:translateX(-44px)}}
+@keyframes uclHop{0%,100%{transform:translateY(0)}25%{transform:translateY(-20px)}50%{transform:translateY(0)}75%{transform:translateY(-12px)}}
+@keyframes uclSpin{to{transform:rotate(360deg)}}
+@keyframes uclBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+@keyframes uclTwinkle{0%,100%{opacity:.15;transform:scale(.6)}50%{opacity:1;transform:scale(1.2)}}
+@keyframes uclBeam{0%,100%{transform:rotate(-16deg)}50%{transform:rotate(16deg)}}
+@keyframes uclMarquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@keyframes uclRise{0%{transform:translateY(0);opacity:0}15%{opacity:.9}100%{transform:translateY(-260px);opacity:0}}
+@keyframes uclShadow{0%,100%{transform:scaleX(1);opacity:.35}25%{transform:scaleX(.6);opacity:.15}50%{transform:scaleX(1);opacity:.35}75%{transform:scaleX(.75);opacity:.2}}
+@keyframes uclRing{0%{transform:scale(.6);opacity:.8}100%{transform:scale(2.2);opacity:0}}
+.ucl-card{background:radial-gradient(120% 90% at 50% 0%,#1d3f8f 0%,#0b1b3a 55%,#050b1c 100%);color:#fff}
+.ucl-left{animation:uclLeft 1.1s cubic-bezier(.2,.9,.3,1) .1s both}
+.ucl-right{animation:uclRight 1.1s cubic-bezier(.2,.9,.3,1) .1s both}
+.ucl-pop{animation:uclPop .8s cubic-bezier(.2,.9,.3,1) 1s both}
+.ucl-drop{animation:uclDrop .9s cubic-bezier(.2,.9,.3,1) .6s both}
+.ucl-up{animation:uclUp .6s ease both}
+.ucl-roll{animation:uclRoll 4.4s ease-in-out 1.6s infinite both}
+.ucl-hop{animation:uclHop 1.1s ease-in-out 1.6s infinite}
+.ucl-spin{animation:uclSpin 2.2s linear infinite}
+.ucl-bob{animation:uclBob 3.4s ease-in-out 1.4s infinite}
+.ucl-twinkle{animation:uclTwinkle 2.8s ease-in-out infinite}
+.ucl-beam{transform-origin:50% 0;animation:uclBeam 7s ease-in-out infinite}
+.ucl-marquee{display:flex;width:max-content;animation:uclMarquee 22s linear infinite}
+.ucl-rise{animation:uclRise 6s ease-in infinite}
+.ucl-shadow{animation:uclShadow 1.1s ease-in-out 1.6s infinite}
+.ucl-ring{animation:uclRing 2s ease-out infinite}
+.ucl-glass{background:rgba(255,255,255,.12)}
+.ucl-glass:hover{background:rgba(255,255,255,.22)}
+.ucl-white{background:#fff;color:#0b1b3a}
+.ucl-gold{background:#f5c542;color:#0b1b3a}
+.nav-link{position:relative}
+.nav-link::after{content:'';position:absolute;left:12px;right:12px;bottom:4px;height:2px;border-radius:2px;background:currentColor;transform:scaleX(0);transform-origin:left;transition:transform .3s ease}
+.nav-link:hover::after{transform:scaleX(1)}
+.nav-link[aria-current="true"]::after{transform:scaleX(0)}
+@media (prefers-reduced-motion:reduce){.ucl-left,.ucl-right,.ucl-pop,.ucl-drop,.ucl-up,.ucl-roll,.ucl-hop,.ucl-spin,.ucl-bob,.ucl-twinkle,.ucl-beam,.ucl-marquee,.ucl-rise,.ucl-shadow,.ucl-ring{animation:none!important}}
+`;
+
 /* ================================================================== */
 /* 3. PUBLIC LANDING: labs, free places, lost and found                */
 /* ================================================================== */
@@ -794,7 +842,7 @@ function LabBoard({ onLogin }) {
   );
 }
 
-// Animated live status of the labs, shown next to the headline on the landing page.
+// Animated live status of the labs, shown in the labs section of the landing page.
 const LIVE = {
   available: ['var(--ok, #16a34a)', 'Places open'], limited: ['#f59e0b', 'Few places left'], requested: ['#2563eb', 'Waiting list'],
   full: ['var(--full, #ff4500)', 'Full'], none: ['#9ca3af', 'No lab time'],
@@ -955,7 +1003,7 @@ function TrendsBoard() {
   const cats = [...new Set(list.map((t) => t.category))].sort();
   const shown = list.filter((t) => (cat === 'all' || t.category === cat) && match(q, t.title, t.category, t.description, t.foundAt));
   return (
-    <section id="trends" className="scroll-mt-16 border-t border-black/10 bg-[#f7f8f7]">
+    <section id="trends" className="scroll-mt-20 border-t border-black/10 bg-[#f7f8f7]">
       <div className="mx-auto max-w-6xl px-6 py-16">
         <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Lost something? Look here first.</h2>
         <p className="mt-3 max-w-xl text-xs text-black/60">Items found at school are posted here. Tap yours and contact the Minister of Communication.</p>
@@ -993,37 +1041,276 @@ function TrendsBoard() {
   );
 }
 
-function Landing({ onLogin, dark, onToggleDark }) {
+/* ================================================================== */
+/* ASYV CHAMPIONS LEAGUE: advert card in the hero of the landing page */
+/* Change the match here and the whole card updates.                   */
+/* ================================================================== */
+
+const CHAMPIONS_MATCH = {
+  league: 'Asyv Champions League',
+  stage: 'Group stage',
+  category: 'Boys',
+  status: 'Upcoming',
+  time: 'Time to be announced',
+  venue: 'To be announced',
+  score: [null, null], // use numbers when the match is played, for example [2, 1]
+  home: { name: 'Lance Reddick', short: 'LR', bg: '#f4c3b8', fg: '#7a2a18' },
+  away: { name: 'Pelé (Edson Arantes Do Nascimento)', short: 'PE', bg: '#dcd7f7', fg: '#2a1f5c' },
+};
+
+const STARS = Array.from({ length: 22 }, (_, i) => ({
+  left: `${(i * 37 + 11) % 100}%`, top: `${(i * 53 + 7) % 78}%`, d: `${(i % 7) * 0.4}s`, s: 2 + (i % 3),
+}));
+const SPARKS = Array.from({ length: 9 }, (_, i) => ({ left: `${8 + i * 10.5}%`, d: `${(i % 5) * 1.1}s`, s: 3 + (i % 3) }));
+
+const UclBall = ({ size = 52 }) => (
+  <svg viewBox="0 0 100 100" width={size} height={size} aria-hidden="true" style={{ filter: 'drop-shadow(0 4px 8px rgba(0,0,0,.45))' }}>
+    <circle cx="50" cy="50" r="47" fill="#fff" stroke="#0b1b3a" strokeWidth="3" />
+    <polygon points="50,30 69,44 62,66 38,66 31,44" fill="#0b1b3a" />
+    <path d="M50 30V4M69 44l26-8M62 66l16 22M38 66L22 88M31 44L5 36" stroke="#0b1b3a" strokeWidth="3" fill="none" strokeLinecap="round" />
+    <path d="M50 4l16 8M95 36l-6 22M78 88l-22 8M22 88l-12-22M5 36l22-18" stroke="#0b1b3a" strokeWidth="2" fill="none" strokeLinecap="round" opacity=".6" />
+  </svg>
+);
+
+function Crest({ team, side }) {
   return (
-    <div className="bg-white text-[#111827] antialiased text-sm">
-      <header className="sticky top-0 z-20 border-b border-black/10 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-          <Logo />
-          <nav className="hidden gap-2 text-xs font-medium md:flex">
-            <a href="#labs" className="rounded-[6px] px-3 py-2 text-black/70 hover:bg-black/5">Labs</a>
-            <a href="#trends" className="rounded-[6px] px-3 py-2 text-black/70 hover:bg-black/5">Lost and found</a>
-          </nav>
-          <div className="flex items-center gap-2">
-            <ThemeBtn dark={dark} onToggle={onToggleDark} />
-            <Btn onClick={() => onLogin()}>Log in</Btn>
+    <div className="flex w-[34%] flex-col items-center text-center">
+      <div className={side === 'left' ? 'ucl-left' : 'ucl-right'}>
+        <div className="ucl-bob relative">
+          <span className="absolute inset-0 rounded-[22px] blur-xl" style={{ background: 'rgba(255,255,255,.3)' }} aria-hidden="true" />
+          <div className="relative grid h-[84px] w-[84px] place-items-center rounded-[22px] border border-white/40 text-3xl font-extrabold shadow-[6px_8px_0_rgba(0,0,0,.35)] sm:h-24 sm:w-24"
+            style={{ background: team.bg, color: team.fg }}>
+            {team.short}
           </div>
         </div>
-      </header>
+      </div>
+      <p className="ucl-up mt-3 text-[12px] font-semibold leading-tight sm:text-[13px]" style={{ animationDelay: '.9s' }}>{team.name}</p>
+    </div>
+  );
+}
+
+function ChampionsAd() {
+  const m = CHAMPIONS_MATCH;
+  const [run, setRun] = useState(0);
+  const [details, setDetails] = useState(false);
+  // The teams walk in again every 16 seconds so the advert always feels alive.
+  useEffect(() => { const t = setInterval(() => setRun((n) => n + 1), 16000); return () => clearInterval(t); }, []);
+  const played = m.score[0] != null && m.score[1] != null;
+  const ticker = `${m.league.toUpperCase()}  ★  ${m.category.toUpperCase()}  ·  ${m.stage.toUpperCase()}  ★  ${m.time.toUpperCase()}  ★  ${m.home.name.toUpperCase()} VS ${m.away.name.toUpperCase()}  ★  `;
+
+  return (
+    <>
+      <div id="champions" className="ucl-card lb-glow relative scroll-mt-24 overflow-hidden rounded-2xl shadow-xl" aria-label={`${m.league}: ${m.home.name} against ${m.away.name}`}>
+        {/* Stadium atmosphere */}
+        <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+          {STARS.map((s, i) => <span key={i} className="ucl-twinkle absolute rounded-full" style={{ background: '#fff', left: s.left, top: s.top, width: s.s, height: s.s, animationDelay: s.d }} />)}
+          <span className="ucl-beam absolute -top-4 left-[12%] h-[120%] w-24 blur-md" style={{ background: 'linear-gradient(to bottom,rgba(255,255,255,.25),transparent)' }} />
+          <span className="ucl-beam absolute -top-4 right-[12%] h-[120%] w-24 blur-md" style={{ background: 'linear-gradient(to bottom,rgba(255,255,255,.25),transparent)', animationDelay: '-3.5s' }} />
+          <svg className="absolute inset-x-0 bottom-0 h-40 w-full opacity-25" viewBox="0 0 400 160" preserveAspectRatio="none">
+            <g fill="none" stroke="#fff" strokeWidth="1.5"><circle cx="200" cy="170" r="70" /><path d="M0 120h400M200 100v60" /><rect x="130" y="125" width="140" height="40" /></g>
+          </svg>
+          {SPARKS.map((s, i) => <span key={i} className="ucl-rise absolute bottom-0 rounded-full" style={{ background: '#f5c542', left: s.left, width: s.s, height: s.s, animationDelay: s.d }} />)}
+        </div>
+
+        <div key={run} className="relative flex min-h-[440px] flex-col justify-between p-5">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-3">
+            <span className="ucl-pop inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-bold tracking-wide"
+              style={{ animationDelay: '.1s', color: '#f5c542', borderColor: 'rgba(245,197,66,.5)', background: 'rgba(245,197,66,.15)' }}>
+              <Trophy className="h-3.5 w-3.5" aria-hidden="true" />{m.league.toUpperCase()}
+            </span>
+            <span className="ucl-pop ucl-glass inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold" style={{ animationDelay: '.25s' }}>
+              <UclBall size={14} />{m.stage}
+            </span>
+          </div>
+
+          <div className="mt-3 text-center">
+            <span className="ucl-pop ucl-white relative inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-extrabold" style={{ animationDelay: '.4s' }}>
+              <span className="relative flex h-2 w-2"><span className="ucl-ring absolute inset-0 rounded-full" style={{ background: '#ff4500' }} /><span className="relative h-2 w-2 rounded-full" style={{ background: '#ff4500' }} /></span>
+              {m.status.toUpperCase()}
+            </span>
+          </div>
+
+          {/* The two teams with the ball in between */}
+          <div className="flex items-start justify-between gap-2 py-4">
+            <Crest team={m.home} side="left" />
+
+            <div className="relative flex w-[32%] flex-col items-center pt-1">
+              <div className="ucl-drop relative flex h-[78px] w-full items-end justify-center">
+                <div className="ucl-roll absolute bottom-3">
+                  <div className="ucl-hop"><div className="ucl-spin"><UclBall size={46} /></div></div>
+                </div>
+                <span className="ucl-shadow absolute bottom-0 h-2 w-12 rounded-full blur-[2px]" style={{ background: 'rgba(0,0,0,.6)' }} />
+              </div>
+              <div className="ucl-pop mt-1 flex items-center gap-2 text-3xl font-black" style={{ animationDelay: '1.2s' }}>
+                <span className="inline-block min-w-[30px] text-center">{played ? m.score[0] : <i className="mx-auto block h-[5px] w-7 rounded" style={{ background: '#fff' }} />}</span>
+                <span className="text-lg" style={{ color: 'rgba(255,255,255,.5)' }}>:</span>
+                <span className="inline-block min-w-[30px] text-center">{played ? m.score[1] : <i className="mx-auto block h-[5px] w-7 rounded" style={{ background: '#fff' }} />}</span>
+              </div>
+              <span className="ucl-pop mt-2 inline-block bg-gradient-to-b from-[#f5c542] to-[#ff8a00] bg-clip-text text-xl font-black italic tracking-widest text-transparent" style={{ animationDelay: '1.35s' }}>VS</span>
+            </div>
+
+            <Crest team={m.away} side="right" />
+          </div>
+
+          <p className="ucl-up text-center text-xs" style={{ animationDelay: '1.5s', color: 'rgba(255,255,255,.75)' }}>{m.category} <span className="mx-1 opacity-50">·</span> {m.stage}</p>
+
+          {/* Ticker */}
+          <div className="mt-3 overflow-hidden rounded-full py-1.5 text-[10px] font-bold tracking-[.2em]" style={{ background: 'rgba(0,0,0,.3)', color: 'rgba(255,255,255,.7)' }} aria-hidden="true">
+            <div className="ucl-marquee"><span className="whitespace-pre pr-2">{ticker}{ticker}</span><span className="whitespace-pre pr-2">{ticker}{ticker}</span></div>
+          </div>
+
+          {/* Footer */}
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t pt-3 text-xs" style={{ borderColor: 'rgba(255,255,255,.15)' }}>
+            <span style={{ color: 'rgba(255,255,255,.75)' }}>{m.time}</span>
+            <span className="flex items-center gap-2">
+              <button type="button" onClick={() => setRun((n) => n + 1)} className="ucl-glass rounded-full px-3 py-1.5 font-semibold">Replay</button>
+              <button type="button" onClick={() => setDetails(true)} className="ucl-gold inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-bold hover:brightness-110">
+                Match details<span aria-hidden="true">↗</span>
+              </button>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {details && (
+        <Modal title={`${m.league} · Match details`} onClose={() => setDetails(false)}>
+          <div className="flex items-center justify-between gap-3">
+            {[m.home, m.away].map((t) => (
+              <div key={t.short} className="flex flex-1 flex-col items-center text-center">
+                <div className="grid h-16 w-16 place-items-center rounded-[16px] text-xl font-extrabold" style={{ background: t.bg, color: t.fg }}>{t.short}</div>
+                <b className="mt-2 text-xs">{t.name}</b>
+              </div>
+            ))}
+          </div>
+          <dl className="mt-5 divide-y divide-black/10 text-xs">
+            {[['Competition', m.league], ['Category', m.category], ['Stage', m.stage], ['Status', m.status], ['Time', m.time], ['Venue', m.venue]].map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-4 py-2.5"><dt className="text-black/50">{k}</dt><dd className="text-right font-semibold">{v}</dd></div>
+            ))}
+          </dl>
+          <div className="mt-5"><Btn onClick={() => setDetails(false)}>Close</Btn></div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+/* ================================================================== */
+/* ADVANCED NAVBAR: shrinks on scroll, progress line, active section,  */
+/* smooth scroll, mobile menu, live champions chip                      */
+/* ================================================================== */
+
+const NAV_LINKS = [
+  ['champions', 'Champions League', Trophy],
+  ['labs', 'Labs', FlaskConical],
+  ['trends', 'Lost and found', PackageSearch],
+];
+
+function LandingNav({ onLogin, dark, onToggleDark }) {
+  const [scrolled, setScrolled] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [active, setActive] = useState('');
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => {
+      const y = window.scrollY;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      setScrolled(y > 8);
+      setProgress(max > 0 ? Math.min(100, (y / max) * 100) : 0);
+      let cur = '';
+      NAV_LINKS.forEach(([id]) => { const el = document.getElementById(id); if (el && el.getBoundingClientRect().top <= 140) cur = id; });
+      setActive(cur);
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    return () => { window.removeEventListener('scroll', onScroll); window.removeEventListener('resize', onScroll); };
+  }, []);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const esc = (e) => e.key === 'Escape' && setOpen(false);
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [open]);
+
+  const go = (id) => (e) => {
+    e.preventDefault();
+    setOpen(false);
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const top = (e) => { e.preventDefault(); setOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+
+  return (
+    <header className={`sticky top-0 z-30 border-b backdrop-blur-md transition-all duration-300 ${scrolled ? 'border-black/10 bg-white/90 shadow-md' : 'border-transparent bg-white/95'}`}>
+      <div className={`mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 transition-all duration-300 sm:px-6 ${scrolled ? 'h-14' : 'h-[72px]'}`}>
+        <a href="#top" onClick={top} aria-label="Back to top"><Logo /></a>
+
+        <nav className="hidden items-center gap-1 text-xs font-semibold md:flex" aria-label="Sections">
+          {NAV_LINKS.map(([id, label, Icon]) => (
+            <a key={id} href={`#${id}`} onClick={go(id)} aria-current={active === id ? 'true' : undefined}
+              className={`nav-link inline-flex items-center gap-1.5 rounded-[8px] px-3 py-2 transition-colors ${active === id ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
+              <Icon className="h-4 w-4" aria-hidden="true" />{label}
+              {id === 'champions' && <span className="relative ml-0.5 flex h-2 w-2"><span className="ucl-ring absolute inset-0 rounded-full" style={{ background: '#ff4500' }} /><span className="relative h-2 w-2 rounded-full" style={{ background: '#ff4500' }} /></span>}
+            </a>
+          ))}
+        </nav>
+
+        <div className="flex items-center gap-2">
+          <a href="#champions" onClick={go('champions')} className="hidden items-center gap-1.5 rounded-full border border-[#f5c542]/60 bg-[#f5c542]/15 px-3 py-1.5 text-[11px] font-bold text-[#b45309] lg:inline-flex">
+            <Sparkle className="h-3.5 w-3.5" aria-hidden="true" />Group stage is coming
+          </a>
+          <ThemeBtn dark={dark} onToggle={onToggleDark} />
+          <Btn className="hidden sm:inline-flex" onClick={() => onLogin()}>Log in</Btn>
+          <button type="button" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} onClick={() => setOpen((v) => !v)}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-black/15 bg-white text-[#111827] hover:bg-black/5 md:hidden">
+            {open ? <X className="h-4 w-4" aria-hidden="true" /> : <Menu className="h-4 w-4" aria-hidden="true" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile menu */}
+      <div className={`grid overflow-hidden transition-all duration-300 md:hidden ${open ? 'grid-rows-[1fr] border-t border-black/10' : 'grid-rows-[0fr]'}`}>
+        <div className="min-h-0 overflow-hidden">
+          <nav className="space-y-1 p-4" aria-label="Sections mobile">
+            {NAV_LINKS.map(([id, label, Icon]) => (
+              <a key={id} href={`#${id}`} onClick={go(id)}
+                className={`flex items-center gap-3 rounded-[8px] px-3 py-3 text-sm font-semibold ${active === id ? 'bg-[#16a34a] text-white' : 'text-black/75 hover:bg-black/5'}`}>
+                <Icon className="h-5 w-5" aria-hidden="true" />{label}
+              </a>
+            ))}
+            <Btn className="mt-2 w-full !py-3" onClick={() => { setOpen(false); onLogin(); }}>Log in with Google</Btn>
+          </nav>
+        </div>
+      </div>
+
+      {/* Reading progress */}
+      <span className="absolute bottom-0 left-0 h-[3px] bg-gradient-to-r from-[#16a34a] via-[#f5c542] to-[#ff4500] transition-[width] duration-150" style={{ width: `${progress}%` }} aria-hidden="true" />
+    </header>
+  );
+}
+
+function Landing({ onLogin, dark, onToggleDark }) {
+  return (
+    <div id="top" className="bg-white text-[#111827] antialiased text-sm">
+      <LandingNav onLogin={onLogin} dark={dark} onToggleDark={onToggleDark} />
       <section className="mx-auto grid max-w-6xl items-center gap-8 px-6 pt-14 pb-6 md:grid-cols-[1.05fr_.95fr]">
         <div>
           <span className="lb-in inline-block rounded-[6px] border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[11px] font-semibold text-[#15803d]">Live places, updated automatically</span>
           <h1 className="lb-in mt-5 max-w-2xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
           <p className="mt-5 max-w-md text-sm leading-relaxed text-black/65">Pick an available lab time and press Apply. Free places are approved at once.</p>
           <div className="mt-7 flex flex-wrap gap-3">
-            <a href="#labs" className="rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white">See the labs</a>
+            <a href="#labs" onClick={(e) => { e.preventDefault(); document.getElementById('labs')?.scrollIntoView({ behavior: 'smooth' }); }} className="rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white">See the labs</a>
             <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
           </div>
         </div>
-        <LiveLabs />
+        <ChampionsAd />
       </section>
-      <section id="labs" className="mx-auto max-w-6xl scroll-mt-16 px-6 py-12">
+      <section id="labs" className="mx-auto max-w-6xl scroll-mt-20 px-6 py-12">
         <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Labs and free places</h2>
         <p className="mb-8 mt-2 max-w-xl text-xs text-black/60">The border of each lab time fills as places are taken. A red border with the word Closed means the lab time is over and nobody can apply.</p>
+        <div className="mb-8 max-w-3xl"><LiveLabs /></div>
         <LabBoard onLogin={onLogin} />
       </section>
       <TrendsBoard />
@@ -3589,7 +3876,7 @@ export default function Home() {
 
   return (
     <div className={dark ? 'lms-dark min-h-screen' : 'min-h-screen'}>
-      <style>{GLOBAL_CSS}</style>
+      <style>{GLOBAL_CSS + LANDING_CSS}</style>
       <ConfirmProvider>{page}</ConfirmProvider>
     </div>
   );
