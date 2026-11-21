@@ -1081,8 +1081,8 @@ const CHAMPIONS_MATCH = {
   time: 'Time to be announced',
   venue: 'To be announced',
   score: [null, null], // use numbers when the match is played, for example [2, 1]
-  home: { name: 'Lance Solomon Reddick', short: 'LR', bg: '#f4c3b8', fg: '#7a2a18', image: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQH5TowRXqB1yLLxo8me3UIXDbZNR6-RplYfyXZoL5Gwg&s', imageAlt: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTu9P2_25Ke6vLYxgy74kFtU9oUba5B2sOGQTq3VgnOTA&s=10' },
-  away: { name: 'Pelé (Edson Arantes Do Nascimento)', short: 'PE', bg: '#dcd7f7', fg: '#2a1f5c', image: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRJ8B27d6TCeLBeyLwtTNWll_Mva2qv6KMW8Vgexx4joQ&s=10' },
+  home: { name: 'Lance Reddick', short: 'LR', bg: '#f4c3b8', fg: '#7a2a18', image: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQH5TowRXqB1yLLxo8me3UIXDbZNR6-RplYfyXZoL5Gwg&s', imageAlt: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTu9P2_25Ke6vLYxgy74kFtU9oUba5B2sOGQTq3VgnOTA&s=10' },
+  away: { name: 'Pelé (Edson Arantes Do Nascimento)', short: 'PE', bg: '#dcd7f7', fg: '#2a1f5c', image: 'https://images.squarespace-cdn.com/content/v1/54a30021e4b0f0382f389d58/1420455580740-XHV72ZAM1HJKC3C3KU9F/jpeg.jpg?format=750w' },
 };
 
 const LANCE_LINEUP = [
@@ -1091,7 +1091,6 @@ const LANCE_LINEUP = [
   { name: 'Cedric', no: 2, x: 43, y: 69, role: 'Defence' },
   { name: 'Kagame', no: 3, x: 57, y: 69, role: 'Defence' },
   { name: 'Mugisha', no: 7, x: 71, y: 69, role: 'Defence' },
-  { name: 'Player 4', no: 4, x: 50, y: 69, role: 'Defence · TBC' },
   { name: 'Blaise', no: 11, x: 22, y: 45, role: 'Midfield' },
   { name: 'Benjamin', no: 8, x: 39, y: 45, role: 'Midfield' },
   { name: 'Erneste', no: 10, x: 61, y: 45, role: 'Midfield' },
@@ -1150,7 +1149,7 @@ function CountdownOpening({ left }) {
         <div key={left} className="countdown-pop mx-auto grid h-52 w-52 place-items-center rounded-full border-[10px] border-[#f5c542] bg-gradient-to-br from-[#ff4500] to-[#7a1200] text-[9rem] font-black leading-none text-white shadow-[0_0_100px_rgba(255,69,0,.7)] sm:h-72 sm:w-72 sm:text-[12rem]">
           {left}
         </div>
-        <p className="mt-8 text-sm font-bold uppercase tracking-[.3em] text-white/85">Champions League starts</p>
+        <p className="mt-8 text-sm font-bold uppercase tracking-[.3em] text-white/85">Lost &amp; Found presentation</p>
       </div>
     </div>
   );
@@ -1173,7 +1172,8 @@ function ChampionsMatchPresentation() {
         </div>
 
         <div className="flex flex-col items-center">
-          <span className="rounded-full border-2 border-[#f5c542] bg-[#f5c542] px-3 py-2 text-lg font-black text-[#2a1000] sm:px-5 sm:text-2xl">VS</span>
+          <img src={logo} alt="ASYV" className="h-16 w-16 rounded-2xl border-4 border-[#f5c542] bg-white object-contain p-1 shadow-[0_12px_45px_rgba(245,197,66,.45)] sm:h-24 sm:w-24" />
+          <span className="mt-3 rounded-full border-2 border-white bg-[#ff4500] px-3 py-2 text-lg font-black text-white sm:px-5 sm:text-2xl">VS</span>
           <span className="mt-4 text-center text-[10px] font-black uppercase tracking-[.24em] text-[#f5c542] sm:text-sm">{match.stage}<br />{match.status}</span>
         </div>
 
@@ -1184,19 +1184,29 @@ function ChampionsMatchPresentation() {
       </div>
 
       <div className="absolute bottom-5 left-1/2 -translate-x-1/2 text-center">
-        <p className="text-xs font-black uppercase tracking-[.28em] text-[#f5c542] sm:text-base">Lance Solomon Reddick vs Pelé</p>
+        <p className="text-xs font-black uppercase tracking-[.28em] text-[#f5c542] sm:text-base">Lance Reddick vs Pelé (Edson Arantes Do Nascimento)</p>
       </div>
     </div>
   );
 }
 
 function ChampionsLineupPresentation() {
+  const [visiblePlayers, setVisiblePlayers] = useState(0);
+
+  useEffect(() => {
+    setVisiblePlayers(0);
+    const timer = setInterval(() => {
+      setVisiblePlayers((count) => Math.min(LANCE_LINEUP.length, count + 1));
+    }, 900);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <div className="relative h-[calc(100dvh-7.5rem)] min-h-[520px] overflow-hidden px-3 py-2 sm:px-6">
       <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-2 py-2 sm:px-4">
         <div>
           <p className="text-xs font-black uppercase tracking-[.22em] text-[#f5c542]">Starting eleven</p>
-          <h2 className="text-lg font-black uppercase text-white sm:text-3xl">Lance Solomon Reddick</h2>
+          <h2 className="text-lg font-black uppercase text-white sm:text-3xl">Lance Reddick</h2>
         </div>
         <span className="rounded-full border border-white/20 bg-black/30 px-3 py-2 text-xs font-bold text-white">Group stage · Sunday</span>
       </div>
@@ -1207,8 +1217,8 @@ function ChampionsLineupPresentation() {
         <div className="absolute left-1/2 top-0 h-28 w-56 -translate-x-1/2 border-x-2 border-b-2 border-white/35" />
         <div className="absolute bottom-0 left-1/2 h-28 w-56 -translate-x-1/2 border-x-2 border-t-2 border-white/35" />
 
-        {LANCE_LINEUP.map((player, i) => (
-          <div key={player.no} className="lineup-player absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center text-center" style={{ left: `${player.x}%`, top: `${player.y}%`, animationDelay: `${i * 0.28}s` }}>
+        {LANCE_LINEUP.slice(0, visiblePlayers).map((player, i) => (
+          <div key={player.no} className="lineup-player absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center text-center" style={{ left: `${player.x}%`, top: `${player.y}%`, animationDelay: '0s' }}>
             <span className="grid h-12 w-12 place-items-center rounded-full border-2 border-[#f5c542] bg-[#ff4500] text-lg font-black text-white shadow-[0_8px_25px_rgba(0,0,0,.6)] sm:h-16 sm:w-16 sm:text-2xl">{player.no}</span>
             <span className="mt-1 rounded-full bg-[#090604]/90 px-2 py-1 text-[10px] font-black uppercase text-white shadow-lg sm:px-3 sm:text-sm">{player.name}</span>
           </div>
@@ -1241,7 +1251,7 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
     if (phase !== 'countdown') return undefined;
     const timer = setTimeout(() => {
       if (countdownLeft > 1) setCountdownLeft((value) => value - 1);
-      else { setPhase('champions'); setChampionsStep('match'); setChampionsLeft(CHAMPIONS_SECS); }
+      else { setPhase('lost'); setLostIndex(0); setLostLeft(LOST_ITEM_SECS); }
     }, 1000);
     return () => clearTimeout(timer);
   }, [phase, countdownLeft]);
@@ -1251,7 +1261,7 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
     const timer = setTimeout(() => {
       if (championsLeft > 1) setChampionsLeft((value) => value - 1);
       else if (championsStep === 'match') { setChampionsStep('lineup'); setChampionsLeft(LINEUP_SECS); }
-      else { setPhase('lost'); setLostIndex(0); setLostLeft(LOST_ITEM_SECS); }
+      else setPhase('exit');
     }, 1000);
     return () => clearTimeout(timer);
   }, [phase, championsStep, championsLeft]);
@@ -1261,7 +1271,7 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
     const timer = setTimeout(() => {
       if (lostLeft > 1) setLostLeft((value) => value - 1);
       else if (lostIndex < Math.max(0, (foundItems || []).length - 1)) { setLostIndex((value) => value + 1); setLostLeft(LOST_ITEM_SECS); }
-      else setPhase('exit');
+      else { setPhase('champions'); setChampionsStep('match'); setChampionsLeft(CHAMPIONS_SECS); }
     }, 1000);
     return () => clearTimeout(timer);
   }, [phase, lostIndex, lostLeft, foundItems]);
@@ -4108,11 +4118,12 @@ export default function Home() {
 
   useEffect(() => {
     if (view !== 'home' || getToken() || !repeatAnnouncements) return undefined;
-    const timer = setInterval(() => {
-      setStartupCycle((cycle) => cycle + 1);
-      setShowStartupAnnouncements(true);
-    }, 10 * 60 * 1000);
-    return () => clearInterval(timer);
+    const stored = Number(sessionStorage.getItem('asyv_announcer_cycle') || '0');
+    if (stored >= 15) {
+      setRepeatAnnouncements(false);
+      setShowStartupAnnouncements(false);
+      sessionStorage.removeItem('asyv_announcer_cycle');
+    }
   }, [view, repeatAnnouncements]);
   const toggleDark = () => setDark((v) => !v);
 
@@ -4137,7 +4148,7 @@ export default function Home() {
     setShowStartupAnnouncements(false);
     setView('app');
   };
-  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); setStartupCycle((cycle) => cycle + 1); setRepeatAnnouncements(true); setShowStartupAnnouncements(true); setView('home'); };
+  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); sessionStorage.removeItem('asyv_announcer_cycle'); setStartupCycle((cycle) => cycle + 1); setRepeatAnnouncements(true); setShowStartupAnnouncements(true); setView('home'); };
   const goLogin = (i) => { setIntent(i && i.sessionId ? i : null); setView('login'); };
 
   let page;
@@ -4154,8 +4165,19 @@ export default function Home() {
       {view === 'home' && showStartupAnnouncements && (
         <StartupAnnouncements
           key={startupCycle}
-          onClose={() => setShowStartupAnnouncements(false)}
-          onStopRepeat={() => { setRepeatAnnouncements(false); setShowStartupAnnouncements(false); }}
+          onClose={() => {
+            setShowStartupAnnouncements(false);
+            if (!repeatAnnouncements) return;
+            const completed = Number(sessionStorage.getItem('asyv_announcer_cycle') || '0') + 1;
+            if (completed <= 15) {
+              sessionStorage.setItem('asyv_announcer_cycle', String(completed));
+              window.setTimeout(() => window.location.reload(), 250);
+            } else {
+              sessionStorage.removeItem('asyv_announcer_cycle');
+              setRepeatAnnouncements(false);
+            }
+          }}
+          onStopRepeat={() => { sessionStorage.removeItem('asyv_announcer_cycle'); setRepeatAnnouncements(false); setShowStartupAnnouncements(false); }}
         />
       )}
     </>
