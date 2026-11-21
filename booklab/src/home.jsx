@@ -30,10 +30,9 @@ const Plus = icon('M12 5v14m-7-7h14'); const LogOut = icon('M9 21H5a2 2 0 0 1-2-
 const Sunrise = icon('M12 2v7m-4-3 4 3 4-3M3 18h18M5 14a7 7 0 0 1 14 0m-17 8h20'); const Sunset = icon('M12 22v-7m-4 3 4-3 4 3M3 6h18M5 10a7 7 0 0 1 14 0m-17-8h20');
 const Eye = icon('M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'); const Radio = icon('M4 8h16a2 2 0 0 1 2 2v10H2V10a2 2 0 0 1 2-2zm4 4h.01');
 const ArrowLeft = icon('m12 19-7-7 7-7m-7 7h14'); const CheckCheck = icon('m2 12 4 4L16 6m-4 6 4 4 6-10');
-// Navbar and Champions League icons
+// Navigation and Champions League icons
 const Menu = icon('M4 6h16M4 12h16M4 18h16');
 const Trophy = icon('M8 21h8m-4-4v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3m10-4h3v1a3 3 0 0 1-3 3');
-const Sparkle = icon('M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z');
 // Chat and call icons
 const PHONE = 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z';
 const VIDEO = 'm16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 11M4 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z';
@@ -1089,9 +1088,8 @@ const UclBall = ({ size = 52 }) => (
   </svg>
 );
 
-const ANNOUNCEMENT_IMAGE = '';
 const INTRO = [
-  { key: 'image', secs: 5 },
+  { key: 'champions', secs: 10 },
   { key: 'lost', secs: 10 },
 ];
 
@@ -1117,11 +1115,19 @@ function StartupAnnouncements({ onClose }) {
   const [phase, setPhase] = useState('book');
   const [idx, setIdx] = useState(0);
   const [left, setLeft] = useState(INTRO[0].secs);
+  const [foundItems, setFoundItems] = useState(null);
+  const [foundError, setFoundError] = useState('');
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const loadFoundItems = useCallback(() => api('/api/trends')
+    .then((items) => { setFoundItems(items); setFoundError(''); })
+    .catch((error) => { setFoundItems([]); setFoundError(error.message); }), []);
+  useLive({ 'trends:update': loadFoundItems });
   const total = INTRO.reduce((n, slide) => n + slide.secs, 0);
   const spent = INTRO.slice(0, idx).reduce((n, slide) => n + slide.secs, 0) + (INTRO[idx].secs - left);
   const remaining = Math.max(0, total - spent);
+
+  useEffect(() => { loadFoundItems(); }, [loadFoundItems]);
 
   useEffect(() => {
     if (phase !== 'book') return undefined;
@@ -1150,20 +1156,21 @@ function StartupAnnouncements({ onClose }) {
   if (phase === 'book') return <BookOpening />;
 
   const kind = INTRO[idx].key;
-  const isImage = kind === 'image';
-  const titleId = isImage ? 'startup-image-title' : 'startup-lost-found-title';
+  const isChampions = kind === 'champions';
+  const titleId = isChampions ? 'startup-champions-title' : 'startup-lost-found-title';
   const match = CHAMPIONS_MATCH;
+  const postedItems = foundItems || [];
 
   return (
     <div className={`fixed inset-0 z-[200] grid place-items-center overflow-y-auto bg-[#050914] px-4 py-6 text-white ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
-        <div className={`absolute -left-24 -top-32 h-80 w-80 rounded-full blur-3xl ${isImage ? 'bg-blue-600/30' : 'bg-orange-500/25'}`} />
-        <div className={`absolute -bottom-36 -right-20 h-96 w-96 rounded-full blur-3xl ${isImage ? 'bg-orange-500/20' : 'bg-emerald-500/25'}`} />
+        <div className={`absolute -left-24 -top-32 h-80 w-80 rounded-full blur-3xl ${isChampions ? 'bg-blue-600/30' : 'bg-orange-500/25'}`} />
+        <div className={`absolute -bottom-36 -right-20 h-96 w-96 rounded-full blur-3xl ${isChampions ? 'bg-orange-500/20' : 'bg-emerald-500/25'}`} />
         {STARS.map((star, i) => <span key={i} className="ucl-twinkle absolute rounded-full bg-white" style={{ left: star.left, top: star.top, width: star.s, height: star.s, animationDelay: star.d }} />)}
       </div>
 
-      <section key={kind} className={`announcement-enter relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-white/15 shadow-2xl ${isImage ? 'ucl-card' : 'bg-gradient-to-br from-[#082d27] via-[#0c171c] to-[#22100b]'}`}>
-        <h1 id={titleId} className="sr-only">{isImage ? match.league : 'Lost and Found'}</h1>
+      <section key={kind} className={`announcement-enter relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-white/15 shadow-2xl ${isChampions ? 'bg-[#050914]' : 'bg-gradient-to-br from-[#082d27] via-[#0c171c] to-[#22100b]'}`}>
+        <h1 id={titleId} className="sr-only">{isChampions ? match.league : 'Lost and Found'}</h1>
         <div className="absolute inset-x-0 top-0 z-10 h-1 bg-white/15" aria-hidden="true">
           <span key={kind} className="announcement-progress block h-full bg-gradient-to-r from-[#f5c542] via-[#ff4500] to-[#16a34a]" style={{ animationDuration: `${INTRO[idx].secs}s` }} />
         </div>
@@ -1178,55 +1185,46 @@ function StartupAnnouncements({ onClose }) {
           </div>
         </div>
 
-        {isImage ? (
-          <div className="relative mt-4 px-5 pb-7 sm:px-8 sm:pb-10">
-            <div className="relative overflow-hidden rounded-[20px] border border-white/15 bg-black/30">
-              <Photo src={ANNOUNCEMENT_IMAGE} alt="Announcement" className="lb-zoom max-h-[68vh] w-full object-contain"
-                fallback={(
-                  <div className="grid min-h-[320px] place-items-center p-8 text-center">
-                    <div>
-                      <span className="ucl-bob inline-block"><UclBall size={110} /></span>
-                      <p className="mt-5 text-3xl font-black uppercase sm:text-5xl">{match.league}</p>
-                      <p className="mt-3 text-lg font-bold">{match.stage} <span className="text-[#f5c542]">·</span> {match.time}</p>
-                    </div>
-                  </div>
-                )} />
-            </div>
-            <div className="mt-4 flex items-center justify-center gap-3 text-[11px] font-semibold text-white/70">
-              <span className="grid h-9 w-9 place-items-center rounded-full border border-white/25 text-sm font-black tabular-nums text-white">{left}</span>
-              Next: Lost &amp; Found
-            </div>
-          </div>
+        {isChampions ? (
+          <div className="p-3 sm:p-5"><ChampionsAd /></div>
         ) : (
-          <div className="relative grid items-center gap-6 px-5 pb-8 pt-8 sm:px-8 md:grid-cols-[.8fr_1fr] md:gap-10 md:pb-10 md:pt-12">
-            <div className="relative mx-auto grid aspect-square w-full max-w-[290px] place-items-center overflow-hidden rounded-[42px] border border-emerald-200/20 bg-gradient-to-br from-emerald-300/15 via-white/5 to-orange-300/15 shadow-[0_20px_80px_rgba(16,185,129,.15)]">
-              <span className="lb-float grid h-36 w-36 place-items-center rounded-[38px] border border-white/20 bg-white/10 shadow-2xl sm:h-44 sm:w-44">
-                <PackageSearch className="h-20 w-20 text-[#9bf6c5] sm:h-24 sm:w-24" aria-hidden="true" />
-              </span>
-              <span className="absolute right-2 top-8 rotate-6 rounded-full bg-[#ffb020] px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-[#251200]">Found it?</span>
-              <span className="absolute bottom-2 left-2 -rotate-6 rounded-full bg-[#16a34a] px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-white">Bring it home</span>
-              <span className="lb-ping absolute left-7 top-8 h-3 w-3 rounded-full bg-[#9bf6c5]" aria-hidden="true" />
-              {['Keys', 'Books', 'Bags', 'Bottles'].map((word, i) => (
-                <span key={word} className="lf-fly absolute rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-bold backdrop-blur" style={{ animationDelay: `${i * 0.6}s`, left: `${8 + i * 22}%`, bottom: '-6%' }}>{word}</span>
-              ))}
-            </div>
-
-            <div className="text-center md:text-left">
+          <div className="relative px-5 pb-6 pt-5 sm:px-8 sm:pb-8">
+            <div className="mb-5 text-center">
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200/30 bg-emerald-200/10 px-3 py-1.5 text-[10px] font-extrabold tracking-[.16em] text-[#9bf6c5]">
                 <PackageSearch className="h-4 w-4" aria-hidden="true" /> LOST &amp; FOUND
               </span>
-              <h2 className="mt-5 text-4xl font-black uppercase leading-[.98] tracking-tight sm:text-6xl">
-                Lost something?<br /><span className="bg-gradient-to-r from-[#9bf6c5] via-[#f5c542] to-[#ff8a65] bg-clip-text text-transparent">Let’s find it.</span>
-              </h2>
-              <p className="mt-5 text-lg font-bold sm:text-xl">Keys. Books. Bottles. Bags.</p>
-              <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-white/75 md:mx-0">
-                Found items are posted on the Lost and Found board. Take a look, your missing item might be waiting to come home.
-              </p>
-              <div className="mt-5 flex items-center justify-center gap-3 md:justify-start">
-                <span className="grid h-12 w-12 place-items-center rounded-full border-2 border-[#9bf6c5]/60 text-lg font-black tabular-nums">{left}</span>
-                <span className="text-[11px] font-semibold uppercase tracking-[.14em] text-[#9bf6c5]">seconds left · then the site opens</span>
-              </div>
+              <h2 className="mt-3 text-3xl font-black uppercase sm:text-4xl">Found items at school</h2>
+              <p className="mt-2 text-sm text-white/75">These are the latest items posted on the Lost and Found board.</p>
             </div>
+            {foundItems === null ? (
+              <div className="grid min-h-40 place-items-center text-sm text-white/75">Loading posted items…</div>
+            ) : foundError ? (
+              <div role="alert" className="rounded-xl border border-red-300/30 bg-red-950/30 p-5 text-center text-sm text-white">
+                Could not load the Lost and Found posts: {foundError}
+              </div>
+            ) : postedItems.length === 0 ? (
+              <div className="rounded-xl border border-white/15 bg-white/5 p-6 text-center text-sm text-white/75">There are no active found-item posts right now.</div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {postedItems.slice(0, 3).map((item) => {
+                  const photo = item.media?.map(itemPhoto).find(Boolean);
+                  return (
+                    <article key={item.id} className="overflow-hidden rounded-xl border border-white/15 bg-black/25">
+                      <div className="grid aspect-[4/3] place-items-center overflow-hidden bg-white/5">
+                        <Photo src={photo} alt={item.title} className="h-full w-full object-cover" fallback={<NoPhoto label={item.category} />} />
+                      </div>
+                      <div className="p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-[#9bf6c5]">{item.category}</p>
+                        <h3 className="mt-1 text-base font-bold">{item.title}</h3>
+                        <p className="mt-2 text-xs text-white/65">{item.foundAt ? `Found at ${item.foundAt}` : `Posted ${ago(item.postedAt)}`}</p>
+                        {item.description && <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/75">{item.description}</p>}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+            <p className="mt-5 text-center text-[11px] font-semibold text-[#9bf6c5]">Take a look at the Lost and Found board to contact the person who posted an item.</p>
           </div>
         )}
 
@@ -1364,11 +1362,10 @@ function ChampionsAd() {
 
 /* ================================================================== */
 /* ADVANCED NAVBAR: shrinks on scroll, progress line, active section,  */
-/* smooth scroll, mobile menu, live champions chip                      */
+/* smooth scroll and mobile menu                                        */
 /* ================================================================== */
 
 const NAV_LINKS = [
-  ['champions', 'Champions League', Trophy],
   ['labs', 'Labs', FlaskConical],
   ['trends', 'Lost and found', PackageSearch],
 ];
@@ -1419,15 +1416,11 @@ function LandingNav({ onLogin, dark, onToggleDark }) {
             <a key={id} href={`#${id}`} onClick={go(id)} aria-current={active === id ? 'true' : undefined}
               className={`nav-link inline-flex items-center gap-1.5 rounded-[8px] px-3 py-2 transition-colors ${active === id ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
               <Icon className="h-4 w-4" aria-hidden="true" />{label}
-              {id === 'champions' && <span className="relative ml-0.5 flex h-2 w-2"><span className="ucl-ring absolute inset-0 rounded-full" style={{ background: '#ff4500' }} /><span className="relative h-2 w-2 rounded-full" style={{ background: '#ff4500' }} /></span>}
             </a>
           ))}
         </nav>
 
         <div className="flex items-center gap-2">
-          <a href="#champions" onClick={go('champions')} className="hidden items-center gap-1.5 rounded-full border border-[#f5c542]/60 bg-[#f5c542]/15 px-3 py-1.5 text-[11px] font-bold text-[#b45309] lg:inline-flex">
-            <Sparkle className="h-3.5 w-3.5" aria-hidden="true" />Group stage is coming
-          </a>
           <ThemeBtn dark={dark} onToggle={onToggleDark} />
           <Btn className="hidden sm:inline-flex" onClick={() => onLogin()}>Log in</Btn>
           <button type="button" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} onClick={() => setOpen((v) => !v)}
@@ -1462,7 +1455,7 @@ function Landing({ onLogin, dark, onToggleDark }) {
   return (
     <div id="top" className="bg-white text-[#111827] antialiased text-sm">
       <LandingNav onLogin={onLogin} dark={dark} onToggleDark={onToggleDark} />
-      <section className="mx-auto grid max-w-6xl items-center gap-8 px-6 pt-14 pb-6 md:grid-cols-[1.05fr_.95fr]">
+      <section className="mx-auto max-w-6xl px-6 pt-14 pb-6">
         <div>
           <span className="lb-in inline-block rounded-[6px] border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[11px] font-semibold text-[#15803d]">Live places, updated automatically</span>
           <h1 className="lb-in mt-5 max-w-2xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
@@ -1472,7 +1465,6 @@ function Landing({ onLogin, dark, onToggleDark }) {
             <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
           </div>
         </div>
-        <ChampionsAd />
       </section>
       <section id="labs" className="mx-auto max-w-6xl scroll-mt-20 px-6 py-12">
         <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Labs and free places</h2>
