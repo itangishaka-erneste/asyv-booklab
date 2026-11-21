@@ -753,6 +753,17 @@ const LANDING_CSS = `
 @keyframes lfFly{0%{transform:translateY(0) scale(.8);opacity:0}20%{opacity:1}100%{transform:translateY(-220px) scale(1.1);opacity:0}}
 @keyframes announcementEnter{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}
 @keyframes announcementProgress{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+@keyframes countdownPop{0%{opacity:0;transform:scale(.35) rotate(-12deg)}55%{opacity:1;transform:scale(1.12) rotate(2deg)}100%{opacity:1;transform:scale(1) rotate(0)}}
+@keyframes teamLeft{0%{opacity:0;transform:translateX(-220px) scale(.65) rotate(-8deg)}70%{opacity:1;transform:translateX(12px) scale(1.05) rotate(2deg)}100%{opacity:1;transform:none}}
+@keyframes teamRight{0%{opacity:0;transform:translateX(220px) scale(.65) rotate(8deg)}70%{opacity:1;transform:translateX(-12px) scale(1.05) rotate(-2deg)}100%{opacity:1;transform:none}}
+@keyframes playerIn{0%{opacity:0;transform:translate(-50%,-50%) scale(.15)}65%{opacity:1;transform:translate(-50%,-50%) scale(1.12)}100%{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+@keyframes lostZoom{0%{opacity:0;transform:scale(1.12)}100%{opacity:1;transform:scale(1)}}
+.countdown-pop{animation:countdownPop .55s cubic-bezier(.2,.9,.3,1) both}
+.team-enter-left{animation:teamLeft 1.1s cubic-bezier(.2,.9,.3,1) both}
+.team-enter-right{animation:teamRight 1.1s cubic-bezier(.2,.9,.3,1) both}
+.lineup-field{background:radial-gradient(circle at 50% 50%,rgba(74,222,128,.25),transparent 28%),linear-gradient(135deg,#176a37,#0d4d29);box-shadow:inset 0 0 100px rgba(0,0,0,.35),0 30px 80px rgba(0,0,0,.5)}
+.lineup-player{animation:playerIn .7s cubic-bezier(.2,.9,.3,1) both}
+.lost-fullscreen{animation:lostZoom .7s ease both}
 .announcement-enter{animation:announcementEnter .45s ease both}
 .announcement-progress{transform-origin:left;animation:announcementProgress linear forwards}
 .book-scene{perspective:1200px}
@@ -1070,9 +1081,23 @@ const CHAMPIONS_MATCH = {
   time: 'Time to be announced',
   venue: 'To be announced',
   score: [null, null], // use numbers when the match is played, for example [2, 1]
-  home: { name: 'Lance Reddick', short: 'LR', bg: '#f4c3b8', fg: '#7a2a18' },
-  away: { name: 'Pelé (Edson Arantes Do Nascimento)', short: 'PE', bg: '#dcd7f7', fg: '#2a1f5c' },
+  home: { name: 'Lance Solomon Reddick', short: 'LR', bg: '#f4c3b8', fg: '#7a2a18', image: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQH5TowRXqB1yLLxo8me3UIXDbZNR6-RplYfyXZoL5Gwg&s', imageAlt: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTu9P2_25Ke6vLYxgy74kFtU9oUba5B2sOGQTq3VgnOTA&s=10' },
+  away: { name: 'Pelé (Edson Arantes Do Nascimento)', short: 'PE', bg: '#dcd7f7', fg: '#2a1f5c', image: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRJ8B27d6TCeLBeyLwtTNWll_Mva2qv6KMW8Vgexx4joQ&s=10' },
 };
+
+const LANCE_LINEUP = [
+  { name: 'Herve', no: 1, x: 50, y: 88, role: 'Goalkeeper' },
+  { name: 'Bonna', no: 5, x: 29, y: 69, role: 'Defence' },
+  { name: 'Cedric', no: 2, x: 43, y: 69, role: 'Defence' },
+  { name: 'Kagame', no: 3, x: 57, y: 69, role: 'Defence' },
+  { name: 'Mugisha', no: 7, x: 71, y: 69, role: 'Defence' },
+  { name: 'Player 4', no: 4, x: 50, y: 69, role: 'Defence · TBC' },
+  { name: 'Blaise', no: 11, x: 22, y: 45, role: 'Midfield' },
+  { name: 'Benjamin', no: 8, x: 39, y: 45, role: 'Midfield' },
+  { name: 'Erneste', no: 10, x: 61, y: 45, role: 'Midfield' },
+  { name: 'Reponse', no: 6, x: 78, y: 45, role: 'Midfield' },
+  { name: 'Didas', no: 9, x: 50, y: 19, role: 'Forward' },
+];
 
 const STARS = Array.from({ length: 22 }, (_, i) => ({
   left: `${(i * 37 + 11) % 100}%`, top: `${(i * 53 + 7) % 78}%`, d: `${(i % 7) * 0.4}s`, s: 2 + (i % 3),
@@ -1088,64 +1113,158 @@ const UclBall = ({ size = 52 }) => (
   </svg>
 );
 
-const INTRO = [
-  { key: 'champions', secs: 10 },
-  { key: 'lost', secs: 10 },
-];
+const COUNTDOWN_SECS = 5;
+const CHAMPIONS_SECS = 12;
+const LINEUP_SECS = 12;
+const LOST_ITEM_SECS = 8;
 
-function BookOpening() {
+function TeamLogo({ team, className = '' }) {
+  const [logoIndex, setLogoIndex] = useState(0);
+  const sources = [team.image, team.imageAlt].filter(Boolean);
+  const source = sources[logoIndex];
+  useEffect(() => setLogoIndex(0), [team.image, team.imageAlt]);
+  if (!source) {
+    return <span className={`grid place-items-center rounded-[28px] bg-white/10 text-5xl font-black ${className}`}>{team.short}</span>;
+  }
   return (
-    <div className="fixed inset-0 z-[200] grid place-items-center bg-[#050914] text-white" role="status" aria-label="Opening">
-      <div className="flex flex-col items-center gap-8">
-        <div className="book-scene">
-          <div className="book">
-            {Array.from({ length: 16 }, (_, i) => (
-              <span key={i} className="book-page" style={{ '--i': i }} />
-            ))}
-            <span className="book-cover"><span className="book-title">Asyv</span></span>
-          </div>
+    <img
+      src={source}
+      alt={team.name}
+      referrerPolicy="no-referrer"
+      className={`rounded-[28px] object-contain ${className}`}
+      onError={() => setLogoIndex((i) => i + 1)}
+    />
+  );
+}
+
+function CountdownOpening({ left }) {
+  return (
+    <div className="fixed inset-0 z-[200] grid place-items-center overflow-hidden bg-[#090604] text-white">
+      <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+        <div className="absolute left-1/2 top-1/2 h-[70vw] w-[70vw] -translate-x-1/2 -translate-y-1/2 rounded-full border-[18px] border-[#ff4500]/20" />
+        <div className="absolute left-1/2 top-1/2 h-[52vw] w-[52vw] -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-[#f5c542]/30" />
+        {STARS.map((star, i) => <span key={i} className="ucl-twinkle absolute rounded-full bg-[#f5c542]" style={{ left: star.left, top: star.top, width: star.s * 2, height: star.s * 2, animationDelay: star.d }} />)}
+      </div>
+      <div className="relative text-center">
+        <p className="mb-6 text-sm font-black uppercase tracking-[.5em] text-[#ffb020] sm:text-lg">Welcome to Asyv</p>
+        <div key={left} className="countdown-pop mx-auto grid h-52 w-52 place-items-center rounded-full border-[10px] border-[#f5c542] bg-gradient-to-br from-[#ff4500] to-[#7a1200] text-[9rem] font-black leading-none text-white shadow-[0_0_100px_rgba(255,69,0,.7)] sm:h-72 sm:w-72 sm:text-[12rem]">
+          {left}
         </div>
-        <p className="text-xs font-bold uppercase tracking-[.3em] text-white/70">Opening<span className="lb-pulse">…</span></p>
+        <p className="mt-8 text-sm font-bold uppercase tracking-[.3em] text-white/85">Champions League starts</p>
+      </div>
+    </div>
+  );
+}
+
+function ChampionsMatchPresentation() {
+  const match = CHAMPIONS_MATCH;
+  return (
+    <div className="relative grid h-[calc(100dvh-7.5rem)] min-h-[520px] place-items-center overflow-hidden px-4 py-3">
+      <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+        <div className="absolute -left-24 top-1/2 h-96 w-96 -translate-y-1/2 rounded-full bg-[#ff4500]/25 blur-[100px]" />
+        <div className="absolute -right-24 top-1/2 h-96 w-96 -translate-y-1/2 rounded-full bg-[#f5c542]/20 blur-[100px]" />
+        {STARS.map((star, i) => <span key={i} className="ucl-twinkle absolute rounded-full bg-white" style={{ left: star.left, top: star.top, width: star.s * 2, height: star.s * 2, animationDelay: star.d }} />)}
+      </div>
+
+      <div className="relative grid w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-8">
+        <div className="team-enter-left flex min-w-0 flex-col items-center text-center">
+          <TeamLogo team={match.home} className="h-[22vh] w-[22vh] max-h-56 max-w-56 min-h-32 min-w-32 border-4 border-[#f5c542]/80 bg-white p-2 shadow-[0_20px_70px_rgba(255,69,0,.45)]" />
+          <h2 className="mt-5 max-w-md text-xl font-black uppercase leading-tight text-white sm:text-4xl lg:text-5xl">{match.home.name}</h2>
+        </div>
+
+        <div className="flex flex-col items-center">
+          <span className="rounded-full border-2 border-[#f5c542] bg-[#f5c542] px-3 py-2 text-lg font-black text-[#2a1000] sm:px-5 sm:text-2xl">VS</span>
+          <span className="mt-4 text-center text-[10px] font-black uppercase tracking-[.24em] text-[#f5c542] sm:text-sm">{match.stage}<br />{match.status}</span>
+        </div>
+
+        <div className="team-enter-right flex min-w-0 flex-col items-center text-center">
+          <TeamLogo team={match.away} className="h-[22vh] w-[22vh] max-h-56 max-w-56 min-h-32 min-w-32 border-4 border-[#f5c542]/80 bg-white p-2 shadow-[0_20px_70px_rgba(245,197,66,.35)]" />
+          <h2 className="mt-5 max-w-md text-xl font-black uppercase leading-tight text-white sm:text-4xl lg:text-5xl">{match.away.name}</h2>
+        </div>
+      </div>
+
+      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 text-center">
+        <p className="text-xs font-black uppercase tracking-[.28em] text-[#f5c542] sm:text-base">Lance Solomon Reddick vs Pelé</p>
+      </div>
+    </div>
+  );
+}
+
+function ChampionsLineupPresentation() {
+  return (
+    <div className="relative h-[calc(100dvh-7.5rem)] min-h-[520px] overflow-hidden px-3 py-2 sm:px-6">
+      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-2 py-2 sm:px-4">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[.22em] text-[#f5c542]">Starting eleven</p>
+          <h2 className="text-lg font-black uppercase text-white sm:text-3xl">Lance Solomon Reddick</h2>
+        </div>
+        <span className="rounded-full border border-white/20 bg-black/30 px-3 py-2 text-xs font-bold text-white">Group stage · Sunday</span>
+      </div>
+
+      <div className="lineup-field absolute bottom-3 left-1/2 top-14 w-[min(92vw,820px)] -translate-x-1/2 overflow-hidden rounded-[44px] border-4 border-white/35">
+        <div className="absolute left-1/2 top-0 h-full w-px bg-white/30" />
+        <div className="absolute left-1/2 top-1/2 h-32 w-32 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/35" />
+        <div className="absolute left-1/2 top-0 h-28 w-56 -translate-x-1/2 border-x-2 border-b-2 border-white/35" />
+        <div className="absolute bottom-0 left-1/2 h-28 w-56 -translate-x-1/2 border-x-2 border-t-2 border-white/35" />
+
+        {LANCE_LINEUP.map((player, i) => (
+          <div key={player.no} className="lineup-player absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center text-center" style={{ left: `${player.x}%`, top: `${player.y}%`, animationDelay: `${i * 0.28}s` }}>
+            <span className="grid h-12 w-12 place-items-center rounded-full border-2 border-[#f5c542] bg-[#ff4500] text-lg font-black text-white shadow-[0_8px_25px_rgba(0,0,0,.6)] sm:h-16 sm:w-16 sm:text-2xl">{player.no}</span>
+            <span className="mt-1 rounded-full bg-[#090604]/90 px-2 py-1 text-[10px] font-black uppercase text-white shadow-lg sm:px-3 sm:text-sm">{player.name}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
 function StartupAnnouncements({ onClose, onStopRepeat }) {
-  const [phase, setPhase] = useState('book');
-  const [idx, setIdx] = useState(0);
-  const [left, setLeft] = useState(INTRO[0].secs);
+  const [phase, setPhase] = useState('countdown');
+  const [countdownLeft, setCountdownLeft] = useState(COUNTDOWN_SECS);
+  const [championsStep, setChampionsStep] = useState('match');
+  const [championsLeft, setChampionsLeft] = useState(CHAMPIONS_SECS);
+  const [lostIndex, setLostIndex] = useState(0);
+  const [lostLeft, setLostLeft] = useState(LOST_ITEM_SECS);
   const [foundItems, setFoundItems] = useState(null);
   const [foundError, setFoundError] = useState('');
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+
   const loadFoundItems = useCallback(() => api('/api/trends')
     .then((items) => { setFoundItems(items); setFoundError(''); })
     .catch((error) => { setFoundItems([]); setFoundError(error.message); }), []);
   useLive({ 'trends:update': loadFoundItems });
-  const total = INTRO.reduce((n, slide) => n + slide.secs, 0);
-  const spent = INTRO.slice(0, idx).reduce((n, slide) => n + slide.secs, 0) + (INTRO[idx].secs - left);
-  const remaining = Math.max(0, total - spent);
 
   useEffect(() => { loadFoundItems(); }, [loadFoundItems]);
 
   useEffect(() => {
-    if (phase !== 'book') return undefined;
-    const timer = setTimeout(() => setPhase('show'), 2800);
-    return () => clearTimeout(timer);
-  }, [phase]);
-
-  useEffect(() => {
-    if (phase !== 'show') return undefined;
+    if (phase !== 'countdown') return undefined;
     const timer = setTimeout(() => {
-      if (left > 1) setLeft(left - 1);
-      else if (idx < INTRO.length - 1) {
-        setIdx(idx + 1);
-        setLeft(INTRO[idx + 1].secs);
-      } else setPhase('exit');
+      if (countdownLeft > 1) setCountdownLeft((value) => value - 1);
+      else { setPhase('champions'); setChampionsStep('match'); setChampionsLeft(CHAMPIONS_SECS); }
     }, 1000);
     return () => clearTimeout(timer);
-  }, [phase, idx, left]);
+  }, [phase, countdownLeft]);
+
+  useEffect(() => {
+    if (phase !== 'champions') return undefined;
+    const timer = setTimeout(() => {
+      if (championsLeft > 1) setChampionsLeft((value) => value - 1);
+      else if (championsStep === 'match') { setChampionsStep('lineup'); setChampionsLeft(LINEUP_SECS); }
+      else { setPhase('lost'); setLostIndex(0); setLostLeft(LOST_ITEM_SECS); }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [phase, championsStep, championsLeft]);
+
+  useEffect(() => {
+    if (phase !== 'lost') return undefined;
+    const timer = setTimeout(() => {
+      if (lostLeft > 1) setLostLeft((value) => value - 1);
+      else if (lostIndex < Math.max(0, (foundItems || []).length - 1)) { setLostIndex((value) => value + 1); setLostLeft(LOST_ITEM_SECS); }
+      else setPhase('exit');
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [phase, lostIndex, lostLeft, foundItems]);
 
   useEffect(() => {
     if (phase !== 'exit') return undefined;
@@ -1153,105 +1272,71 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
     return () => clearTimeout(timer);
   }, [phase]);
 
-  if (phase === 'book') return <BookOpening />;
+  if (phase === 'countdown') return <CountdownOpening left={countdownLeft} />;
 
-  const kind = INTRO[idx].key;
-  const isChampions = kind === 'champions';
-  const titleId = isChampions ? 'startup-champions-title' : 'startup-lost-found-title';
-  const match = CHAMPIONS_MATCH;
+  const isChampions = phase === 'champions';
   const postedItems = foundItems || [];
+  const currentItem = postedItems[lostIndex];
 
   return (
-    <div className={`fixed inset-0 z-[200] grid place-items-center overflow-y-auto ${isChampions ? 'bg-[#050914] px-4 py-6 text-white' : 'bg-white p-0 text-[#111827]'} ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
-      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
-        <div className={`absolute -left-24 -top-32 h-80 w-80 rounded-full blur-3xl ${isChampions ? 'bg-blue-600/30' : 'bg-orange-500/25'}`} />
-        <div className={`absolute -bottom-36 -right-20 h-96 w-96 rounded-full blur-3xl ${isChampions ? 'bg-orange-500/20' : 'bg-emerald-500/25'}`} />
-        {STARS.map((star, i) => <span key={i} className="ucl-twinkle absolute rounded-full bg-white" style={{ left: star.left, top: star.top, width: star.s, height: star.s, animationDelay: star.d }} />)}
-      </div>
+    <div className={`fixed inset-0 z-[200] overflow-hidden ${isChampions ? 'bg-[#050914] text-white' : 'bg-[#090604] text-white'} ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-label="Site announcements">
+      {isChampions && (
+        <iframe
+          title="Champions League advert music"
+          className="pointer-events-none absolute left-[-9999px] h-px w-px"
+          src="https://www.youtube.com/embed/Ac2WgG6esU8?autoplay=1&mute=0&controls=0&playsinline=1&loop=1&playlist=Ac2WgG6esU8"
+          allow="autoplay; encrypted-media"
+          referrerPolicy="strict-origin-when-cross-origin"
+        />
+      )}
 
-      <section key={kind} className={`announcement-enter relative overflow-hidden ${isChampions ? 'w-full max-w-5xl rounded-[28px] border border-white/15 bg-[#050914] shadow-2xl' : 'h-[100dvh] w-full rounded-none border-0 bg-white text-[#111827]'}`}>
-        <h1 id={titleId} className="sr-only">{isChampions ? match.league : 'Lost and Found'}</h1>
-        <div className="absolute inset-x-0 top-0 z-10 h-1 bg-white/15" aria-hidden="true">
-          <span key={kind} className="announcement-progress block h-full bg-gradient-to-r from-[#f5c542] via-[#ff4500] to-[#16a34a]" style={{ animationDuration: `${INTRO[idx].secs}s` }} />
+      <header className="relative z-30 flex h-[72px] items-center justify-between gap-3 px-4 sm:px-8">
+        <Logo />
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => onStopRepeat?.()} className="rounded-full border border-white/20 bg-black/40 px-3 py-2 text-[11px] font-bold text-white hover:bg-white/10">Stop repeat</button>
+          <button type="button" onClick={() => setPhase('exit')} className="rounded-full border border-white/20 bg-black/40 px-3 py-2 text-[11px] font-bold text-white hover:bg-white/10">Skip intro</button>
         </div>
+      </header>
 
-        <div className="relative z-10 flex items-center justify-between gap-4 px-5 pt-5 sm:px-8 sm:pt-7">
-          <Logo />
-          <div className="flex items-center gap-3">
-            <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold tabular-nums ${isChampions ? 'bg-black/40 text-white' : 'border border-black/10 bg-[#f7f8f7] text-[#111827]'}`}>Moving on in {remaining}s</span>
-            <button type="button" onClick={() => onStopRepeat?.()} className={`hidden rounded-full px-3 py-2 text-[11px] font-semibold transition sm:inline-flex ${isChampions ? 'border border-white/20 bg-black/30 text-white/90 hover:bg-white/10' : 'border border-black/15 bg-white text-[#111827] hover:bg-black/5'}`}>
-              Stop repeat
-            </button>
-            <button type="button" onClick={() => setPhase('exit')} className={`rounded-full px-3 py-2 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${isChampions ? 'border border-white/20 bg-black/30 text-white/90 hover:bg-white/10 focus-visible:outline-white' : 'border border-black/15 bg-white text-[#111827] hover:bg-black/5 focus-visible:outline-[#16a34a]'}`}>
-              Skip intro
-            </button>
-          </div>
-        </div>
-
-        {isChampions ? (
-          <div className="p-3 sm:p-5"><ChampionsAd /></div>
-        ) : (
-          <div className="relative flex h-[calc(100dvh-7.5rem)] flex-col justify-center overflow-y-auto px-5 pb-6 pt-5 sm:px-8 sm:pb-8">
-            <div className="mb-5 text-center">
-              <span className="inline-flex items-center gap-2 rounded-full border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[10px] font-extrabold tracking-[.16em] text-[#15803d]">
-                <PackageSearch className="h-4 w-4" aria-hidden="true" /> LOST &amp; FOUND
-              </span>
-              <h2 className="mt-3 text-3xl font-black uppercase sm:text-4xl">Found items at school</h2>
-              <p className="mt-2 text-sm text-black/60">These are the latest items posted on the Lost and Found board.</p>
+      {isChampions ? (
+        championsStep === 'match' ? <ChampionsMatchPresentation /> : <ChampionsLineupPresentation />
+      ) : (
+        <div key={lostIndex} className="lost-fullscreen relative h-[calc(100dvh-72px)] overflow-hidden">
+          {currentItem ? (
+            <>
+              {currentItem.media?.map(itemPhoto).find(Boolean) ? (
+                <Photo
+                  src={currentItem.media.map(itemPhoto).find(Boolean)}
+                  alt={currentItem.title}
+                  className="absolute inset-0 h-full w-full object-contain"
+                  fallback={<div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_center,#f5c542_0%,#ff4500_25%,#090604_72%)]"><PackageSearch className="h-48 w-48 text-white" aria-hidden="true" /></div>}
+                />
+              ) : (
+                <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_center,#f5c542_0%,#ff4500_25%,#090604_72%)]"><PackageSearch className="h-48 w-48 text-white" aria-hidden="true" /></div>
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/25" />
+              <div className="absolute bottom-0 left-0 right-0 p-5 sm:p-10">
+                <p className="mb-2 text-sm font-black uppercase tracking-[.28em] text-[#f5c542] sm:text-lg">{currentItem.category}</p>
+                <h1 className="text-4xl font-black uppercase leading-none text-white drop-shadow-2xl sm:text-7xl lg:text-8xl">{currentItem.title}</h1>
+                <p className="mt-4 text-lg font-bold text-white/90 sm:text-2xl">{currentItem.foundAt ? `Found at ${currentItem.foundAt}` : `Posted ${ago(currentItem.postedAt)}`}</p>
+              </div>
+              <div className="absolute right-5 top-5 grid h-16 w-16 place-items-center rounded-full border-4 border-[#f5c542] bg-[#090604]/80 text-2xl font-black text-[#f5c542] sm:h-20 sm:w-20 sm:text-3xl">{lostLeft}</div>
+            </>
+          ) : (
+            <div className="grid h-full place-items-center bg-[radial-gradient(circle_at_center,#16a34a_0%,#08120b_45%,#090604_78%)] text-center">
+              <div>
+                <PackageSearch className="mx-auto h-32 w-32 text-[#9bf6c5]" aria-hidden="true" />
+                <h1 className="mt-6 text-4xl font-black uppercase text-white sm:text-7xl">Nothing posted yet</h1>
+                <p className="mt-4 text-lg font-bold text-white/80">Lost &amp; Found</p>
+              </div>
             </div>
-            {foundItems === null ? (
-              <div className="grid min-h-40 place-items-center text-sm text-black/55">Loading posted items…</div>
-            ) : foundError ? (
-              <div role="alert" className="rounded-xl border border-red-300/60 bg-red-50 p-5 text-center text-sm text-red-700">
-                Could not load the Lost and Found posts: {foundError}
-              </div>
-            ) : postedItems.length === 0 ? (
-              <div className="rounded-xl border border-black/10 bg-[#f7f8f7] p-6 text-center text-sm text-black/60">There are no active found-item posts right now.</div>
-            ) : (
-              <div className={`grid gap-4 ${postedItems.length > 1 ? 'lg:grid-cols-[1.55fr_1fr]' : ''}`}>
-                {postedItems.slice(0, 3).map((item, index) => {
-                  const photo = item.media?.map(itemPhoto).find(Boolean);
-                  if (index === 0) {
-                    return (
-                      <article key={item.id} className="group relative min-h-[46vh] overflow-hidden rounded-2xl border border-black/10 bg-[#eef7f0] shadow-lg lg:row-span-2 lg:h-full">
-                        <Photo src={photo} alt={item.title} className="absolute inset-0 h-full w-full object-cover" fallback={<div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-[#e8f5ec] via-white to-[#fff0e9]"><div className="flex flex-col items-center gap-3 text-[#15803d]"><PackageSearch className="h-24 w-24" aria-hidden="true" /><span className="text-sm font-bold">{item.category}</span></div></div>} />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
-                        <div className="absolute inset-x-0 bottom-0 p-5 text-white sm:p-7">
-                          <p className="text-xs font-black uppercase tracking-[.18em] text-[#9bf6c5]">{item.category}</p>
-                          <h3 className="mt-2 text-2xl font-black sm:text-4xl">{item.title}</h3>
-                          <p className="mt-2 text-sm text-white/80">{item.foundAt ? `Found at ${item.foundAt}` : `Posted ${ago(item.postedAt)}`}</p>
-                          {item.description && <p className="mt-3 max-w-xl text-sm leading-relaxed text-white/75">{item.description}</p>}
-                        </div>
-                      </article>
-                    );
-                  }
-                  return (
-                    <article key={item.id} className="grid min-h-36 grid-cols-[42%_58%] overflow-hidden rounded-xl border border-black/10 bg-[#f7f8f7] shadow-sm lg:min-h-0">
-                      <div className="relative min-h-36 overflow-hidden bg-[#eef7f0]">
-                        <Photo src={photo} alt={item.title} className="absolute inset-0 h-full w-full object-cover" fallback={<div className="grid h-full w-full place-items-center bg-gradient-to-br from-[#e8f5ec] to-[#fff0e9]"><PackageSearch className="h-12 w-12 text-[#15803d]" aria-hidden="true" /></div>} />
-                      </div>
-                      <div className="flex flex-col justify-center p-4">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-[#15803d]">{item.category}</p>
-                        <h3 className="mt-1 text-base font-bold sm:text-lg">{item.title}</h3>
-                        <p className="mt-2 text-xs text-black/55">{item.foundAt ? `Found at ${item.foundAt}` : `Posted ${ago(item.postedAt)}`}</p>
-                        {item.description && <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-black/65">{item.description}</p>}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-            <p className="mt-5 text-center text-[11px] font-semibold text-[#15803d]">Take a look at the Lost and Found board to contact the person who posted an item.</p>
-          </div>
-        )}
-
-        <div className={`relative flex items-center justify-center gap-2 border-t px-5 py-3 text-[10px] font-medium tracking-wide ${isChampions ? 'border-white/10 text-white/50' : 'border-black/10 bg-white text-black/50'}`}>
-          {INTRO.map((slide, k) => (
-            <span key={slide.key} className={`h-1.5 rounded-full transition-all duration-500 ${k === idx ? (isChampions ? 'w-6 bg-white' : 'w-6 bg-[#16a34a]') : (isChampions ? 'w-1.5 bg-white/40' : 'w-1.5 bg-black/20')}`} />
-          ))}
-          <span className="ml-2">Announcement {idx + 1} of {INTRO.length}</span>
+          )}
         </div>
-      </section>
+      )}
+
+      <div className="absolute bottom-0 left-0 right-0 z-40 h-1 bg-white/20">
+        <span className="announcement-progress block h-full bg-gradient-to-r from-[#f5c542] via-[#ff4500] to-[#16a34a]" style={{ animationDuration: `${isChampions ? (championsStep === 'match' ? CHAMPIONS_SECS : LINEUP_SECS) : LOST_ITEM_SECS}s` }} />
+      </div>
     </div>
   );
 }
