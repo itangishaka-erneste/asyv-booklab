@@ -1112,7 +1112,7 @@ const UclBall = ({ size = 52 }) => (
   </svg>
 );
 
-const COUNTDOWN_SECS = 6;
+const COUNTDOWN_MAX = 10000;
 const CHAMPIONS_SECS = 12;
 const LINEUP_SECS = 12;
 const LOST_ITEM_SECS = 8;
@@ -1136,33 +1136,16 @@ function TeamLogo({ team, className = '' }) {
   );
 }
 
-function CountdownOpening({ left }) {
-  const overall = Math.round(((COUNTDOWN_SECS - left) / COUNTDOWN_SECS) * 100);
-  const segment = Math.max(0, overall - 100 / 3);
-  const segmentTwo = Math.max(0, overall - 200 / 3);
-  const loadingSegments = [Math.min(100, overall * 3), Math.min(100, segment * 3), Math.min(100, segmentTwo * 3)];
-
+function CountdownOpening({ value }) {
   return (
-    <div className="fixed inset-0 z-[200] grid place-items-center overflow-hidden bg-white text-[#111827]">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_44%,#fff8cc_0%,#ffffff_38%,#eef7f0_100%)]" aria-hidden="true" />
-      <div className="relative w-[min(92vw,760px)] text-center">
-        <img src={logo} alt="ASYV" className="mx-auto h-20 w-20 rounded-2xl border-4 border-[#f5c542] bg-white object-contain p-2 shadow-xl sm:h-24 sm:w-24" />
-        <p className="mt-5 text-sm font-black uppercase tracking-[.42em] text-[#15803d] sm:text-lg">Preparing the presentation</p>
-        <div key={overall} className="countdown-pop mx-auto mt-6 grid h-52 w-52 place-items-center rounded-full border-[12px] border-[#15803d] bg-[#f5c542] text-7xl font-black text-[#111827] shadow-[0_18px_80px_rgba(21,128,61,.22)] sm:h-64 sm:w-64 sm:text-8xl">
-          {overall}%
+    <div className="fixed inset-0 z-[200] grid place-items-center overflow-hidden bg-black text-white">
+      <div className="relative text-center">
+        <img src={logo} alt="ASYV" className="mx-auto h-24 w-24 rounded-2xl border-4 border-[#f5c542] bg-white object-contain p-2 shadow-[0_0_60px_rgba(245,197,66,.35)] sm:h-32 sm:w-32" />
+        <div key={value} className="countdown-pop mt-8 font-black tabular-nums leading-none text-[#f5c542]" style={{ fontSize: 'clamp(5rem, 18vw, 12rem)', textShadow: '0 0 50px rgba(245,197,66,.32)' }}>
+          {value}
         </div>
-
-        <div className="mx-auto mt-8 grid max-w-xl grid-cols-3 gap-3" aria-label="Loading presentation">
-          {['Lost & Found', 'Match', 'Lineup'].map((label, i) => (
-            <div key={label} className="rounded-xl border border-black/10 bg-white p-3 shadow-sm">
-              <div className="mb-2 flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-[#15803d]">
-                <span>{label}</span><span>{Math.round(loadingSegments[i])}%</span>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-black/10">
-                <div className="h-full rounded-full bg-gradient-to-r from-[#16a34a] via-[#f5c542] to-[#ff4500] transition-[width] duration-300" style={{ width: `${loadingSegments[i]}%` }} />
-              </div>
-            </div>
-          ))}
+        <div className="mx-auto mt-8 h-3 w-[min(82vw,700px)] overflow-hidden rounded-full bg-white/15">
+          <div className="h-full bg-gradient-to-r from-[#ff4500] via-[#f5c542] to-white transition-[width] duration-75" style={{ width: `${(value / COUNTDOWN_MAX) * 100}%` }} />
         </div>
       </div>
     </div>
@@ -1244,7 +1227,7 @@ function ChampionsLineupPresentation() {
 
 function StartupAnnouncements({ onClose, onStopRepeat }) {
   const [phase, setPhase] = useState('countdown');
-  const [countdownLeft, setCountdownLeft] = useState(COUNTDOWN_SECS);
+  const [countdownValue, setCountdownValue] = useState(0);
   const [championsStep, setChampionsStep] = useState('match');
   const [championsLeft, setChampionsLeft] = useState(CHAMPIONS_SECS);
   const [lostIndex, setLostIndex] = useState(0);
@@ -1263,12 +1246,22 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
 
   useEffect(() => {
     if (phase !== 'countdown') return undefined;
-    const timer = setTimeout(() => {
-      if (countdownLeft > 1) setCountdownLeft((value) => value - 1);
-      else { setPhase('lost'); setLostIndex(0); setLostLeft(LOST_ITEM_SECS); }
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [phase, countdownLeft]);
+    setCountdownValue(0);
+    const started = performance.now();
+    const duration = 900;
+    const timer = window.setInterval(() => {
+      const elapsed = performance.now() - started;
+      const value = Math.min(COUNTDOWN_MAX, Math.floor((elapsed / duration) * COUNTDOWN_MAX));
+      setCountdownValue(value);
+      if (value >= COUNTDOWN_MAX) {
+        window.clearInterval(timer);
+        setPhase('lost');
+        setLostIndex(0);
+        setLostLeft(LOST_ITEM_SECS);
+      }
+    }, 10);
+    return () => window.clearInterval(timer);
+  }, [phase]);
 
   useEffect(() => {
     if (phase !== 'champions') return undefined;
@@ -1296,14 +1289,12 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
     return () => clearTimeout(timer);
   }, [phase]);
 
-  if (phase === 'countdown') return <CountdownOpening left={countdownLeft} />;
-
   const isChampions = phase === 'champions';
   const postedItems = foundItems || [];
   const currentItem = postedItems[lostIndex];
 
   return (
-    <div className={`fixed inset-0 z-[200] overflow-hidden ${isChampions ? 'bg-[#07112e] text-white' : 'bg-black text-white'} ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-label="Site announcements">
+    <>
       <iframe
         title="Champions League advert music"
         className="pointer-events-none absolute left-[-9999px] h-px w-px"
@@ -1311,7 +1302,8 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
         allow="autoplay; encrypted-media"
         referrerPolicy="strict-origin-when-cross-origin"
       />
-
+      {phase === 'countdown' ? <CountdownOpening value={countdownValue} /> : (
+    <div className={`fixed inset-0 z-[200] overflow-hidden ${isChampions ? 'bg-[#07112e] text-white' : 'bg-black text-white'} ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-label="Site announcements">
       {isChampions ? (
         championsStep === 'match' ? <ChampionsMatchPresentation /> : <ChampionsLineupPresentation />
       ) : (
@@ -1322,19 +1314,13 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
                 <Photo
                   src={currentItem.media.map(itemPhoto).find(Boolean)}
                   alt={currentItem.title}
-                  className="absolute inset-0 h-full w-full object-cover"
+                  className="absolute inset-0 h-full w-full object-contain"
                   fallback={<div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_center,#f5c542_0%,#ff4500_25%,#090604_72%)]"><PackageSearch className="h-48 w-48 text-white" aria-hidden="true" /></div>}
                 />
               ) : (
                 <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_center,#f5c542_0%,#ff4500_25%,#090604_72%)]"><PackageSearch className="h-48 w-48 text-white" aria-hidden="true" /></div>
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/20" />
-              <div className="absolute bottom-6 left-1/2 w-[calc(100%-2rem)] max-w-5xl -translate-x-1/2 rounded-2xl border-2 border-white/30 bg-white/95 p-5 text-[#111827] shadow-2xl sm:bottom-10 sm:p-8">
-                <p className="mb-2 text-sm font-black uppercase tracking-[.28em] text-[#15803d] sm:text-lg">{currentItem.category}</p>
-                <h1 className="text-4xl font-black uppercase leading-[.95] sm:text-7xl lg:text-8xl">{currentItem.title}</h1>
-                <p className="mt-3 text-lg font-bold text-[#111827]/80 sm:text-2xl">{currentItem.foundAt ? `Found at ${currentItem.foundAt}` : `Posted ${ago(currentItem.postedAt)}`}</p>
-              </div>
-              <div className="absolute right-5 top-5 grid h-16 w-16 place-items-center rounded-full border-4 border-[#f5c542] bg-[#090604]/80 text-2xl font-black text-[#f5c542] sm:h-20 sm:w-20 sm:text-3xl">{lostLeft}</div>
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/45 to-transparent" />
             </>
           ) : (
             <div className="grid h-full place-items-center bg-[radial-gradient(circle_at_center,#16a34a_0%,#08120b_45%,#090604_78%)] text-center">
@@ -1352,6 +1338,8 @@ function StartupAnnouncements({ onClose, onStopRepeat }) {
         <span className="announcement-progress block h-full bg-gradient-to-r from-[#f5c542] via-[#ff4500] to-[#16a34a]" style={{ animationDuration: `${isChampions ? (championsStep === 'match' ? CHAMPIONS_SECS : LINEUP_SECS) : LOST_ITEM_SECS}s` }} />
       </div>
     </div>
+      )}
+    </>
   );
 }
 
