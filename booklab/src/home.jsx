@@ -1162,14 +1162,14 @@ function StartupAnnouncements({ onClose }) {
   const postedItems = foundItems || [];
 
   return (
-    <div className={`fixed inset-0 z-[200] grid place-items-center overflow-y-auto bg-[#050914] px-4 py-6 text-white ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+    <div className={`fixed inset-0 z-[200] grid place-items-center overflow-y-auto ${isChampions ? 'bg-[#050914] px-4 py-6 text-white' : 'bg-white p-0 text-[#111827]'} ${phase === 'exit' ? 'intro-out' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
         <div className={`absolute -left-24 -top-32 h-80 w-80 rounded-full blur-3xl ${isChampions ? 'bg-blue-600/30' : 'bg-orange-500/25'}`} />
         <div className={`absolute -bottom-36 -right-20 h-96 w-96 rounded-full blur-3xl ${isChampions ? 'bg-orange-500/20' : 'bg-emerald-500/25'}`} />
         {STARS.map((star, i) => <span key={i} className="ucl-twinkle absolute rounded-full bg-white" style={{ left: star.left, top: star.top, width: star.s, height: star.s, animationDelay: star.d }} />)}
       </div>
 
-      <section key={kind} className={`announcement-enter relative w-full max-w-5xl overflow-hidden rounded-[28px] border border-white/15 shadow-2xl ${isChampions ? 'bg-[#050914]' : 'bg-gradient-to-br from-[#082d27] via-[#0c171c] to-[#22100b]'}`}>
+      <section key={kind} className={`announcement-enter relative overflow-hidden ${isChampions ? 'w-full max-w-5xl rounded-[28px] border border-white/15 bg-[#050914] shadow-2xl' : 'h-[100dvh] w-full rounded-none border-0 bg-white text-[#111827]'}`}>
         <h1 id={titleId} className="sr-only">{isChampions ? match.league : 'Lost and Found'}</h1>
         <div className="absolute inset-x-0 top-0 z-10 h-1 bg-white/15" aria-hidden="true">
           <span key={kind} className="announcement-progress block h-full bg-gradient-to-r from-[#f5c542] via-[#ff4500] to-[#16a34a]" style={{ animationDuration: `${INTRO[idx].secs}s` }} />
@@ -1178,8 +1178,8 @@ function StartupAnnouncements({ onClose }) {
         <div className="relative z-10 flex items-center justify-between gap-4 px-5 pt-5 sm:px-8 sm:pt-7">
           <Logo />
           <div className="flex items-center gap-3">
-            <span className="rounded-full bg-black/40 px-3 py-1.5 text-[11px] font-bold tabular-nums">Moving on in {remaining}s</span>
-            <button type="button" onClick={() => setPhase('exit')} className="rounded-full border border-white/20 bg-black/30 px-3 py-2 text-[11px] font-semibold text-white/90 transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">
+            <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold tabular-nums ${isChampions ? 'bg-black/40 text-white' : 'border border-black/10 bg-[#f7f8f7] text-[#111827]'}`}>Moving on in {remaining}s</span>
+            <button type="button" onClick={() => setPhase('exit')} className={`rounded-full px-3 py-2 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${isChampions ? 'border border-white/20 bg-black/30 text-white/90 hover:bg-white/10 focus-visible:outline-white' : 'border border-black/15 bg-white text-[#111827] hover:bg-black/5 focus-visible:outline-[#16a34a]'}`}>
               Skip intro
             </button>
           </div>
@@ -1188,48 +1188,50 @@ function StartupAnnouncements({ onClose }) {
         {isChampions ? (
           <div className="p-3 sm:p-5"><ChampionsAd /></div>
         ) : (
-          <div className="relative px-5 pb-6 pt-5 sm:px-8 sm:pb-8">
+          <div className="relative flex h-[calc(100dvh-7.5rem)] flex-col justify-center overflow-y-auto px-5 pb-6 pt-5 sm:px-8 sm:pb-8">
             <div className="mb-5 text-center">
-              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200/30 bg-emerald-200/10 px-3 py-1.5 text-[10px] font-extrabold tracking-[.16em] text-[#9bf6c5]">
+              <span className="inline-flex items-center gap-2 rounded-full border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[10px] font-extrabold tracking-[.16em] text-[#15803d]">
                 <PackageSearch className="h-4 w-4" aria-hidden="true" /> LOST &amp; FOUND
               </span>
               <h2 className="mt-3 text-3xl font-black uppercase sm:text-4xl">Found items at school</h2>
-              <p className="mt-2 text-sm text-white/75">These are the latest items posted on the Lost and Found board.</p>
+              <p className="mt-2 text-sm text-black/60">These are the latest items posted on the Lost and Found board.</p>
             </div>
             {foundItems === null ? (
-              <div className="grid min-h-40 place-items-center text-sm text-white/75">Loading posted items…</div>
+              <div className="grid min-h-40 place-items-center text-sm text-black/55">Loading posted items…</div>
             ) : foundError ? (
-              <div role="alert" className="rounded-xl border border-red-300/30 bg-red-950/30 p-5 text-center text-sm text-white">
+              <div role="alert" className="rounded-xl border border-red-300/60 bg-red-50 p-5 text-center text-sm text-red-700">
                 Could not load the Lost and Found posts: {foundError}
               </div>
             ) : postedItems.length === 0 ? (
-              <div className="rounded-xl border border-white/15 bg-white/5 p-6 text-center text-sm text-white/75">There are no active found-item posts right now.</div>
+              <div className="rounded-xl border border-black/10 bg-[#f7f8f7] p-6 text-center text-sm text-black/60">There are no active found-item posts right now.</div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {postedItems.slice(0, 3).map((item) => {
                   const photo = item.media?.map(itemPhoto).find(Boolean);
                   return (
-                    <article key={item.id} className="overflow-hidden rounded-xl border border-white/15 bg-black/25">
+                    <article key={item.id} className="overflow-hidden rounded-xl border border-black/10 bg-[#f7f8f7] shadow-sm">
                       <div className="grid aspect-[4/3] place-items-center overflow-hidden bg-white/5">
                         <Photo src={photo} alt={item.title} className="h-full w-full object-cover" fallback={<NoPhoto label={item.category} />} />
                       </div>
                       <div className="p-4">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-[#9bf6c5]">{item.category}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-[#15803d]">{item.category}</p>
                         <h3 className="mt-1 text-base font-bold">{item.title}</h3>
-                        <p className="mt-2 text-xs text-white/65">{item.foundAt ? `Found at ${item.foundAt}` : `Posted ${ago(item.postedAt)}`}</p>
-                        {item.description && <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/75">{item.description}</p>}
+                        <p className="mt-2 text-xs text-black/55">{item.foundAt ? `Found at ${item.foundAt}` : `Posted ${ago(item.postedAt)}`}</p>
+                        {item.description && <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-black/65">{item.description}</p>}
                       </div>
                     </article>
                   );
                 })}
               </div>
             )}
-            <p className="mt-5 text-center text-[11px] font-semibold text-[#9bf6c5]">Take a look at the Lost and Found board to contact the person who posted an item.</p>
+            <p className="mt-5 text-center text-[11px] font-semibold text-[#15803d]">Take a look at the Lost and Found board to contact the person who posted an item.</p>
           </div>
         )}
 
-        <div className="relative flex items-center justify-center gap-2 border-t border-white/10 px-5 py-3 text-[10px] font-medium tracking-wide text-white/50">
-          {INTRO.map((slide, k) => <span key={slide.key} className={`h-1.5 rounded-full transition-all duration-500 ${k === idx ? 'w-6 bg-white' : 'w-1.5 bg-white/40'}`} />)}
+        <div className={`relative flex items-center justify-center gap-2 border-t px-5 py-3 text-[10px] font-medium tracking-wide ${isChampions ? 'border-white/10 text-white/50' : 'border-black/10 bg-white text-black/50'}`}>
+          {INTRO.map((slide, k) => (
+            <span key={slide.key} className={`h-1.5 rounded-full transition-all duration-500 ${k === idx ? (isChampions ? 'w-6 bg-white' : 'w-6 bg-[#16a34a]') : (isChampions ? 'w-1.5 bg-white/40' : 'w-1.5 bg-black/20')}`} />
+          ))}
           <span className="ml-2">Announcement {idx + 1} of {INTRO.length}</span>
         </div>
       </section>
@@ -1455,7 +1457,7 @@ function Landing({ onLogin, dark, onToggleDark }) {
   return (
     <div id="top" className="bg-white text-[#111827] antialiased text-sm">
       <LandingNav onLogin={onLogin} dark={dark} onToggleDark={onToggleDark} />
-      <section className="mx-auto max-w-6xl px-6 pt-14 pb-6">
+      <section className="mx-auto grid max-w-6xl items-center gap-8 px-6 pt-14 pb-6 md:grid-cols-[1.05fr_.95fr]">
         <div>
           <span className="lb-in inline-block rounded-[6px] border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[11px] font-semibold text-[#15803d]">Live places, updated automatically</span>
           <h1 className="lb-in mt-5 max-w-2xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
@@ -1465,11 +1467,11 @@ function Landing({ onLogin, dark, onToggleDark }) {
             <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
           </div>
         </div>
+        <div className="min-w-0"><LiveLabs /></div>
       </section>
       <section id="labs" className="mx-auto max-w-6xl scroll-mt-20 px-6 py-12">
         <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Labs and free places</h2>
         <p className="mb-8 mt-2 max-w-xl text-xs text-black/60">The border of each lab time fills as places are taken. A red border with the word Closed means the lab time is over and nobody can apply.</p>
-        <div className="mb-8 max-w-3xl"><LiveLabs /></div>
         <LabBoard onLogin={onLogin} />
       </section>
       <TrendsBoard />
@@ -3989,6 +3991,7 @@ function Dashboard({ user, opts, intent, onIntentDone, onLogout, onRefreshMe, da
 export default function Home() {
   const [view, setView] = useState('home');
   const [showStartupAnnouncements, setShowStartupAnnouncements] = useState(true);
+  const [startupCycle, setStartupCycle] = useState(0);
   const [user, setUser] = useState(null);
   const [opts, setOpts] = useState(EMPTY_OPTS);
   const [booting, setBooting] = useState(!!getToken());
@@ -3999,6 +4002,15 @@ export default function Home() {
     localStorage.setItem('lms_dark', String(dark));
     document.body.style.background = dark ? '#000000' : '';
   }, [dark]);
+
+  useEffect(() => {
+    if (view !== 'home' || getToken()) return undefined;
+    const timer = setInterval(() => {
+      setStartupCycle((cycle) => cycle + 1);
+      setShowStartupAnnouncements(true);
+    }, 10 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [view]);
   const toggleDark = () => setDark((v) => !v);
 
   const loadOpts = () => api('/api/options').then((o) => setOpts({ ...EMPTY_OPTS, ...o })).catch(() => {});
@@ -4022,7 +4034,7 @@ export default function Home() {
     setShowStartupAnnouncements(false);
     setView('app');
   };
-  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); setShowStartupAnnouncements(false); setView('home'); };
+  const logout = () => { setToken(''); dropSocket(); setUser(null); setIntent(null); setStartupCycle((cycle) => cycle + 1); setShowStartupAnnouncements(true); setView('home'); };
   const goLogin = (i) => { setIntent(i && i.sessionId ? i : null); setView('login'); };
 
   let page;
@@ -4036,7 +4048,7 @@ export default function Home() {
   else page = (
     <>
       <Landing onLogin={goLogin} dark={dark} onToggleDark={toggleDark} />
-      {view === 'home' && showStartupAnnouncements && <StartupAnnouncements onClose={() => setShowStartupAnnouncements(false)} />}
+      {view === 'home' && showStartupAnnouncements && <StartupAnnouncements key={startupCycle} onClose={() => setShowStartupAnnouncements(false)} />}
     </>
   );
 
