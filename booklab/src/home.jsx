@@ -632,7 +632,7 @@ const Logo = ({ light }) => (
     <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[6px] border border-black/10 bg-white">
       <img src={logo} alt="Logo" className="h-9 w-9 object-contain" />
     </span>
-    <span className="text-base sm:text-lg" aria-label="Asyv_lms">
+    <span className="whitespace-nowrap text-base sm:text-lg" aria-label="Asyv_lms">
       {LOGO_LETTERS.map(([ch, tone], i) => (
         <span key={i} aria-hidden="true" className="lb-bounce"
           style={{ animationDelay: `${i * 0.12}s`, color: tone === 'or' ? '#ff4500' : tone === 'green' ? (light ? '#ffffff' : 'var(--ok, #16a34a)') : (light ? '#ffffff' : 'var(--ink, #111827)') }}>
@@ -694,6 +694,7 @@ const GLOBAL_CSS = `
 .lms-dark [class*="text-[#16a34a]"],.lms-dark [class*="text-[#15803d]"]{color:#ff7a45!important}
 .lms-dark [class*="border-[#16a34a]"]{border-color:#ff4500!important}
 .lms-dark [class*="border-[#16a34a]/20"]{border-color:rgba(255,69,0,.28)!important}
+.lms-dark [class*="bg-[#16b5a2]"]{background-color:#ff4500!important}
 .lms-dark [class*="border-t-[#ff4500]"]{border-top-color:#ff4500!important}
 .lms-dark [class*="focus:border-[#16a34a]"]:focus{border-color:#ff4500!important}
 /* other colours that must stay readable on black */
@@ -707,18 +708,50 @@ const GLOBAL_CSS = `
 // Champions League advert and advanced navbar styles. Plain CSS so they look the same in light and dark mode.
 const LANDING_CSS = `
 @keyframes landingDrift{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
-.landing-shell{--landing-bg:#fbfaf6;--landing-surface:#fff;--landing-ink:#17231b;--landing-muted:#66736a;--landing-line:rgba(23,35,27,.11);background:var(--landing-bg);color:var(--landing-ink)}
-.landing-nav{background:rgba(251,250,246,.9);border-color:var(--landing-line)}
-.landing-hero{position:relative;isolation:isolate;overflow:hidden;background:radial-gradient(ellipse at 87% 14%,rgba(190,223,174,.42),transparent 34%),linear-gradient(180deg,#f5f7ef 0%,var(--landing-bg) 100%)}
-.landing-hero:before{content:"";position:absolute;z-index:-1;width:420px;height:420px;right:-170px;top:-210px;border:1px solid rgba(22,163,74,.12);border-radius:50%;box-shadow:0 0 0 48px rgba(22,163,74,.035),0 0 0 96px rgba(22,163,74,.025)}
-.landing-kicker{display:inline-flex;align-items:center;gap:9px;border:1px solid rgba(22,163,74,.2);background:rgba(255,255,255,.68);color:#18713b}
-.landing-hero-title{color:#17231b;letter-spacing:-.055em}
-.landing-hero-copy{color:#657269}
-.landing-primary{box-shadow:0 8px 20px rgba(22,163,74,.2);transition:transform .2s,box-shadow .2s}
-.landing-primary:hover{transform:translateY(-2px);box-shadow:0 12px 26px rgba(22,163,74,.25)}
+@keyframes landingWave{0%,100%{transform:translateX(-3%) rotate(-1deg);border-radius:44% 56% 0 0/22% 30% 0 0}50%{transform:translateX(3%) rotate(1deg);border-radius:55% 45% 0 0/30% 20% 0 0}}
+@keyframes landingOrbit{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@keyframes landingOrbitCounter{from{transform:rotate(360deg)}to{transform:rotate(0)}}
+@keyframes landingBob{0%,100%{translate:0 0}50%{translate:0 -8px}}
+.landing-shell{--landing-bg:#f3fbf9;--landing-surface:#fff;--landing-ink:#151d1c;--landing-muted:#63716f;--landing-line:rgba(21,45,43,.1);background:var(--landing-bg);color:var(--landing-ink)}
+.landing-nav{background:rgba(243,251,249,.93);border-color:var(--landing-line)}
+.landing-menu{border:1px solid rgba(21,45,43,.08);background:rgba(255,255,255,.86);box-shadow:0 7px 25px rgba(27,75,68,.06)}
+.landing-hero{position:relative;isolation:isolate;overflow:hidden;background:radial-gradient(ellipse at 72% 60%,rgba(22,163,74,.32),transparent 42%),linear-gradient(145deg,#071d17 0%,#0b3828 54%,#10251d 100%)}
+.landing-hero:before,.landing-hero:after{content:"";position:absolute;z-index:0;width:420px;height:420px;top:16%;border:1px solid rgba(255,255,255,.08);border-radius:50%;box-shadow:0 0 0 55px rgba(255,255,255,.025),0 0 0 110px rgba(255,255,255,.018);pointer-events:none}
+.landing-hero:before{left:-300px}.landing-hero:after{right:-300px}
+.landing-ocean{position:absolute;z-index:0;inset:auto -12% -50px;height:42%;overflow:hidden;pointer-events:none}
+.landing-wave{position:absolute;left:-4%;bottom:-56%;width:108%;height:145%;border-radius:45% 55% 0 0/26% 32% 0 0;animation:landingWave 10s ease-in-out infinite}
+.landing-wave-one{background:rgba(22,163,74,.33)}
+.landing-wave-two{bottom:-68%;background:rgba(255,69,0,.2);animation-duration:13s;animation-direction:alternate-reverse}
+.landing-wave-three{bottom:-78%;background:rgba(255,255,255,.1);animation-duration:16s;animation-delay:-4s}
+.landing-app-orbit{position:relative;width:132px;height:92px;margin-inline:auto}
+.landing-app-orbit-ring{position:absolute;inset:10px 19px;border:1px solid rgba(255,255,255,.22);border-radius:50%;animation:landingOrbit 24s linear infinite}
+.landing-app-center{position:absolute;left:50%;top:50%;display:grid;width:58px;height:58px;place-items:center;overflow:hidden;border:2px solid rgba(255,255,255,.75);border-radius:50%;background:#fff;box-shadow:0 8px 30px rgba(0,0,0,.22);transform:translate(-50%,-50%);animation:landingBob 4s ease-in-out infinite}
+.landing-app-center img{width:100%;height:100%;object-fit:cover}
+.landing-app-orb{position:absolute;display:grid;width:31px;height:31px;place-items:center;border:1px solid rgba(255,255,255,.65);border-radius:50%;background:#fff;color:#15803d;box-shadow:0 5px 18px rgba(0,0,0,.2);animation:landingBob 3.2s ease-in-out infinite}
+.landing-app-orb svg{width:15px;height:15px}
+.landing-app-orb-one{left:4px;top:18px}
+.landing-app-orb-two{right:1px;top:12px;color:#ff4500;animation-delay:-1s}
+.landing-app-orb-three{right:12px;bottom:0;color:#15803d;animation-delay:-2s}
+.landing-app-orb-four{left:11px;bottom:1px;color:#ff4500;animation-delay:-.5s}
+.landing-hero-title{color:#fff;letter-spacing:-.055em}
+.landing-hero-copy{color:rgba(255,255,255,.76)}
+.landing-primary{background:linear-gradient(105deg,#16a34a,#ff4500);box-shadow:0 8px 22px rgba(22,163,74,.23);transition:transform .2s,box-shadow .2s}
+.landing-primary:hover{background:linear-gradient(105deg,#15803d,#e63e00);transform:translateY(-2px);box-shadow:0 12px 26px rgba(22,163,74,.3)}
 .landing-trust{border-top:1px solid var(--landing-line);border-bottom:1px solid var(--landing-line);background:rgba(255,255,255,.55)}
 .landing-trust-card{background:var(--landing-surface);border:1px solid var(--landing-line);box-shadow:0 8px 26px rgba(23,35,27,.035)}
-.landing-icon{background:#edf5eb;color:#16803c}
+.landing-icon{background:#e5f8f4;color:#12a998}
+.landing-dashboard-stage{position:relative;z-index:2;margin:-10px auto 0;padding:0 20px 46px;max-width:1180px}
+.landing-dashboard{overflow:hidden;border:1px solid rgba(26,78,72,.1);border-radius:20px;background:#fff;box-shadow:0 28px 80px rgba(22,80,70,.15)}
+.landing-dashboard-top{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid #edf1f0;padding:14px 20px}
+.landing-dashboard-body{padding:20px}
+.landing-dashboard-card{border:1px solid #edf1f0;background:#fff}
+.landing-dashboard-muted{color:#7a8885}
+.landing-dashboard-icon{background:#e5f8f4;color:#109f8e}
+.landing-photo{box-shadow:0 12px 30px rgba(18,44,42,.08)}
+.landing-metrics{box-shadow:0 12px 34px rgba(18,44,42,.055)}
+.landing-metric-card{border:1px solid #edf1f0;background:#fff}
+.learning-spotlight{overflow:hidden;background:linear-gradient(115deg,#10141b,#172235 60%,#123c3c);color:#fff}
+.learning-chip{border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#e5f9f5}
 .landing-section{scroll-margin-top:92px}
 .landing-section-heading{color:var(--landing-ink)}
 .landing-section-copy{color:var(--landing-muted)}
@@ -726,16 +759,27 @@ const LANDING_CSS = `
 .landing-footer-inner{border-top:1px solid var(--landing-line)}
 .lms-dark .landing-shell{--landing-bg:#050505;--landing-surface:#0c0c0c;--landing-ink:#f5f5f5;--landing-muted:#aaa;background:var(--landing-bg);color:var(--landing-ink)}
 .lms-dark .landing-nav{background:rgba(5,5,5,.92);border-color:#292929}
-.lms-dark .landing-hero{background:radial-gradient(ellipse at 87% 14%,rgba(255,69,0,.14),transparent 34%),linear-gradient(180deg,#10100f 0%,#050505 100%)}
-.lms-dark .landing-hero:before{border-color:rgba(255,69,0,.18);box-shadow:0 0 0 48px rgba(255,69,0,.035),0 0 0 96px rgba(255,69,0,.025)}
+.lms-dark .landing-menu{border-color:#292929;background:#101010;box-shadow:none}
+.lms-dark .landing-hero{background:radial-gradient(ellipse at 75% 75%,rgba(255,69,0,.18),transparent 40%),linear-gradient(135deg,#050505 0%,#111 100%)}
+.lms-dark .landing-hero:before,.lms-dark .landing-hero:after{border-color:rgba(255,69,0,.18);box-shadow:0 0 0 55px rgba(255,69,0,.035),0 0 0 110px rgba(255,69,0,.025)}
 .lms-dark .landing-kicker{border-color:rgba(255,69,0,.28);background:#111;color:#ff8a5b}
 .lms-dark .landing-hero-title,.lms-dark .landing-section-heading{color:#f5f5f5}
 .lms-dark .landing-hero-copy,.lms-dark .landing-section-copy{color:#aaa}
+.lms-dark .landing-dashboard{border-color:#292929;background:#0c0c0c}
+.lms-dark .landing-dashboard-top{border-color:#292929}
+.lms-dark .landing-dashboard-brand{color:#f5f5f5}
+.lms-dark .landing-dashboard-card{border-color:#292929;background:#101010}
+.lms-dark .landing-dashboard-muted{color:#aaa}
+.lms-dark .landing-dashboard-icon{background:rgba(255,69,0,.12);color:#ff8054}
+.lms-dark .landing-metrics,.lms-dark .landing-metric-card{border-color:#292929;background:#101010;box-shadow:none}
+.lms-dark .learning-spotlight{background:linear-gradient(115deg,#080808,#141414 60%,#21120d)}
+.lms-dark .learning-chip{border-color:#333;background:#151515;color:#f0f0f0}
 .lms-dark .landing-trust{border-color:#292929;background:#080808}
 .lms-dark .landing-trust-card{background:#0c0c0c;border-color:#292929;box-shadow:none}
 .lms-dark .landing-icon{background:rgba(255,69,0,.12);color:#ff8054}
 .lms-dark .landing-footer,.lms-dark .landing-footer-inner{border-color:#292929;color:#aaa}
-@media(prefers-reduced-motion:reduce){.landing-primary{transition:none}.landing-primary:hover{transform:none}}
+@media(max-width:767px){.landing-dashboard-stage{margin-top:-2px;padding:0 12px 32px}.landing-dashboard{border-radius:15px}.landing-dashboard-body{padding:12px}.landing-dashboard-top{padding:12px}}
+@media(prefers-reduced-motion:reduce){.landing-primary{transition:none}.landing-primary:hover{transform:none}.landing-wave,.landing-app-orbit-ring,.landing-app-center,.landing-app-orb{animation:none!important}}
 @keyframes uclLeft{0%{opacity:0;transform:translateX(-160px) rotate(-16deg) scale(.6)}55%{opacity:1;transform:translateX(14px) rotate(3deg) scale(1.08)}78%{transform:translateX(-5px) rotate(-1deg) scale(.98)}100%{opacity:1;transform:none}}
 @keyframes uclRight{0%{opacity:0;transform:translateX(160px) rotate(16deg) scale(.6)}55%{opacity:1;transform:translateX(-14px) rotate(-3deg) scale(1.08)}78%{transform:translateX(5px) rotate(1deg) scale(.98)}100%{opacity:1;transform:none}}
 @keyframes uclPop{0%{opacity:0;transform:scale(.1) rotate(-90deg)}65%{opacity:1;transform:scale(1.25) rotate(8deg)}100%{opacity:1;transform:scale(1) rotate(0)}}
@@ -901,105 +945,60 @@ function LabBoard({ onLogin }) {
 }
 
 // Animated live status of the labs, shown in the labs section of the landing page.
-const LIVE = {
-  available: ['var(--ok, #16a34a)', 'Places open'], limited: ['#f59e0b', 'Few places left'], requested: ['#2563eb', 'Waiting list'],
-  full: ['var(--full, #ff4500)', 'Full'], none: ['#9ca3af', 'No lab time'],
-};
-const DEMO_LABS = [
-  { id: 'd1', name: 'Lab A', seats: 24 }, { id: 'd2', name: 'Lab B', seats: 20 }, { id: 'd3', name: 'Lab C', seats: 16 },
-];
 function LiveLabs() {
-  const { data } = useOverview(today());
-  const [tick, setTick] = useState(0);
-  const [paused, setPaused] = useState(false);
-  useEffect(() => {
-    if (paused) return undefined;
-    const t = setInterval(() => setTick((n) => n + 1), 2600);
-    return () => clearInterval(t);
-  }, [paused]);
-  const real = (data?.labs || []).slice(0, 4);
-  const demo = !real.length;
-  const labs = demo
-    ? DEMO_LABS.map((l, i) => {
-      const taken = Math.round(l.seats * (0.45 + 0.45 * Math.sin(tick / 1.7 + i * 1.9) ** 2));
-      const free = l.seats - taken;
-      return { ...l, taken, free, status: free < 1 ? 'full' : free / l.seats <= 0.3 ? 'limited' : 'available', sessions: [{ from: '14:00', to: '16:00', seats: l.seats, left: free }] };
-    })
-    : real;
-  const hot = labs.length ? tick % labs.length : 0;
-  const selected = labs[hot];
-  const free = labs.reduce((n, l) => n + (l.free ?? l.sessions?.reduce((a, s) => a + (s.left || 0), 0) ?? 0), 0);
+  const { data, err, loading } = useOverview(today());
+  const labs = data?.labs || [];
+  const allLabStats = labs.map((lab) => {
+    const sessions = lab.sessions || [];
+    const seats = sessions.reduce((sum, session) => sum + (session.seats || 0), 0);
+    const free = sessions.reduce((sum, session) => sum + Math.max(0, session.left || 0), 0);
+    return { id: lab.id, name: lab.name, seats, free, used: Math.max(0, seats - free) };
+  });
+  const rows = allLabStats.slice(0, 3);
+  const totals = allLabStats.reduce((acc, lab) => ({
+    seats: acc.seats + lab.seats,
+    free: acc.free + lab.free,
+    used: acc.used + lab.used,
+  }), { seats: 0, free: 0, used: 0 });
+  const usePercent = totals.seats ? Math.round((totals.used / totals.seats) * 100) : 0;
+  const display = (value) => loading ? '—' : value.toLocaleString();
+
   return (
-    <div className="lb-glow relative overflow-hidden rounded-2xl bg-[#e8f5ec] shadow-lg">
-      <div className="absolute inset-0">
-        {labs.slice(0, 3).map((l, i) => (
-          <div key={l.id} className="absolute inset-0 transition-opacity duration-1000" style={{ opacity: i === hot % Math.min(labs.length, 3) ? 1 : 0 }}>
-            <LabImg lab={demo ? { id: i } : l} index={i} w={1200} className="lb-zoom h-full w-full object-cover" />
-          </div>
-        ))}
-        {!labs.length && <img src={defaultLabPic(0, 1200)} alt="Computer lab" className="h-full w-full object-cover" />}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#000000]/55 via-[#000000]/25 to-[#000000]/80" />
+    <div className="landing-overview grid gap-4 lg:grid-cols-[1.05fr_.95fr]">
+      <div className="landing-photo relative min-h-[280px] overflow-hidden rounded-2xl sm:min-h-[350px]">
+        <img src={lab33} alt="Computers ready for students in a school lab" className="absolute inset-0 h-full w-full object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#071d1c]/85 via-[#071d1c]/10 to-[#071d1c]/5" />
+        <span className="absolute left-4 top-4 inline-flex items-center gap-2 rounded-full bg-white/90 px-3 py-1.5 text-[10px] font-semibold text-[#176f66] shadow-sm"><span className="lb-pulse h-1.5 w-1.5 rounded-full bg-[#16b5a2]" />COMPUTER LABS</span>
+        <div className="absolute inset-x-0 bottom-0 p-5 text-white sm:p-7">
+          <p className="text-[10px] font-semibold uppercase tracking-[.18em] text-white/75">A better place to focus</p>
+          <h3 className="mt-2 max-w-md text-2xl font-semibold leading-tight sm:text-3xl">Find your seat. Start something great.</h3>
+          <p className="mt-2 max-w-md text-xs leading-5 text-white/80">Real computer labs, simple bookings, and more time for learning.</p>
+        </div>
       </div>
-      <div className="relative flex min-h-[380px] flex-col justify-between p-5 text-white">
-        <div className="flex items-center justify-between gap-3">
-          <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-semibold backdrop-blur">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="lb-ping absolute inline-flex h-full w-full rounded-full bg-[#4ade80]" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#4ade80]" />
-            </span>
-            {demo ? 'Live preview' : 'Live now'}
-          </span>
-          {selected && (
-            <span aria-live="polite" className="inline-flex max-w-[42%] min-w-0 items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-bold text-[#111827] shadow">
-              <span className="h-2 w-2 rounded-full" style={{ background: LIVE[selected.status]?.[0] || LIVE.none[0] }} />
-              <span className="truncate">{selected.name}: {LIVE[selected.status]?.[1] || LIVE.none[1]}</span>
-            </span>
-          )}
-          <span className="rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-semibold backdrop-blur"><Radio className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />{free} free places today</span>
+      <div className="landing-metrics rounded-2xl border border-black/5 bg-[#fbfefd] p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div><p className="landing-dashboard-muted text-[10px] font-semibold uppercase tracking-[.14em]">Today’s overview</p><h3 className="mt-1 text-base font-semibold">Availability at a glance</h3></div>
+          <span className="landing-dashboard-icon grid h-9 w-9 shrink-0 place-items-center rounded-xl"><LayoutDashboard className="h-4 w-4" aria-hidden="true" /></span>
         </div>
-        <div className="grid grid-cols-3 gap-2" aria-label="Choose a lab">
-          {labs.slice(0, 3).map((l, i) => (
-            <button key={`photo-${l.id}`} type="button" aria-pressed={i === hot} aria-label={`Show ${l.name}`} onClick={() => { setTick(i); setPaused(true); }} className={`relative h-16 overflow-hidden rounded-lg border shadow-md sm:h-20 ${i === hot ? 'border-white ring-2 ring-white' : 'border-white/40'}`}>
-              <LabImg lab={demo ? { id: i } : l} index={i} w={360} className="h-full w-full object-cover" />
-              <span className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-2 py-1 text-[10px] font-semibold text-white">{l.name}</span>
-            </button>
-          ))}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <div className="landing-metric-card rounded-xl p-3"><span className="landing-dashboard-muted text-[10px]">Computer labs</span><b className="mt-1 block text-2xl">{display(labs.length)}</b><span className="text-[10px] text-[#119e8f]">Available to browse</span></div>
+          <div className="landing-metric-card rounded-xl p-3"><span className="landing-dashboard-muted text-[10px]">Free places</span><b className="mt-1 block text-2xl">{display(totals.free)}</b><span className="text-[10px] text-[#119e8f]">Across today’s sessions</span></div>
         </div>
-        {selected && (() => {
-            const l = selected;
-            const [color, text] = LIVE[l.status] || LIVE.none;
-            const ss = l.sessions || [];
-            const cur = ss.length ? ss[tick % ss.length] : null;
-            const seats = cur?.seats || l.seats || 0;
-            const places = cur?.left ?? l.free ?? 0;
-            const applied = cur?.applied ?? cur?.applications ?? cur?.people?.length ?? (seats ? Math.max(0, seats - places) : 0);
-            const pct = seats ? Math.round((applied / seats) * 100) : 0;
-            return (
-              <div key={l.id} className="lb-rise rounded-xl bg-white/92 p-4 text-[#111827] shadow ring-2 ring-white" style={{ background: 'var(--card, rgba(255,255,255,.93))' }}>
-                <div className="flex items-center justify-between gap-3">
-                  <b className="truncate text-sm">{l.name}</b>
-                  <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-bold" style={{ color }}>
-                    <span className="h-2 w-2 rounded-full" style={{ background: color }} />{text}
-                  </span>
-                </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-black/10">
-                  <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${pct}%`, background: color }} />
-                </div>
-                <div className="mt-2 flex flex-wrap justify-between gap-2 text-[11px] font-medium text-black/70">
-                  <span>{cur ? `${cur.from}–${cur.to}` : 'No lab time today'}</span>
-                  {cur && <><span>{applied} applied</span><span>{places} of {seats} places free</span></>}
-                </div>
-              </div>
-            );
-          })()}
-        <div className="flex items-center justify-between text-[11px] text-white/90">
-          <span>Lab {labs.length ? hot + 1 : 0} of {labs.length}</span>
-          <div className="flex gap-2">
-            <button type="button" className="rounded-full bg-white/15 px-3 py-1.5 font-semibold hover:bg-white/25" onClick={() => { setTick((n) => (n - 1 + labs.length) % labs.length); setPaused(true); }}>Previous</button>
-            <button type="button" className="rounded-full bg-white/15 px-3 py-1.5 font-semibold hover:bg-white/25" onClick={() => setPaused((v) => !v)}>{paused ? 'Play' : 'Pause'}</button>
-            <button type="button" className="rounded-full bg-white/15 px-3 py-1.5 font-semibold hover:bg-white/25" onClick={() => { setTick((n) => (n + 1) % labs.length); setPaused(true); }}>Next</button>
-          </div>
+        <div className="landing-metric-card mt-2 rounded-xl p-3.5">
+          <div className="flex items-center justify-between gap-2"><b className="text-[11px]">Seat availability</b><span className="text-[10px] font-semibold text-[#119e8f]">{loading || !totals.seats ? '—' : `${100 - usePercent}% available`}</span></div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-[#e8f1ef]"><div className="h-full rounded-full bg-[#16b5a2] transition-[width]" style={{ width: `${loading ? 0 : 100 - usePercent}%` }} /></div>
+          <div className="landing-dashboard-muted mt-2 flex justify-between text-[10px]"><span>{display(totals.used)} booked</span><span>{display(totals.seats)} total seats</span></div>
         </div>
+        <div className="mt-3 space-y-2">
+          {rows.length ? rows.map((lab) => {
+            const fill = lab.seats ? Math.round((lab.used / lab.seats) * 100) : 0;
+            return <div key={lab.id} className="flex items-center gap-3 rounded-xl border border-black/5 bg-white px-3 py-2.5">
+              <span className="landing-dashboard-icon grid h-8 w-8 shrink-0 place-items-center rounded-lg"><FlaskConical className="h-4 w-4" aria-hidden="true" /></span>
+              <span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2 text-[10px]"><b className="truncate">{lab.name}</b><span className="landing-dashboard-muted shrink-0">{lab.free} / {lab.seats} free</span></span><span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-[#e8f1ef]"><span className="block h-full rounded-full bg-[#16b5a2]" style={{ width: `${fill}%` }} /></span></span>
+            </div>;
+          }) : <p className="landing-dashboard-muted rounded-xl border border-dashed border-black/10 px-3 py-3 text-[10px]">{err ? 'Live availability is temporarily unavailable.' : loading ? 'Loading live lab availability…' : 'No lab sessions are available today.'}</p>}
+        </div>
+        <a href="#labs" onClick={(e) => { e.preventDefault(); document.getElementById('labs')?.scrollIntoView({ behavior: 'smooth' }); }} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#16b5a2] px-4 py-2.5 text-[11px] font-semibold text-white transition hover:bg-[#109f8e]">Browse lab times <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" /></a>
       </div>
     </div>
   );
@@ -1600,7 +1599,9 @@ function ChampionsManager({ champions, onSaved }) {
 /* ================================================================== */
 
 const NAV_LINKS = [
+  ['top', 'Home', Sun],
   ['labs', 'Labs', FlaskConical],
+  ['live-dashboard', 'Live dashboard', LayoutDashboard],
   ['trends', 'Lost and found', PackageSearch],
 ];
 
@@ -1642,21 +1643,21 @@ function LandingNav({ onLogin, dark, onToggleDark }) {
 
   return (
     <header className={`landing-nav sticky top-0 z-30 border-b backdrop-blur-md transition-all duration-300 ${scrolled ? 'shadow-md' : ''}`}>
-      <div className={`mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 transition-all duration-300 sm:px-6 ${scrolled ? 'h-14' : 'h-[72px]'}`}>
-        <a href="#top" onClick={top} aria-label="Back to top"><Logo /></a>
+      <div className={`mx-auto grid max-w-7xl grid-cols-[auto_1fr_auto] items-center gap-2 px-4 transition-all duration-300 sm:gap-4 sm:px-6 ${scrolled ? 'h-14' : 'h-[76px]'}`}>
+        <a className="min-w-max" href="#top" onClick={top} aria-label="Back to top"><Logo /></a>
 
-        <nav className="hidden items-center gap-1 text-xs font-semibold md:flex" aria-label="Sections">
-          {NAV_LINKS.map(([id, label, Icon]) => (
+        <nav className="landing-menu hidden justify-self-center items-center gap-0.5 rounded-full p-1 text-[11px] font-medium md:flex" aria-label="Sections">
+          {NAV_LINKS.map(([id, label]) => (
             <a key={id} href={`#${id}`} onClick={go(id)} aria-current={active === id ? 'true' : undefined}
-              className={`nav-link inline-flex items-center gap-1.5 rounded-[8px] px-3 py-2 transition-colors ${active === id ? 'bg-[#16a34a] text-white' : 'text-black/70 hover:bg-black/5'}`}>
-              <Icon className="h-4 w-4" aria-hidden="true" />{label}
+              className={`nav-link inline-flex items-center gap-1.5 rounded-full px-3 py-2 transition-colors ${active === id ? 'bg-[#b8f1e8] text-[#087f72]' : 'text-black/70 hover:bg-black/5'}`}>
+              {label}
             </a>
           ))}
         </nav>
 
-        <div className="flex items-center gap-2">
+        <div className="flex justify-self-end items-center gap-2">
           <ThemeBtn dark={dark} onToggle={onToggleDark} />
-          <Btn className="hidden sm:inline-flex" onClick={() => onLogin()}>Log in</Btn>
+          <Btn className="hidden !rounded-full !border-transparent !bg-[#16b5a2] !px-4 !text-white sm:inline-flex" onClick={() => onLogin()}>Log in</Btn>
           <button type="button" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} onClick={() => setOpen((v) => !v)}
             className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-black/15 bg-white text-[#111827] hover:bg-black/5 md:hidden">
             {open ? <X className="h-4 w-4" aria-hidden="true" /> : <Menu className="h-4 w-4" aria-hidden="true" />}
@@ -1670,7 +1671,7 @@ function LandingNav({ onLogin, dark, onToggleDark }) {
           <nav className="space-y-1 p-4" aria-label="Sections mobile">
             {NAV_LINKS.map(([id, label, Icon]) => (
               <a key={id} href={`#${id}`} onClick={go(id)}
-                className={`flex items-center gap-3 rounded-[8px] px-3 py-3 text-sm font-semibold ${active === id ? 'bg-[#16a34a] text-white' : 'text-black/75 hover:bg-black/5'}`}>
+                className={`flex items-center gap-3 rounded-[8px] px-3 py-3 text-sm font-semibold ${active === id ? 'bg-[#16b5a2] text-white' : 'text-black/75 hover:bg-black/5'}`}>
                 <Icon className="h-5 w-5" aria-hidden="true" />{label}
               </a>
             ))}
@@ -1680,7 +1681,7 @@ function LandingNav({ onLogin, dark, onToggleDark }) {
       </div>
 
       {/* Reading progress */}
-      <span className="absolute bottom-0 left-0 h-[3px] bg-gradient-to-r from-[#16a34a] via-[#f5c542] to-[#ff4500] transition-[width] duration-150" style={{ width: `${progress}%` }} aria-hidden="true" />
+      <span className="absolute bottom-0 left-0 h-[3px] bg-gradient-to-r from-[#16b5a2] via-[#6edfd0] to-[#16b5a2] transition-[width] duration-150" style={{ width: `${progress}%` }} aria-hidden="true" />
     </header>
   );
 }
@@ -1691,39 +1692,62 @@ function Landing({ onLogin, dark, onToggleDark, champions }) {
       <LandingNav onLogin={onLogin} dark={dark} onToggleDark={onToggleDark} />
       <main>
         <section className="landing-hero">
-          <div className="mx-auto grid max-w-6xl items-center gap-10 px-5 py-12 sm:px-7 sm:py-16 md:grid-cols-[.94fr_1.06fr] md:gap-12 md:py-20 lg:gap-16 lg:py-24">
-            <div className="lb-in relative z-10">
-              <span className="landing-kicker rounded-full px-3.5 py-2 text-[11px] font-semibold">
-                <span className="relative flex h-2.5 w-2.5"><span className="lb-ping absolute inline-flex h-full w-full rounded-full bg-[#16a34a]" /><span className="relative h-2.5 w-2.5 rounded-full bg-[#16a34a]" /></span>
-                Live places, updated automatically
-              </span>
-              <h1 className="landing-hero-title mt-6 max-w-xl text-[2.7rem] font-semibold leading-[1.04] sm:text-5xl lg:text-[4.15rem]">
-                Your next idea starts <span className="text-[#16803c]">in the lab.</span>
+          <div className="relative mx-auto max-w-6xl px-5 pb-12 pt-12 text-center sm:px-7 sm:pb-16 sm:pt-16 md:pb-20 md:pt-20">
+            <div className="landing-ocean" aria-hidden="true">
+              <span className="landing-wave landing-wave-one" />
+              <span className="landing-wave landing-wave-two" />
+              <span className="landing-wave landing-wave-three" />
+            </div>
+            <div className="lb-in relative z-10 mx-auto max-w-4xl">
+              <div className="landing-app-orbit mb-5" role="img" aria-label="Asyv LabBook app icon surrounded by lab, schedule, and student tools">
+                <span className="landing-app-orbit-ring" />
+                <span className="landing-app-center"><img src={logo} alt="" /></span>
+                <span className="landing-app-orb landing-app-orb-one"><FlaskConical aria-hidden="true" /></span>
+                <span className="landing-app-orb landing-app-orb-two"><CalendarDays aria-hidden="true" /></span>
+                <span className="landing-app-orb landing-app-orb-three"><UsersRound aria-hidden="true" /></span>
+                <span className="landing-app-orb landing-app-orb-four"><PackageSearch aria-hidden="true" /></span>
+              </div>
+              <h1 className="landing-hero-title mx-auto mt-6 max-w-4xl text-[2.45rem] font-semibold leading-[1.08] sm:text-5xl md:text-6xl lg:text-[4.25rem]">
+                One place for your <span className="text-[#4ade80]">lab bookings</span> and <span className="text-[#ff8060]">more.</span>
               </h1>
-              <p className="landing-hero-copy mt-5 max-w-lg text-sm leading-7 sm:text-base">
-                Book a computer before you arrive. Find an available lab time, apply in a few clicks, and make room for what you want to learn.
+              <p className="landing-hero-copy mx-auto mt-5 max-w-2xl text-sm leading-7 sm:text-base">
+                Check live computer lab availability, book a time before you arrive, and stay connected to your campus community—all in one simple place.
               </p>
-              <div className="mt-7 flex flex-wrap items-center gap-3">
-                <a href="#labs" onClick={(e) => { e.preventDefault(); document.getElementById('labs')?.scrollIntoView({ behavior: 'smooth' }); }} className="landing-primary inline-flex items-center gap-2 rounded-full bg-[#16803c] px-5 py-3 text-xs font-semibold text-white">
-                  Explore available labs <ChevronRight className="h-4 w-4" aria-hidden="true" />
+              <div className="mt-7 flex flex-wrap justify-center gap-3">
+                <a href="#labs" onClick={(e) => { e.preventDefault(); document.getElementById('labs')?.scrollIntoView({ behavior: 'smooth' }); }} className="landing-primary inline-flex items-center gap-2 rounded-full px-5 py-3 text-xs font-semibold text-white">
+                  Get started — browse labs <ChevronRight className="h-4 w-4" aria-hidden="true" />
                 </a>
                 <Btn c="w" className="!rounded-full !px-5 !py-3" onClick={() => onLogin()}>Log in with Google</Btn>
               </div>
-              <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] font-medium text-black/55">
-                <span className="inline-flex items-center gap-2"><CalendarCheck2 className="h-4 w-4 text-[#16803c]" aria-hidden="true" />Plan ahead</span>
-                <span className="inline-flex items-center gap-2"><Radio className="h-4 w-4 text-[#16803c]" aria-hidden="true" />Live availability</span>
-                <span className="inline-flex items-center gap-2"><PackageSearch className="h-4 w-4 text-[#16803c]" aria-hidden="true" />Lost and found</span>
-              </div>
             </div>
-            <div className="relative min-w-0 md:py-2">
-              <div className="absolute -inset-3 -z-10 rounded-[28px] bg-[#dfead8]/65 blur-2xl md:-inset-5" />
-              <div className="overflow-hidden rounded-[20px] border border-white/70 bg-white/60 p-2 shadow-[0_24px_70px_rgba(29,57,34,.14)] sm:rounded-[24px] sm:p-3">
-                <LiveLabs />
+          </div>
+        </section>
+        {champions?.published && (
+          <section className="mx-auto max-w-6xl px-5 pt-10 sm:px-7 sm:pt-14" aria-label="Champions League">
+            <ChampionsAd champions={champions} />
+          </section>
+        )}
+        <section id="live-dashboard" className="landing-dashboard-stage scroll-mt-24" aria-label="Live lab dashboard preview">
+          <div className="landing-dashboard">
+            <div className="landing-dashboard-top">
+              <div className="flex items-center gap-3">
+                <span className="flex gap-1.5" aria-hidden="true"><i className="h-2.5 w-2.5 rounded-full bg-[#ff8175]" /><i className="h-2.5 w-2.5 rounded-full bg-[#f7c95c]" /><i className="h-2.5 w-2.5 rounded-full bg-[#59c99b]" /></span>
+                <span className="hidden h-5 w-px bg-black/10 sm:block" />
+                <span className="landing-dashboard-brand text-[10px] font-bold tracking-[.13em] sm:text-[11px]">ASYV <span className="text-[#16b5a2]">/</span> LAB OVERVIEW</span>
               </div>
-              <div className="absolute -bottom-4 left-5 hidden items-center gap-3 rounded-xl border border-black/5 bg-white px-4 py-3 shadow-lg sm:flex md:-left-7">
-                <span className="landing-icon grid h-9 w-9 place-items-center rounded-lg"><CalendarDays className="h-4 w-4" aria-hidden="true" /></span>
-                <span><span className="block text-[11px] font-semibold text-[#17231b]">Find your time</span><span className="mt-0.5 block text-[10px] text-black/50">See today’s live availability</span></span>
+              <span className="inline-flex items-center gap-2 rounded-full bg-[#e8f8f4] px-3 py-1.5 text-[10px] font-semibold text-[#108f80]"><span className="lb-pulse h-1.5 w-1.5 rounded-full bg-[#16b5a2]" />Live dashboard</span>
+            </div>
+            <div className="landing-dashboard-body">
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                <div><h2 className="text-base font-semibold tracking-tight sm:text-lg">Your lab, at a glance</h2><p className="landing-dashboard-muted mt-1 text-[11px]">Live availability and schedules, all in one view.</p></div>
+                <a href="#labs" onClick={(e) => { e.preventDefault(); document.getElementById('labs')?.scrollIntoView({ behavior: 'smooth' }); }} className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#119e8f]">View all labs <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" /></a>
               </div>
+              <div className="mb-4 grid gap-2 sm:grid-cols-3">
+                <div className="landing-dashboard-card flex items-center gap-3 rounded-xl p-3"><span className="landing-icon grid h-9 w-9 shrink-0 place-items-center rounded-lg"><CalendarDays className="h-4 w-4" aria-hidden="true" /></span><span><b className="block text-[11px]">Lab schedules</b><span className="landing-dashboard-muted text-[10px]">Plan your next visit</span></span></div>
+                <div className="landing-dashboard-card flex items-center gap-3 rounded-xl p-3"><span className="landing-icon grid h-9 w-9 shrink-0 place-items-center rounded-lg"><Radio className="h-4 w-4" aria-hidden="true" /></span><span><b className="block text-[11px]">Live places</b><span className="landing-dashboard-muted text-[10px]">Availability updates live</span></span></div>
+                <div className="landing-dashboard-card flex items-center gap-3 rounded-xl p-3"><span className="landing-icon grid h-9 w-9 shrink-0 place-items-center rounded-lg"><PackageSearch className="h-4 w-4" aria-hidden="true" /></span><span><b className="block text-[11px]">Campus community</b><span className="landing-dashboard-muted text-[10px]">Lost and found board</span></span></div>
+              </div>
+              <LiveLabs />
             </div>
           </div>
         </section>
@@ -1743,19 +1767,32 @@ function Landing({ onLogin, dark, onToggleDark, champions }) {
             </article>
           </div>
         </section>
-        {champions?.published && (
-          <section className="mx-auto max-w-6xl px-5 pt-10 sm:px-7 sm:pt-14" aria-label="Champions League">
-            <ChampionsAd champions={champions} />
-          </section>
-        )}
+        <section className="mx-auto max-w-6xl px-5 py-10 sm:px-7 sm:py-14" aria-label="Learning spotlight">
+          <div className="learning-spotlight grid overflow-hidden rounded-[22px] shadow-[0_24px_70px_rgba(14,32,49,.16)] md:grid-cols-[1.05fr_.95fr]">
+            <div className="relative min-h-[230px] md:min-h-[320px]">
+              <img src={lab22} alt="Students sharing ideas and learning together" className="absolute inset-0 h-full w-full object-cover" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#10141b]/65 via-transparent to-transparent md:bg-gradient-to-r md:from-transparent md:to-[#10141b]/35" />
+              <span className="absolute bottom-4 left-4 rounded-full bg-white/90 px-3 py-1.5 text-[10px] font-semibold text-[#223b39]">LEARNING SPOTLIGHT</span>
+            </div>
+            <div className="flex flex-col justify-center p-6 sm:p-8 lg:p-10">
+              <span className="text-[10px] font-bold uppercase tracking-[.18em] text-[#7de2d1]">Make your next session count</span>
+              <h2 className="mt-3 max-w-md text-2xl font-semibold leading-tight sm:text-3xl">A space for every skill you’re building.</h2>
+              <p className="mt-3 max-w-lg text-xs leading-6 text-white/70">From coding practice to creative projects and research, the computer lab gives you room to explore, learn, and make progress.</p>
+              <div className="mt-5 flex flex-wrap gap-2">
+                {['Coding & digital skills', 'Creative projects', 'Research & study'].map((topic) => <span key={topic} className="learning-chip rounded-full px-3 py-1.5 text-[10px] font-medium">{topic}</span>)}
+              </div>
+              <a href="#labs" onClick={(e) => { e.preventDefault(); document.getElementById('labs')?.scrollIntoView({ behavior: 'smooth' }); }} className="mt-6 inline-flex w-fit items-center gap-2 rounded-full bg-white px-4 py-2.5 text-[11px] font-semibold text-[#1c3938] transition hover:bg-[#dff8f3]">Find your learning space <ChevronRight className="h-4 w-4" aria-hidden="true" /></a>
+            </div>
+          </div>
+        </section>
         <section id="labs" className="landing-section mx-auto max-w-6xl px-5 py-14 sm:px-7 sm:py-20">
           <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-[.2em] text-[#16803c]">Find your place</span>
+              <span className="text-[10px] font-bold uppercase tracking-[.2em] text-[#119e8f]">Find your place</span>
               <h2 className="landing-section-heading mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Labs and free places</h2>
               <p className="landing-section-copy mt-2 max-w-xl text-xs leading-6">The border of each lab time fills as places are taken. A red border with the word Closed means the lab time is over and nobody can apply.</p>
             </div>
-            <span className="hidden items-center gap-2 rounded-full border border-black/10 px-3 py-2 text-[10px] font-semibold text-black/55 sm:inline-flex"><span className="h-2 w-2 rounded-full bg-[#16a34a]" />Updated live</span>
+            <span className="hidden items-center gap-2 rounded-full border border-black/10 px-3 py-2 text-[10px] font-semibold text-black/55 sm:inline-flex"><span className="h-2 w-2 rounded-full bg-[#16b5a2]" />Updated live</span>
           </div>
           <LabBoard onLogin={onLogin} />
         </section>
