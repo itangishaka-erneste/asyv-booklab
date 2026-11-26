@@ -706,6 +706,36 @@ const GLOBAL_CSS = `
 
 // Champions League advert and advanced navbar styles. Plain CSS so they look the same in light and dark mode.
 const LANDING_CSS = `
+@keyframes landingDrift{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.landing-shell{--landing-bg:#fbfaf6;--landing-surface:#fff;--landing-ink:#17231b;--landing-muted:#66736a;--landing-line:rgba(23,35,27,.11);background:var(--landing-bg);color:var(--landing-ink)}
+.landing-nav{background:rgba(251,250,246,.9);border-color:var(--landing-line)}
+.landing-hero{position:relative;isolation:isolate;overflow:hidden;background:radial-gradient(ellipse at 87% 14%,rgba(190,223,174,.42),transparent 34%),linear-gradient(180deg,#f5f7ef 0%,var(--landing-bg) 100%)}
+.landing-hero:before{content:"";position:absolute;z-index:-1;width:420px;height:420px;right:-170px;top:-210px;border:1px solid rgba(22,163,74,.12);border-radius:50%;box-shadow:0 0 0 48px rgba(22,163,74,.035),0 0 0 96px rgba(22,163,74,.025)}
+.landing-kicker{display:inline-flex;align-items:center;gap:9px;border:1px solid rgba(22,163,74,.2);background:rgba(255,255,255,.68);color:#18713b}
+.landing-hero-title{color:#17231b;letter-spacing:-.055em}
+.landing-hero-copy{color:#657269}
+.landing-primary{box-shadow:0 8px 20px rgba(22,163,74,.2);transition:transform .2s,box-shadow .2s}
+.landing-primary:hover{transform:translateY(-2px);box-shadow:0 12px 26px rgba(22,163,74,.25)}
+.landing-trust{border-top:1px solid var(--landing-line);border-bottom:1px solid var(--landing-line);background:rgba(255,255,255,.55)}
+.landing-trust-card{background:var(--landing-surface);border:1px solid var(--landing-line);box-shadow:0 8px 26px rgba(23,35,27,.035)}
+.landing-icon{background:#edf5eb;color:#16803c}
+.landing-section{scroll-margin-top:92px}
+.landing-section-heading{color:var(--landing-ink)}
+.landing-section-copy{color:var(--landing-muted)}
+.landing-footer{border-color:var(--landing-line);color:var(--landing-muted)}
+.landing-footer-inner{border-top:1px solid var(--landing-line)}
+.lms-dark .landing-shell{--landing-bg:#050505;--landing-surface:#0c0c0c;--landing-ink:#f5f5f5;--landing-muted:#aaa;background:var(--landing-bg);color:var(--landing-ink)}
+.lms-dark .landing-nav{background:rgba(5,5,5,.92);border-color:#292929}
+.lms-dark .landing-hero{background:radial-gradient(ellipse at 87% 14%,rgba(255,69,0,.14),transparent 34%),linear-gradient(180deg,#10100f 0%,#050505 100%)}
+.lms-dark .landing-hero:before{border-color:rgba(255,69,0,.18);box-shadow:0 0 0 48px rgba(255,69,0,.035),0 0 0 96px rgba(255,69,0,.025)}
+.lms-dark .landing-kicker{border-color:rgba(255,69,0,.28);background:#111;color:#ff8a5b}
+.lms-dark .landing-hero-title,.lms-dark .landing-section-heading{color:#f5f5f5}
+.lms-dark .landing-hero-copy,.lms-dark .landing-section-copy{color:#aaa}
+.lms-dark .landing-trust{border-color:#292929;background:#080808}
+.lms-dark .landing-trust-card{background:#0c0c0c;border-color:#292929;box-shadow:none}
+.lms-dark .landing-icon{background:rgba(255,69,0,.12);color:#ff8054}
+.lms-dark .landing-footer,.lms-dark .landing-footer-inner{border-color:#292929;color:#aaa}
+@media(prefers-reduced-motion:reduce){.landing-primary{transition:none}.landing-primary:hover{transform:none}}
 @keyframes uclLeft{0%{opacity:0;transform:translateX(-160px) rotate(-16deg) scale(.6)}55%{opacity:1;transform:translateX(14px) rotate(3deg) scale(1.08)}78%{transform:translateX(-5px) rotate(-1deg) scale(.98)}100%{opacity:1;transform:none}}
 @keyframes uclRight{0%{opacity:0;transform:translateX(160px) rotate(16deg) scale(.6)}55%{opacity:1;transform:translateX(-14px) rotate(-3deg) scale(1.08)}78%{transform:translateX(5px) rotate(1deg) scale(.98)}100%{opacity:1;transform:none}}
 @keyframes uclPop{0%{opacity:0;transform:scale(.1) rotate(-90deg)}65%{opacity:1;transform:scale(1.25) rotate(8deg)}100%{opacity:1;transform:scale(1) rotate(0)}}
@@ -1611,7 +1641,7 @@ function LandingNav({ onLogin, dark, onToggleDark }) {
   const top = (e) => { e.preventDefault(); setOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
   return (
-    <header className={`sticky top-0 z-30 border-b backdrop-blur-md transition-all duration-300 ${scrolled ? 'border-black/10 bg-white/90 shadow-md' : 'border-transparent bg-white/95'}`}>
+    <header className={`landing-nav sticky top-0 z-30 border-b backdrop-blur-md transition-all duration-300 ${scrolled ? 'shadow-md' : ''}`}>
       <div className={`mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 transition-all duration-300 sm:px-6 ${scrolled ? 'h-14' : 'h-[72px]'}`}>
         <a href="#top" onClick={top} aria-label="Back to top"><Logo /></a>
 
@@ -1657,33 +1687,82 @@ function LandingNav({ onLogin, dark, onToggleDark }) {
 
 function Landing({ onLogin, dark, onToggleDark, champions }) {
   return (
-    <div id="top" className="bg-white text-[#111827] antialiased text-sm">
+    <div id="top" className="landing-shell min-h-screen text-sm antialiased">
       <LandingNav onLogin={onLogin} dark={dark} onToggleDark={onToggleDark} />
-      <section className="mx-auto grid max-w-6xl items-center gap-8 px-6 pt-14 pb-6 md:grid-cols-[1.05fr_.95fr]">
-        <div>
-          <span className="lb-in inline-block rounded-[6px] border border-[#16a34a]/30 bg-[#16a34a]/10 px-3 py-1.5 text-[11px] font-semibold text-[#15803d]">Live places, updated automatically</span>
-          <h1 className="lb-in mt-5 max-w-2xl text-4xl font-bold leading-[1.1] tracking-tight md:text-5xl">Book a computer in the lab before you walk in.</h1>
-          <p className="mt-5 max-w-md text-sm leading-relaxed text-black/65">Pick an available lab time and press Apply. Free places are approved at once.</p>
-          <div className="mt-7 flex flex-wrap gap-3">
-            <a href="#labs" onClick={(e) => { e.preventDefault(); document.getElementById('labs')?.scrollIntoView({ behavior: 'smooth' }); }} className="rounded-[6px] bg-[#16a34a] px-5 py-2.5 text-xs font-semibold text-white">See the labs</a>
-            <Btn c="w" onClick={() => onLogin()}>Log in with Google</Btn>
+      <main>
+        <section className="landing-hero">
+          <div className="mx-auto grid max-w-6xl items-center gap-10 px-5 py-12 sm:px-7 sm:py-16 md:grid-cols-[.94fr_1.06fr] md:gap-12 md:py-20 lg:gap-16 lg:py-24">
+            <div className="lb-in relative z-10">
+              <span className="landing-kicker rounded-full px-3.5 py-2 text-[11px] font-semibold">
+                <span className="relative flex h-2.5 w-2.5"><span className="lb-ping absolute inline-flex h-full w-full rounded-full bg-[#16a34a]" /><span className="relative h-2.5 w-2.5 rounded-full bg-[#16a34a]" /></span>
+                Live places, updated automatically
+              </span>
+              <h1 className="landing-hero-title mt-6 max-w-xl text-[2.7rem] font-semibold leading-[1.04] sm:text-5xl lg:text-[4.15rem]">
+                Your next idea starts <span className="text-[#16803c]">in the lab.</span>
+              </h1>
+              <p className="landing-hero-copy mt-5 max-w-lg text-sm leading-7 sm:text-base">
+                Book a computer before you arrive. Find an available lab time, apply in a few clicks, and make room for what you want to learn.
+              </p>
+              <div className="mt-7 flex flex-wrap items-center gap-3">
+                <a href="#labs" onClick={(e) => { e.preventDefault(); document.getElementById('labs')?.scrollIntoView({ behavior: 'smooth' }); }} className="landing-primary inline-flex items-center gap-2 rounded-full bg-[#16803c] px-5 py-3 text-xs font-semibold text-white">
+                  Explore available labs <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                </a>
+                <Btn c="w" className="!rounded-full !px-5 !py-3" onClick={() => onLogin()}>Log in with Google</Btn>
+              </div>
+              <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] font-medium text-black/55">
+                <span className="inline-flex items-center gap-2"><CalendarCheck2 className="h-4 w-4 text-[#16803c]" aria-hidden="true" />Plan ahead</span>
+                <span className="inline-flex items-center gap-2"><Radio className="h-4 w-4 text-[#16803c]" aria-hidden="true" />Live availability</span>
+                <span className="inline-flex items-center gap-2"><PackageSearch className="h-4 w-4 text-[#16803c]" aria-hidden="true" />Lost and found</span>
+              </div>
+            </div>
+            <div className="relative min-w-0 md:py-2">
+              <div className="absolute -inset-3 -z-10 rounded-[28px] bg-[#dfead8]/65 blur-2xl md:-inset-5" />
+              <div className="overflow-hidden rounded-[20px] border border-white/70 bg-white/60 p-2 shadow-[0_24px_70px_rgba(29,57,34,.14)] sm:rounded-[24px] sm:p-3">
+                <LiveLabs />
+              </div>
+              <div className="absolute -bottom-4 left-5 hidden items-center gap-3 rounded-xl border border-black/5 bg-white px-4 py-3 shadow-lg sm:flex md:-left-7">
+                <span className="landing-icon grid h-9 w-9 place-items-center rounded-lg"><CalendarDays className="h-4 w-4" aria-hidden="true" /></span>
+                <span><span className="block text-[11px] font-semibold text-[#17231b]">Find your time</span><span className="mt-0.5 block text-[10px] text-black/50">See today’s live availability</span></span>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="min-w-0"><LiveLabs /></div>
-      </section>
-      {champions?.published && (
-        <section className="mx-auto max-w-6xl px-6 pb-10" aria-label="Champions League">
-          <ChampionsAd champions={champions} />
         </section>
-      )}
-      <section id="labs" className="mx-auto max-w-6xl scroll-mt-20 px-6 py-12">
-        <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Labs and free places</h2>
-        <p className="mb-8 mt-2 max-w-xl text-xs text-black/60">The border of each lab time fills as places are taken. A red border with the word Closed means the lab time is over and nobody can apply.</p>
-        <LabBoard onLogin={onLogin} />
-      </section>
-      <TrendsBoard />
-      <footer className="border-t border-black/10 text-xs text-black/55">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-8">
+        <section className="landing-trust px-5 py-7 sm:px-7 sm:py-9">
+          <div className="mx-auto grid max-w-6xl gap-3 sm:grid-cols-3 sm:gap-4">
+            <article className="landing-trust-card flex items-start gap-3 rounded-xl p-4 sm:p-5">
+              <span className="landing-icon grid h-10 w-10 shrink-0 place-items-center rounded-xl"><CalendarDays className="h-5 w-5" aria-hidden="true" /></span>
+              <div><h2 className="text-xs font-bold">Choose a time that works</h2><p className="mt-1 text-[11px] leading-5 text-black/55">Browse lab schedules and available places before you arrive.</p></div>
+            </article>
+            <article className="landing-trust-card flex items-start gap-3 rounded-xl p-4 sm:p-5">
+              <span className="landing-icon grid h-10 w-10 shrink-0 place-items-center rounded-xl"><Radio className="h-5 w-5" aria-hidden="true" /></span>
+              <div><h2 className="text-xs font-bold">See live availability</h2><p className="mt-1 text-[11px] leading-5 text-black/55">Places update as applications come in, so you can plan with confidence.</p></div>
+            </article>
+            <article className="landing-trust-card flex items-start gap-3 rounded-xl p-4 sm:p-5">
+              <span className="landing-icon grid h-10 w-10 shrink-0 place-items-center rounded-xl"><PackageSearch className="h-5 w-5" aria-hidden="true" /></span>
+              <div><h2 className="text-xs font-bold">Reconnect with lost items</h2><p className="mt-1 text-[11px] leading-5 text-black/55">Explore the community lost-and-found board, all in one place.</p></div>
+            </article>
+          </div>
+        </section>
+        {champions?.published && (
+          <section className="mx-auto max-w-6xl px-5 pt-10 sm:px-7 sm:pt-14" aria-label="Champions League">
+            <ChampionsAd champions={champions} />
+          </section>
+        )}
+        <section id="labs" className="landing-section mx-auto max-w-6xl px-5 py-14 sm:px-7 sm:py-20">
+          <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-[.2em] text-[#16803c]">Find your place</span>
+              <h2 className="landing-section-heading mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Labs and free places</h2>
+              <p className="landing-section-copy mt-2 max-w-xl text-xs leading-6">The border of each lab time fills as places are taken. A red border with the word Closed means the lab time is over and nobody can apply.</p>
+            </div>
+            <span className="hidden items-center gap-2 rounded-full border border-black/10 px-3 py-2 text-[10px] font-semibold text-black/55 sm:inline-flex"><span className="h-2 w-2 rounded-full bg-[#16a34a]" />Updated live</span>
+          </div>
+          <LabBoard onLogin={onLogin} />
+        </section>
+        <div className="landing-section"><TrendsBoard /></div>
+      </main>
+      <footer className="landing-footer text-xs">
+        <div className="landing-footer-inner mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-7 sm:px-7 sm:py-9">
           <Logo />
           <span>© 2026 Computer Lab Management System</span>
         </div>
